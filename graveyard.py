@@ -28,20 +28,32 @@ def debug(data):
 def debugGSymbols():
     print(gsymbols)
 
-def getStatements(chars):
+def gGetStatements(chars):
     newlinesCleaned = chars.replace("\n", "")
     lines = newlinesCleaned.split(";")
     return lines[:-1]
 
-def getUnimplementedStatement(line):
+def pGetStatements(chars):
+    lines = chars.split("\n")
+    return lines
+
+def gGetUnimplementedStatement(line):
     gsymbols[gsymbols["linecount"]] = [UNIMPLEMENTED, line]
     gsymbols["linecount"] += 1
 
-def getComment(line):
+def pGetUnimplementedStatement(line):
+    gsymbols[gsymbols["linecount"]] = [UNIMPLEMENTED, line]
+    gsymbols["linecount"] += 1
+
+def gGetComment(line):
     gsymbols[gsymbols["linecount"]] = [COMMENT, line[1:]]
     gsymbols["linecount"] += 1
 
-def getAssignment(operands):
+def pGetComment(line):
+    gsymbols[gsymbols["linecount"]] = [COMMENT, line[1:]]
+    gsymbols["linecount"] += 1
+
+def gGetAssignment(operands):
     assignmentData = [ASSIGNMENT]
     for operand in operands:
         if operand == "$":
@@ -55,11 +67,26 @@ def getAssignment(operands):
     gsymbols[gsymbols["linecount"]] = assignmentData
     gsymbols["linecount"] += 1
 
-def symbolize(chars):
-    statements = getStatements(chars)
+def pGetAssignment(operands):
+    assignmentData = [ASSIGNMENT]
+    for operand in operands:
+        cleanedOperand = operand.replace(" ", "")
+        if cleanedOperand == "True":
+            assignmentData.append("True")
+        elif cleanedOperand == "False":
+            assignmentData.append("False")
+        elif cleanedOperand == "None":
+            assignmentData.append("None")
+        else:
+            assignmentData.append(cleanedOperand)
+    gsymbols[gsymbols["linecount"]] = assignmentData
+    gsymbols["linecount"] += 1
+
+def symbolizeGraveyard(chars):
+    statements = gGetStatements(chars)
     for statement in statements:
         if statement[0] == "#":
-            getComment(statement)
+            gGetComment(statement)
         else:
             remainingStatementChars = statement
             arbitrarySymbolQueue = [""]
@@ -77,9 +104,33 @@ def symbolize(chars):
                     arbitrarySymbolQueue[symbolCounter] += remainingStatementChars[0]
                     remainingStatementChars = remainingStatementChars[1:]
             if statementType == ASSIGNMENT:
-                getAssignment(arbitrarySymbolQueue)
+                gGetAssignment(arbitrarySymbolQueue)
             else:
-                getUnimplementedStatement(statement)
+                gGetUnimplementedStatement(statement)
+
+def symbolizePython(chars):
+    statements = pGetStatements(chars)
+    for statement in statements:
+        if statement[0] == "#":
+            pGetComment(statement)
+        else:
+            remainingStatementChars = statement
+            arbitrarySymbolQueue = [""]
+            symbolCounter = 0
+            statementType = ""
+            while len(remainingStatementChars) > 0:
+                if remainingStatementChars[0] == "=":
+                    statementType = ASSIGNMENT
+                    arbitrarySymbolQueue.append("")
+                    symbolCounter += 1
+                    remainingStatementChars = remainingStatementChars[1:]
+                else:
+                    arbitrarySymbolQueue[symbolCounter] += remainingStatementChars[0]
+                    remainingStatementChars = remainingStatementChars[1:]
+            if statementType == ASSIGNMENT:
+                pGetAssignment(arbitrarySymbolQueue)
+            else:
+                pGetUnimplementedStatement(statement)
 
 def translateToTombstone():
     tombstone = ""
@@ -100,13 +151,28 @@ def translateToPython():
             python += gsymbols[statementIndex][1] + "\n"
     return python
 
+def translateToNewlinedGraveyard():
+    graveyard = ""
+    for statementIndex in range(gsymbols["linecount"]):
+        if gsymbols[statementIndex][0] == COMMENT:
+            graveyard += "#" + gsymbols[statementIndex][1] + ";\n"
+        elif gsymbols[statementIndex][0] == ASSIGNMENT:
+            graveyard += gsymbols[statementIndex][1] + "=" + gsymbols[statementIndex][2] + ";\n"
+        else:
+            graveyard += gsymbols[statementIndex][1] + ";\n"
+    return graveyard
+
+#def translateToGraveyard():
+#super minified graveyard with no newlines
+
 def main(source, isTranslate, isInterpret):
     if isInterpret:
         print("\nGraveyard interpretation is not implemented yet\n")
         return None
 
     chars = fread(source)
-    symbolize(chars)
+    # symbolizeGraveyard(chars)
+    symbolizePython(chars)
     
     debugGSymbols()
 
@@ -114,11 +180,14 @@ def main(source, isTranslate, isInterpret):
         print("")
         python = translateToPython()
         tombstone = translateToTombstone()
+        graveyard = translateToNewlinedGraveyard()
         debug(python)
         print("---\n")
         debug(tombstone)
-        fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
-        fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
+        print("---\n")
+        debug(graveyard)
+        # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
+        # fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -127,3 +196,5 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--interpret", action="store_true", help="Interpret the Graveyard source code.")
     args = parser.parse_args()
     main(args.source, args.translate, args.interpret)
+
+# !* variable name remap idea for extra minification
