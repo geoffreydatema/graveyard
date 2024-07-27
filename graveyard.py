@@ -4,6 +4,10 @@ gsymbols = {
     "linecount": 0
 }
 
+UNIMPLEMENTED = "uim"
+COMMENT = "cmt"
+ASSIGNMENT = "asn"
+
 def fread(path):
     data = None
     with open(path, "r", encoding="utf-8") as file:
@@ -24,51 +28,97 @@ def debug(data):
 def debugGSymbols():
     print(gsymbols)
 
-def getCommands(chars):
+def getStatements(chars):
     newlinesCleaned = chars.replace("\n", "")
     lines = newlinesCleaned.split(";")
     return lines[:-1]
 
-def getUnimplementedCommand(line):
-    gsymbols[gsymbols["linecount"]] = ["uim", line]
+def getUnimplementedStatement(line):
+    gsymbols[gsymbols["linecount"]] = [UNIMPLEMENTED, line]
     gsymbols["linecount"] += 1
 
 def getComment(line):
-    gsymbols[gsymbols["linecount"]] = ["cmt", line[1:]]
+    gsymbols[gsymbols["linecount"]] = [COMMENT, line[1:]]
+    gsymbols["linecount"] += 1
+
+def getAssignment(operands):
+    assignmentData = [ASSIGNMENT]
+    for operand in operands:
+        if operand == "$":
+            assignmentData.append("True")
+        elif operand == ":":
+            assignmentData.append("False")
+        elif operand == "@":
+            assignmentData.append("None")
+        else:
+            assignmentData.append(operand)
+    gsymbols[gsymbols["linecount"]] = assignmentData
     gsymbols["linecount"] += 1
 
 def symbolize(chars):
-    commands = getCommands(chars)
-    for command in commands:
-        if command[0] == "#":
-            getComment(command)
+    statements = getStatements(chars)
+    for statement in statements:
+        if statement[0] == "#":
+            getComment(statement)
         else:
-            getUnimplementedCommand(command)
+            remainingStatementChars = statement
+            arbitrarySymbolQueue = [""]
+            symbolCounter = 0
+            statementType = ""
+            while len(remainingStatementChars) > 0:
+                if remainingStatementChars[0] == " ":
+                    remainingStatementChars = remainingStatementChars[1:]
+                elif remainingStatementChars[0] == "=":
+                    statementType = ASSIGNMENT
+                    arbitrarySymbolQueue.append("")
+                    symbolCounter += 1
+                    remainingStatementChars = remainingStatementChars[1:]
+                else:
+                    arbitrarySymbolQueue[symbolCounter] += remainingStatementChars[0]
+                    remainingStatementChars = remainingStatementChars[1:]
+            if statementType == ASSIGNMENT:
+                getAssignment(arbitrarySymbolQueue)
+            else:
+                getUnimplementedStatement(statement)
 
-def translate():
+def translateToTombstone():
+    tombstone = ""
+    for statementIndex in range(gsymbols["linecount"]):
+        for symbol in gsymbols[statementIndex]:
+            tombstone += symbol + " "
+        tombstone += "\n"
+    return tombstone
+
+def translateToPython():
     python = ""
-    for commandIndex in range(gsymbols["linecount"]):
-        if gsymbols[commandIndex][0] == "cmt":
-            python += "#" + gsymbols[commandIndex][1] + "\n"
+    for statementIndex in range(gsymbols["linecount"]):
+        if gsymbols[statementIndex][0] == COMMENT:
+            python += "#" + gsymbols[statementIndex][1] + "\n"
+        elif gsymbols[statementIndex][0] == ASSIGNMENT:
+            python += gsymbols[statementIndex][1] + " = " + gsymbols[statementIndex][2] + "\n"
         else:
-            python += gsymbols[commandIndex][1] + "\n"
+            python += gsymbols[statementIndex][1] + "\n"
     return python
 
 def main(source, isTranslate, isInterpret):
     if isInterpret:
-        print("Graveyard interpretation is not implemented yet")
+        print("\nGraveyard interpretation is not implemented yet\n")
         return None
 
     chars = fread(source)
     symbolize(chars)
     
-    # debugGSymbols()
+    debugGSymbols()
 
     if isTranslate:
-        print("Translating Graveyard to Python...")
-        python = translate()
+        print("")
+        python = translateToPython()
+        tombstone = translateToTombstone()
         debug(python)
-        # fwrite(python, r"C:\Working\\graveyard\\translated.txt")
+        print("---\n")
+        debug(tombstone)
+        fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
+        fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
