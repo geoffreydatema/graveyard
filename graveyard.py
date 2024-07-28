@@ -1,8 +1,11 @@
 import argparse
 
 gtokens = {
-    "linecount": 0
+    "linecount": 0,
+    "tokencount": 0
 }
+
+BASE92 = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "!", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", ":", ";", "<", "=", ">", "?", "@", "[", "]", "^", "_", "`", "{", "|", "}", "~"]
 
 UNIMPLEMENTED = "uim"
 COMMENT = "cmt"
@@ -19,11 +22,13 @@ def fwrite(data, path):
         file.write(data)
 
 def debug(data):
+    print("\n")
     if type(data) == str:
         print(data)
     elif type(data) == list:
         for item in list:
             print(item)
+    print("\n")
 
 def debugGTokens():
     print(gtokens)
@@ -173,39 +178,39 @@ def translateToGraveyard():
             graveyard += gtokens[statementIndex][1] + ";"
     return graveyard
 
-def main(source, isTranslate, isInterpret):
+def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isInterpret, isInterpretTombstone):
+    chars = fread(source)
+
+    if isTranslatePython:
+        tokenizePython(chars)
+        debugGTokens()
+        graveyardNewlines = translateToNewlinedGraveyard()
+        debug(graveyardNewlines)
+        graveyardMinified = translateToGraveyard()
+        debug(graveyardMinified)
+        fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
+    if isTranslateGraveyard:
+        tokenizeGraveyard(chars)
+        debugGTokens()
+        python = translateToPython()
+        debug(python)
+        fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
+    if isOutputTombstone:
+        tombstone = translateToTombstone()
+        debug(tombstone)
+        fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
     if isInterpret:
         print("\nGraveyard interpretation is not implemented yet\n")
-        return None
-
-    chars = fread(source)
-    tokenizeGraveyard(chars)
-    # tokenizePython(chars)
-    
-    debugGTokens()
-
-    if isTranslate:
-        print("")
-        python = translateToPython()
-        tombstone = translateToTombstone()
-        graveyardNewlines = translateToNewlinedGraveyard()
-        graveyardMinified = translateToGraveyard()
-        debug(python)
-        print("---\n")
-        debug(tombstone)
-        print("---\n")
-        debug(graveyardNewlines)
-        print("---\n")
-        debug(graveyardMinified)
-        # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
-        # fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
+    if isInterpretTombstone:
+        print("\nTombstone interpretation is not implemented yet\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", nargs="?", help="Graveyard source code to operate on.")
-    parser.add_argument("-t", "--translate", action="store_true", help="Translate the Graveyard source code.")
+    parser.add_argument("-tp", "--translatepython", action="store_true", help="Translate the Python source code to Graveyard.")
+    parser.add_argument("-tg", "--translategraveyard", action="store_true", help="Translate the Graveyard source code to Python.")
+    parser.add_argument("-ot", "--outputtombstone", action="store_true", help="Output the Tombstone representation of the source code.")
     parser.add_argument("-i", "--interpret", action="store_true", help="Interpret the Graveyard source code.")
+    parser.add_argument("-it", "--interprettombstone", action="store_true", help="Interpret the raw Tombstone source code.")
     args = parser.parse_args()
-    main(args.source, args.translate, args.interpret)
-
-# !* token compression for extra minification
+    main(args.source, args.translatepython, args.translategraveyard, args.outputtombstone , args.interpret , args.interprettombstone)
