@@ -183,7 +183,10 @@ def translateToPython():
     return python
 
 def translateToNewlinedGraveyard():
-    graveyard = ""
+    graveyard = ":"
+    for mappedToken in gtokens["tokenmap"]:
+        graveyard += mappedToken
+    graveyard += "\n"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += "#" + gtokens[statementIndex][1] + ";\n"
