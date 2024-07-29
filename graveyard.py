@@ -16,7 +16,7 @@ def base92(decimal):
     base92String = ""
     if decimal >= 0:
         while True:
-            base92String = BASE92[decimal % 92] + base92String
+            base92String = f"{BASE92[decimal % 92]}{base92String}"
             decimal //= 92
             if decimal <= 0:
                 break
@@ -162,11 +162,11 @@ def tokenizePython(chars):
 def translateToTombstone():
     tombstone = ""
     for mappedToken in gtokens["tokenmap"]:
-        tombstone += "tkn " + mappedToken + "\n"
+        tombstone += f"tkn {mappedToken}\n"
     tombstone += "sta\n"
     for statementIndex in range(gtokens["linecount"]):
         for token in gtokens[statementIndex]:
-            tombstone += token + " "
+            tombstone += f"{token} "
         tombstone += "\n"
     tombstone += "end\n"
     return tombstone
@@ -175,11 +175,11 @@ def translateToPython():
     python = ""
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
-            python += "#" + gtokens[statementIndex][1] + "\n"
+            python += f"#{gtokens[statementIndex][1]}\n"
         elif gtokens[statementIndex][0] == ASSIGNMENT:
-            python += gtokens[statementIndex][1] + " = " + gtokens[statementIndex][2] + "\n"
+            python += f"{gtokens[statementIndex][1]} = {gtokens[statementIndex][2]}\n"
         else:
-            python += gtokens[statementIndex][1] + "\n"
+            python += f"{gtokens[statementIndex][1]}\n"
     return python
 
 def translateToNewlinedGraveyard():
@@ -189,22 +189,22 @@ def translateToNewlinedGraveyard():
     graveyard += "\n"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
-            graveyard += "#" + gtokens[statementIndex][1] + ";\n"
+            graveyard += f"#{gtokens[statementIndex][1]};\n"
         elif gtokens[statementIndex][0] == ASSIGNMENT:
-            graveyard += gtokens[statementIndex][1] + "=" + gtokens[statementIndex][2] + ";\n"
+            graveyard += f"{gtokens[statementIndex][1]}={gtokens[statementIndex][2]};\n"
         else:
-            graveyard += gtokens[statementIndex][1] + ";\n"
+            graveyard += f"{gtokens[statementIndex][1]};\n"
     return graveyard
 
 def translateToGraveyard():
     graveyard = ""
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
-            graveyard += "#" + gtokens[statementIndex][1] + ";"
+            graveyard += f"#{gtokens[statementIndex][1]};"
         elif gtokens[statementIndex][0] == ASSIGNMENT:
-            graveyard += gtokens[statementIndex][1] + "=" + gtokens[statementIndex][2] + ";"
+            graveyard += f"{gtokens[statementIndex][1]}={gtokens[statementIndex][2]};"
         else:
-            graveyard += gtokens[statementIndex][1] + ";"
+            graveyard += f"{gtokens[statementIndex][1]};"
     return graveyard
 
 def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isInterpret, isInterpretTombstone):
