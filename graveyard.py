@@ -25,6 +25,14 @@ def base92(decimal):
         print("cannot convert negative decimal to base92")
         return None
 
+def fromBase92(base92):
+    counter = 0
+    for digit in BASE92:
+        if digit == base92:
+            return(counter)
+        else:
+            counter += 1
+
 def fread(path):
     data = None
     with open(path, "r", encoding="utf-8") as file:
@@ -81,6 +89,9 @@ def gGetAssignment(operands):
             assignmentData.append("False")
         elif operand == "@":
             assignmentData.append("None")
+        elif operand[0] == ":":
+            mappedToken = operand[1:-1]
+            assignmentData.append(gtokens["tokenmap"][fromBase92(mappedToken) - 1])
         else:
             assignmentData.append(operand)
     gtokens[gtokens["linecount"]] = assignmentData
@@ -111,6 +122,11 @@ def pGetAssignment(operands):
 
 def tokenizeGraveyard(chars):
     statements = gGetStatements(chars)
+    if statements[0].startswith("::"):
+        mappedTokens = statements[0][2:].split(":")
+        for mappedToken in mappedTokens:
+            gtokens["tokenmap"].append(f":{mappedToken}")
+    statements = statements[1:]
     for statement in statements:
         if statement[0] == "#":
             gGetComment(statement)
@@ -186,7 +202,7 @@ def translateToNewlinedGraveyard():
     graveyard = ":"
     for mappedToken in gtokens["tokenmap"]:
         graveyard += mappedToken
-    graveyard += "\n"
+    graveyard += ";\n"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += f"#{gtokens[statementIndex][1]};\n"
@@ -200,6 +216,7 @@ def translateToGraveyard():
     graveyard = ":"
     for mappedToken in gtokens["tokenmap"]:
         graveyard += mappedToken
+    graveyard += ";"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += f"#{gtokens[statementIndex][1]};"
@@ -215,8 +232,8 @@ def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isI
     if isTranslatePython:
         tokenizePython(chars)
         debugGTokens()
-        # graveyardNewlines = translateToNewlinedGraveyard()
-        # debug(graveyardNewlines)
+        graveyardNewlines = translateToNewlinedGraveyard()
+        debug(graveyardNewlines)
         graveyardMinified = translateToGraveyard()
         debug(graveyardMinified)
         # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
@@ -225,11 +242,11 @@ def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isI
         debugGTokens()
         python = translateToPython()
         debug(python)
-        fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
+        # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
     if isOutputTombstone:
         tombstone = translateToTombstone()
         debug(tombstone)
-        fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
+        # fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
     if isInterpret:
         print("\nGraveyard interpretation is not implemented yet\n")
     if isInterpretTombstone:
@@ -245,3 +262,8 @@ if __name__ == "__main__":
     parser.add_argument("-it", "--interprettombstone", action="store_true", help="Interpret the raw Tombstone source code.")
     args = parser.parse_args()
     main(args.source, args.translatepython, args.translategraveyard, args.outputtombstone , args.interpret , args.interprettombstone)
+
+# line 105: replace use of index() with just converting the mapped token code to base92
+# !* store only the tokens in tokenmap, without the : because it's unecessary
+# !* fix fromBase92() algorithm to work with numbers over 91
+# !* allow robust token parsing when graveyard code has a mix of mapped and unmapped tokens
