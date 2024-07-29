@@ -1,7 +1,7 @@
 import argparse
 import re
 
-gtokens = {
+gtokendata = {
     "linecount": 0,
     "tokenmap": []
 }
@@ -24,14 +24,6 @@ def base92(decimal):
     else:
         print("cannot convert negative decimal to base92")
         return None
-
-# def fromBase92(base92):
-#     counter = 0
-#     for digit in BASE92:
-#         if digit == base92:
-#             return(counter)
-#         else:
-#             counter += 1
 
 def fromBase92(base92):
     base92Decimals = {'~': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8, 'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15, 'P': 16, 'Q': 17, 'R': 18, 'S': 19, 'T': 20, 'U': 21, 'V': 22, 'W': 23, 'X': 24, 'Y': 25, 'Z': 26, 'a': 27, 'b': 28, 'c': 29, 'd': 30, 'e': 31, 'f': 32, 'g': 33, 'h': 34, 'i': 35, 'j': 36, 'k': 37, 'l': 38, 'm': 39, 'n': 40, 'o': 41, 'p': 42, 'q': 43, 'r': 44, 's': 45, 't': 46, 'u': 47, 'v': 48, 'w': 49, 'x': 50, 'y': 51, 'z': 52, '0': 53, '1': 54, '2': 55, '3': 56, '4': 57, '5': 58, '6': 59, '7': 60, '8': 61, '9': 62, '!': 63, '#': 64, '$': 65, '%': 66, '&': 67, "'": 68, '(': 69, ')': 70, '*': 71, '+': 72, ',': 73, '-': 74, '.': 75, '/': 76, ':': 77, ';': 78, '<': 79, '=': 80, '>': 81, '?': 82, '@': 83, '[': 84, ']': 85, '^': 86, '_': 87, '`': 88, '{': 89, '|': 90, '}': 91}
@@ -61,7 +53,7 @@ def debug(data):
             print(item)
     print("\n")
 
-def debugGTokens():
+def debugGTokens(gtokens):
     print(gtokens)
 
 def gGetStatements(chars):
@@ -73,23 +65,23 @@ def pGetStatements(chars):
     lines = chars.split("\n")
     return lines
 
-def gGetUnimplementedStatement(line):
+def gGetUnimplementedStatement(gtokens, line):
     gtokens[gtokens["linecount"]] = [UNIMPLEMENTED, line]
     gtokens["linecount"] += 1
 
-def pGetUnimplementedStatement(line):
+def pGetUnimplementedStatement(gtokens, line):
     gtokens[gtokens["linecount"]] = [UNIMPLEMENTED, line]
     gtokens["linecount"] += 1
 
-def gGetComment(line):
+def gGetComment(gtokens, line):
     gtokens[gtokens["linecount"]] = [COMMENT, line[1:]]
     gtokens["linecount"] += 1
 
-def pGetComment(line):
+def pGetComment(gtokens, line):
     gtokens[gtokens["linecount"]] = [COMMENT, line[1:]]
     gtokens["linecount"] += 1
 
-def gGetAssignment(operands):
+def gGetAssignment(gtokens, operands):
     assignmentData = [ASSIGNMENT]
     for operand in operands:
         if operand == "$":
@@ -106,7 +98,7 @@ def gGetAssignment(operands):
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
-def pGetAssignment(operands):
+def pGetAssignment(gtokens, operands):
     assignmentData = [ASSIGNMENT]
     for operand in operands:
         cleanedOperand = operand.replace(" ", "")
@@ -128,7 +120,7 @@ def pGetAssignment(operands):
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
-def tokenizeGraveyard(chars):
+def tokenizeGraveyard(gtokens, chars):
     statements = gGetStatements(chars)
     if statements[0].startswith("::"):
         mappedTokens = statements[0][2:].split(":")
@@ -155,9 +147,9 @@ def tokenizeGraveyard(chars):
                     arbitraryTokenQueue[tokenCounter] += remainingStatementChars[0]
                     remainingStatementChars = remainingStatementChars[1:]
             if statementType == ASSIGNMENT:
-                gGetAssignment(arbitraryTokenQueue)
+                gGetAssignment(gtokendata, arbitraryTokenQueue)
             else:
-                gGetUnimplementedStatement(statement)
+                gGetUnimplementedStatement(gtokendata, statement)
 
 def tokenizePython(chars):
     statements = pGetStatements(chars)
@@ -179,11 +171,11 @@ def tokenizePython(chars):
                     arbitraryTokenQueue[tokenCounter] += remainingStatementChars[0]
                     remainingStatementChars = remainingStatementChars[1:]
             if statementType == ASSIGNMENT:
-                pGetAssignment(arbitraryTokenQueue)
+                pGetAssignment(gtokendata, arbitraryTokenQueue)
             else:
-                pGetUnimplementedStatement(statement)
+                pGetUnimplementedStatement(gtokendata, statement)
 
-def translateToTombstone():
+def translateToTombstone(gtokens):
     tombstone = ""
     for mappedToken in gtokens["tokenmap"]:
         tombstone += f"tkn {mappedToken}\n"
@@ -195,7 +187,7 @@ def translateToTombstone():
     tombstone += "end\n"
     return tombstone
 
-def translateToPython():
+def translateToPython(gtokens):
     python = ""
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
@@ -206,7 +198,7 @@ def translateToPython():
             python += f"{gtokens[statementIndex][1]}\n"
     return python
 
-def translateToNewlinedGraveyard():
+def translateToGraveyard(gtokens):
     graveyard = ":"
     for mappedToken in gtokens["tokenmap"]:
         graveyard += f":{mappedToken}"
@@ -234,53 +226,30 @@ def translateToNewlinedGraveyard():
             graveyard += f"{gtokens[statementIndex][1]};\n"
     return graveyard
 
-def translateToGraveyard():
-    graveyard = ":"
-    for mappedToken in gtokens["tokenmap"]:
-        graveyard += f":{mappedToken}"
-    graveyard += ";"
-    for statementIndex in range(gtokens["linecount"]):
-        if gtokens[statementIndex][0] == COMMENT:
-            graveyard += f"#{gtokens[statementIndex][1]};"
-        elif gtokens[statementIndex][0] == ASSIGNMENT:
-            left = gtokens[statementIndex][1]
-            leftCounter = 0
-            for mappedToken in gtokens["tokenmap"]:
-                if left == mappedToken:
-                    left = f":{base92(leftCounter + 1)}:"
-                else:
-                    leftCounter += 1
-            right = gtokens[statementIndex][2]
-            rightCounter = 0
-            for mappedToken in gtokens["tokenmap"]:
-                if right == mappedToken:
-                    right = f":{base92(rightCounter + 1)}:"
-                else:
-                    rightCounter += 1
-            graveyard += f"{left}={right};"
-        else:
-            graveyard += f"{gtokens[statementIndex][1]};"
-    return graveyard
+def translateToGraveyardMinified(gtokens):
+    graveyard = translateToGraveyard(gtokens)
+    graveyardMinified = "".join(graveyard.split("\n"))
+    return graveyardMinified
 
 def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isInterpret, isInterpretTombstone):
     chars = fread(source)
 
     if isTranslatePython:
         tokenizePython(chars)
-        debugGTokens()
-        graveyardNewlines = translateToNewlinedGraveyard()
+        debugGTokens(gtokendata)
+        graveyardNewlines = translateToGraveyard(gtokendata)
         debug(graveyardNewlines)
-        graveyardMinified = translateToGraveyard()
+        graveyardMinified = translateToGraveyardMinified(gtokendata)
         debug(graveyardMinified)
         # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
     if isTranslateGraveyard:
-        tokenizeGraveyard(chars)
-        debugGTokens()
-        python = translateToPython()
+        tokenizeGraveyard(gtokendata, chars)
+        debugGTokens(gtokendata)
+        python = translateToPython(gtokendata)
         debug(python)
         # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
     if isOutputTombstone:
-        tombstone = translateToTombstone()
+        tombstone = translateToTombstone(gtokendata)
         debug(tombstone)
         # fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
     if isInterpret:
@@ -300,4 +269,3 @@ if __name__ == "__main__":
     main(args.source, args.translatepython, args.translategraveyard, args.outputtombstone , args.interpret , args.interprettombstone)
 
 # !* allow robust token parsing when graveyard code has a mix of mapped and unmapped tokens
-# !* modularize translateToGraveyard functions because there's a lot of repeated code there
