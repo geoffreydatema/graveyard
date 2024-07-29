@@ -112,11 +112,10 @@ def pGetAssignment(operands):
         elif re.match(r"^[\d\.]+$", cleanedOperand):
             assignmentData.append(cleanedOperand)
         else:
-            if f":{cleanedOperand}" in gtokens["tokenmap"]:
-                assignmentData.append(f":{base92(gtokens["tokenmap"].index(f":{cleanedOperand}") + 1)}:")
-            else:
-                gtokens["tokenmap"].append(f":{cleanedOperand}")
-                assignmentData.append(f":{base92(len(gtokens["tokenmap"]))}:")
+            if cleanedOperand not in gtokens["tokenmap"]:
+                gtokens["tokenmap"].append(cleanedOperand)
+            assignmentData.append(cleanedOperand)
+
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
@@ -125,7 +124,7 @@ def tokenizeGraveyard(chars):
     if statements[0].startswith("::"):
         mappedTokens = statements[0][2:].split(":")
         for mappedToken in mappedTokens:
-            gtokens["tokenmap"].append(f":{mappedToken}")
+            gtokens["tokenmap"].append(mappedToken)
     statements = statements[1:]
     for statement in statements:
         if statement[0] == "#":
@@ -201,13 +200,27 @@ def translateToPython():
 def translateToNewlinedGraveyard():
     graveyard = ":"
     for mappedToken in gtokens["tokenmap"]:
-        graveyard += mappedToken
+        graveyard += f":{mappedToken}"
     graveyard += ";\n"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += f"#{gtokens[statementIndex][1]};\n"
         elif gtokens[statementIndex][0] == ASSIGNMENT:
-            graveyard += f"{gtokens[statementIndex][1]}={gtokens[statementIndex][2]};\n"
+            left = gtokens[statementIndex][1]
+            leftCounter = 0
+            for mappedToken in gtokens["tokenmap"]:
+                if left == mappedToken:
+                    left = f":{base92(leftCounter + 1)}:"
+                else:
+                    leftCounter += 1
+            right = gtokens[statementIndex][2]
+            rightCounter = 0
+            for mappedToken in gtokens["tokenmap"]:
+                if right == mappedToken:
+                    right = f":{base92(rightCounter + 1)}:"
+                else:
+                    rightCounter += 1
+            graveyard += f"{left}={right};\n"
         else:
             graveyard += f"{gtokens[statementIndex][1]};\n"
     return graveyard
@@ -215,13 +228,27 @@ def translateToNewlinedGraveyard():
 def translateToGraveyard():
     graveyard = ":"
     for mappedToken in gtokens["tokenmap"]:
-        graveyard += mappedToken
+        graveyard += f":{mappedToken}"
     graveyard += ";"
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += f"#{gtokens[statementIndex][1]};"
         elif gtokens[statementIndex][0] == ASSIGNMENT:
-            graveyard += f"{gtokens[statementIndex][1]}={gtokens[statementIndex][2]};"
+            left = gtokens[statementIndex][1]
+            leftCounter = 0
+            for mappedToken in gtokens["tokenmap"]:
+                if left == mappedToken:
+                    left = f":{base92(leftCounter + 1)}:"
+                else:
+                    leftCounter += 1
+            right = gtokens[statementIndex][2]
+            rightCounter = 0
+            for mappedToken in gtokens["tokenmap"]:
+                if right == mappedToken:
+                    right = f":{base92(rightCounter + 1)}:"
+                else:
+                    rightCounter += 1
+            graveyard += f"{left}={right};"
         else:
             graveyard += f"{gtokens[statementIndex][1]};"
     return graveyard
@@ -263,7 +290,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args.source, args.translatepython, args.translategraveyard, args.outputtombstone , args.interpret , args.interprettombstone)
 
-# line 105: replace use of index() with just converting the mapped token code to base92
-# !* store only the tokens in tokenmap, without the : because it's unecessary
 # !* fix fromBase92() algorithm to work with numbers over 91
 # !* allow robust token parsing when graveyard code has a mix of mapped and unmapped tokens
+# !* modularize translateToGraveyard functions because there's a lot of repeated code there
