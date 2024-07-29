@@ -1,15 +1,29 @@
 import argparse
+import re
 
 gtokens = {
     "linecount": 0,
-    "tokencount": 0
+    "tokenmap": []
 }
 
-BASE92 = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "!", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", ":", ";", "<", "=", ">", "?", "@", "[", "]", "^", "_", "`", "{", "|", "}", "~"]
+BASE92 = "~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'()*+,-./:;<=>?@[]^_`{|}"
 
 UNIMPLEMENTED = "uim"
 COMMENT = "cmt"
 ASSIGNMENT = "asn"
+
+def base92(decimal):
+    base92String = ""
+    if decimal >= 0:
+        while True:
+            base92String = BASE92[decimal % 92] + base92String
+            decimal //= 92
+            if decimal <= 0:
+                break
+        return base92String
+    else:
+        print("cannot convert negative decimal to base92")
+        return None
 
 def fread(path):
     data = None
@@ -82,8 +96,16 @@ def pGetAssignment(operands):
             assignmentData.append("False")
         elif cleanedOperand == "None":
             assignmentData.append("None")
-        else:
+        elif cleanedOperand.startswith('"'):
             assignmentData.append(cleanedOperand)
+        elif re.match(r"^[\d\.]+$", cleanedOperand):
+            assignmentData.append(cleanedOperand)
+        else:
+            if f":{cleanedOperand}" in gtokens["tokenmap"]:
+                assignmentData.append(f":{base92(gtokens["tokenmap"].index(f":{cleanedOperand}") + 1)}:")
+            else:
+                gtokens["tokenmap"].append(f":{cleanedOperand}")
+                assignmentData.append(f":{base92(len(gtokens["tokenmap"]))}:")
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
@@ -139,10 +161,14 @@ def tokenizePython(chars):
 
 def translateToTombstone():
     tombstone = ""
+    for mappedToken in gtokens["tokenmap"]:
+        tombstone += "tkn " + mappedToken + "\n"
+    tombstone += "sta\n"
     for statementIndex in range(gtokens["linecount"]):
         for token in gtokens[statementIndex]:
             tombstone += token + " "
         tombstone += "\n"
+    tombstone += "end\n"
     return tombstone
 
 def translateToPython():
@@ -186,8 +212,8 @@ def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isI
         debugGTokens()
         graveyardNewlines = translateToNewlinedGraveyard()
         debug(graveyardNewlines)
-        graveyardMinified = translateToGraveyard()
-        debug(graveyardMinified)
+        # graveyardMinified = translateToGraveyard()
+        # debug(graveyardMinified)
         fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
     if isTranslateGraveyard:
         tokenizeGraveyard(chars)
