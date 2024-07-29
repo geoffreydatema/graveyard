@@ -197,7 +197,9 @@ def translateToNewlinedGraveyard():
     return graveyard
 
 def translateToGraveyard():
-    graveyard = ""
+    graveyard = ":"
+    for mappedToken in gtokens["tokenmap"]:
+        graveyard += mappedToken
     for statementIndex in range(gtokens["linecount"]):
         if gtokens[statementIndex][0] == COMMENT:
             graveyard += f"#{gtokens[statementIndex][1]};"
@@ -213,11 +215,11 @@ def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isI
     if isTranslatePython:
         tokenizePython(chars)
         debugGTokens()
-        graveyardNewlines = translateToNewlinedGraveyard()
-        debug(graveyardNewlines)
-        # graveyardMinified = translateToGraveyard()
-        # debug(graveyardMinified)
-        fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
+        # graveyardNewlines = translateToNewlinedGraveyard()
+        # debug(graveyardNewlines)
+        graveyardMinified = translateToGraveyard()
+        debug(graveyardMinified)
+        # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
     if isTranslateGraveyard:
         tokenizeGraveyard(chars)
         debugGTokens()
