@@ -56,9 +56,17 @@ def debug(data):
 def debugGTokens(gtokens):
     print(gtokens)
 
+def compressToken(gtokens, token):
+    if token not in gtokens["tokenmap"]:
+        gtokens["tokenmap"].append(token)
+    return token
+
 def gGetStatements(chars):
     newlinesCleaned = chars.replace("\n", "")
     lines = newlinesCleaned.split(";")
+    # if lines[0].startswith("::"):
+    #     return lines[:-1]
+    # else:
     return lines[:-1]
 
 def pGetStatements(chars):
@@ -90,11 +98,15 @@ def gGetAssignment(gtokens, operands):
             assignmentData.append("False")
         elif operand == "@":
             assignmentData.append("None")
+        elif operand.startswith('"'):
+            assignmentData.append(operand)
+        elif re.match(r"^[\d\.]+$", operand):
+            assignmentData.append(operand)
         elif operand[0] == ":":
             mappedToken = operand[1:-1]
             assignmentData.append(gtokens["tokenmap"][fromBase92(mappedToken) - 1])
         else:
-            assignmentData.append(operand)
+            assignmentData.append(compressToken(gtokendata, operand))
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
@@ -126,7 +138,7 @@ def tokenizeGraveyard(gtokens, chars):
         mappedTokens = statements[0][2:].split(":")
         for mappedToken in mappedTokens:
             gtokens["tokenmap"].append(mappedToken)
-    statements = statements[1:]
+        statements = statements[1:]
     for statement in statements:
         if statement[0] == "#":
             gGetComment(statement)
@@ -185,7 +197,7 @@ def translateToTombstone(gtokens):
             tombstone += f"{token} "
         tombstone += "\n"
     tombstone += "end\n"
-    return tombstone
+    return tombstone[:-1]
 
 def translateToPython(gtokens):
     python = ""
@@ -196,7 +208,7 @@ def translateToPython(gtokens):
             python += f"{gtokens[statementIndex][1]} = {gtokens[statementIndex][2]}\n"
         else:
             python += f"{gtokens[statementIndex][1]}\n"
-    return python
+    return python[:-1]
 
 def translateToGraveyard(gtokens):
     graveyard = ":"
@@ -224,48 +236,47 @@ def translateToGraveyard(gtokens):
             graveyard += f"{left}={right};\n"
         else:
             graveyard += f"{gtokens[statementIndex][1]};\n"
-    return graveyard
+    return graveyard[:-1]
 
 def translateToGraveyardMinified(gtokens):
     graveyard = translateToGraveyard(gtokens)
     graveyardMinified = "".join(graveyard.split("\n"))
     return graveyardMinified
 
-def main(source, isTranslatePython, isTranslateGraveyard, isOutputTombstone, isInterpret, isInterpretTombstone):
+def main(source, isTokenizePython, isTokenizeGraveyard, isOutputPython, isOutputGraveyard, isOutputTombstone, isInterpret):
     chars = fread(source)
 
-    if isTranslatePython:
+    if isTokenizePython:
         tokenizePython(chars)
         debugGTokens(gtokendata)
+    elif isTokenizeGraveyard:
+        tokenizeGraveyard(gtokendata, chars)
+        debugGTokens(gtokendata)
+    if isOutputPython:
+        python = translateToPython(gtokendata)
+        debug(python)
+        # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.py")
+    elif isOutputGraveyard:
         graveyardNewlines = translateToGraveyard(gtokendata)
         debug(graveyardNewlines)
         graveyardMinified = translateToGraveyardMinified(gtokendata)
         debug(graveyardMinified)
-        # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.txt")
-    if isTranslateGraveyard:
-        tokenizeGraveyard(gtokendata, chars)
-        debugGTokens(gtokendata)
-        python = translateToPython(gtokendata)
-        debug(python)
-        # fwrite(python, r"C:\Working\\graveyard\\translatedToPython.txt")
-    if isOutputTombstone:
+        # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\translatedToGraveyard.graveyard")
+    elif isOutputTombstone:
         tombstone = translateToTombstone(gtokendata)
         debug(tombstone)
         # fwrite(tombstone, r"C:\Working\\graveyard\\translatedToTombstone.txt")
     if isInterpret:
         print("\nGraveyard interpretation is not implemented yet\n")
-    if isInterpretTombstone:
-        print("\nTombstone interpretation is not implemented yet\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", nargs="?", help="Graveyard source code to operate on.")
-    parser.add_argument("-tp", "--translatepython", action="store_true", help="Translate the Python source code to Graveyard.")
-    parser.add_argument("-tg", "--translategraveyard", action="store_true", help="Translate the Graveyard source code to Python.")
+    parser.add_argument("-tp", "--tokenizepython", action="store_true", help="Tokenize the Python source code.")
+    parser.add_argument("-tg", "--tokenizegraveyard", action="store_true", help="Tokenize the Graveyard source code.")
+    parser.add_argument("-op", "--outputpython", action="store_true", help="Output the tokenized code as Python.")
+    parser.add_argument("-og", "--outputgraveyard", action="store_true", help="Output the tokenized code as Graveyard.")
     parser.add_argument("-ot", "--outputtombstone", action="store_true", help="Output the Tombstone representation of the source code.")
     parser.add_argument("-i", "--interpret", action="store_true", help="Interpret the Graveyard source code.")
-    parser.add_argument("-it", "--interprettombstone", action="store_true", help="Interpret the raw Tombstone source code.")
     args = parser.parse_args()
-    main(args.source, args.translatepython, args.translategraveyard, args.outputtombstone , args.interpret , args.interprettombstone)
-
-# !* allow robust token parsing when graveyard code has a mix of mapped and unmapped tokens
+    main(args.source, args.tokenizepython, args.tokenizegraveyard, args.outputpython, args.outputgraveyard, args.outputtombstone, args.interpret)
