@@ -1,2 +1,2 @@
 # graveyard
-A programming language for writing condensed Python
+A programming language for automation
