@@ -119,7 +119,7 @@ def pGetAssignment(gtokens, operands):
     gtokens[gtokens["linecount"]] = assignmentData
     gtokens["linecount"] += 1
 
-def tokenizeGraveyard(gtokens, chars):
+def tokenizeGraveyard(chars):
     statements = gGetStatements(chars)
 
     for statement in statements:
@@ -209,27 +209,23 @@ def translateToPython(gtokens):
 def main(source, isTokenizeGraveyard, isTokenizePython, isOutputGraveyard, isOutputPython, isOutputTombstone, isInterpret):
     chars = fread(source)
 
-    if isTokenizePython:
+    if isTokenizeGraveyard:
         tokenizePython(chars)
         debugGTokens(gtokendata)
-    elif isTokenizeGraveyard:
-        tokenizeGraveyard(gtokendata, chars)
+    elif isTokenizePython:
+        tokenizeGraveyard(chars)
         debugGTokens(gtokendata)
     if isOutputPython:
         python = translateToPython(gtokendata)
         debug(python)
-        # fwrite(python, r"C:\Working\\graveyard\\sandbox\\translatedToPython.py")
     elif isOutputGraveyard:
         graveyardNewlines = translateToGraveyard(gtokendata)
         debug(graveyardNewlines)
         graveyardMinified = translateToGraveyardMinified(gtokendata)
         debug(graveyardMinified)
-        # fwrite(graveyardNewlines, r"C:\Working\\graveyard\\sandbox\\translatedToGraveyard.graveyard")
-        # fwrite(graveyardMinified, r"C:\Working\\graveyard\\sandbox\\translatedToGraveyardMinified.graveyard")
     elif isOutputTombstone:
         tombstone = translateToTombstone(gtokendata)
         debug(tombstone)
-        # fwrite(tombstone, r"C:\Working\\graveyard\\sandbox\\translatedToTombstone.txt")
     if isInterpret:
         print("\nGraveyard interpretation is not implemented yet\n")
 
