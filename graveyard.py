@@ -1,242 +1,161 @@
-import argparse
 import re
 
-gtokendata = {
-    "linecount": 0
+graveyard_file = """number = 41 + 2;"""
+
+TOKEN_TYPES = {
+    "WHITESPACE": r"\s+",
+    "IDENTIFIER": r"[a-zA-Z_]\w*",
+    "SEMICOLON": r";",
+    "NUMBER": r"\d+",
+    "ASSIGNMENT": r"=",
+    "ADDITION": r"\+"
 }
 
-BASE92 = "~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&'()*+,-./:;<=>?@[]^_`{|}"
+class ASTNode:
+    pass
 
-UNIMPLEMENTED = "uim"
-COMMENT = "cmt"
-ASSIGNMENT = "asn"
+class NumberNode(ASTNode):
+    def __init__(self, value):
+        self.value = int(value)
 
-def base92(decimal):
-    base92String = ""
-    if decimal >= 0:
-        while True:
-            base92String = f"{BASE92[decimal % 92]}{base92String}"
-            decimal //= 92
-            if decimal <= 0:
-                break
-        return base92String
-    else:
-        print("cannot convert negative decimal to base92")
+class IdentifierNode(ASTNode):
+    def __init__(self, name):
+        self.name = name
+
+class BinaryOpNode(ASTNode):
+    def __init__(self, left, op, right):
+        self.left = left
+        self.op = op
+        self.right = right
+
+class AssignmentNode(ASTNode):
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.current = 0
+
+    def parse(self):
+        statements = []
+        while self.current < len(self.tokens):
+            statements.append(self.parse_statement())
+        return statements
+
+    def parse_statement(self):
+        if self.match("IDENTIFIER"):
+            return self.parse_assignment()
+        else:
+            raise SyntaxError(f"Unexpected token: {self.peek()}")
+
+    def parse_assignment(self):
+        # Expect IDENTIFIER
+        identifier = self.consume("IDENTIFIER")
+        # Expect ASSIGNMENT
+        self.consume("ASSIGNMENT")
+        # Expect an expression (NUMBER or IDENTIFIER or something else)
+        value = self.parse_expression()
+        # Expect SEMICOLON
+        self.consume("SEMICOLON")
+        return AssignmentNode(identifier, value)
+
+    def parse_expression(self):
+        left = self.parse_term()  # Start by parsing the first term (e.g., a number or identifier)
+
+        # Handle addition (for now, we only have addition)
+        while self.match("ADDITION"):
+            op = self.consume("ADDITION")
+            right = self.parse_term()  # Parse the right side of the addition
+            left = BinaryOpNode(left, op, right)
+
+        return left
+
+    def parse_term(self):
+        # This handles parsing a term, which could be a number or identifier
+        if self.match("NUMBER"):
+            return NumberNode(self.consume("NUMBER"))
+        elif self.match("IDENTIFIER"):
+            return IdentifierNode(self.consume("IDENTIFIER"))
+        else:
+            raise SyntaxError(f"Unexpected token: {self.peek()}")
+
+    def consume(self, token_type):
+        if self.match(token_type):
+            token = self.tokens[self.current]
+            self.current += 1
+            return token[1]  # Return token value (e.g., 'x', '5', etc.)
+        raise SyntaxError(f"Expected {token_type}, found {self.peek()}")
+
+    def match(self, *token_types):
+        if self.current < len(self.tokens):
+            token_type = self.tokens[self.current][0]
+            return token_type in token_types
+        return False
+
+    def peek(self):
+        if self.current < len(self.tokens):
+            return self.tokens[self.current]
         return None
 
-def fromBase92(base92):
-    base92Decimals = {'~': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8, 'I': 9, 'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15, 'P': 16, 'Q': 17, 'R': 18, 'S': 19, 'T': 20, 'U': 21, 'V': 22, 'W': 23, 'X': 24, 'Y': 25, 'Z': 26, 'a': 27, 'b': 28, 'c': 29, 'd': 30, 'e': 31, 'f': 32, 'g': 33, 'h': 34, 'i': 35, 'j': 36, 'k': 37, 'l': 38, 'm': 39, 'n': 40, 'o': 41, 'p': 42, 'q': 43, 'r': 44, 's': 45, 't': 46, 'u': 47, 'v': 48, 'w': 49, 'x': 50, 'y': 51, 'z': 52, '0': 53, '1': 54, '2': 55, '3': 56, '4': 57, '5': 58, '6': 59, '7': 60, '8': 61, '9': 62, '!': 63, '#': 64, '$': 65, '%': 66, '&': 67, "'": 68, '(': 69, ')': 70, '*': 71, '+': 72, ',': 73, '-': 74, '.': 75, '/': 76, ':': 77, ';': 78, '<': 79, '=': 80, '>': 81, '?': 82, '@': 83, '[': 84, ']': 85, '^': 86, '_': 87, '`': 88, '{': 89, '|': 90, '}': 91}
-    decimal = 0
-    power = 0
-    for char in reversed(base92):
-        decimal += base92Decimals[char] * (92 ** power)
-        power += 1
-    return decimal
+class Interpreter:
+    def __init__(self):
+        self.variables = {}
 
-def fread(path):
-    data = None
-    with open(path, "r", encoding="utf-8") as file:
-        data = file.read()
-    return data
+    def interpret(self, ast):
+        for node in ast:
+            self.execute(node)
 
-def fwrite(data, path):
-    with open(path, "w") as file:
-        file.write(data)
-
-def debug(data):
-    print("\n")
-    if type(data) == str:
-        print(data)
-    elif type(data) == list:
-        for item in list:
-            print(item)
-    print("\n")
-
-def debugGTokens(gtokens):
-    for statement in gtokens.keys():
-        print(gtokens[statement])
-
-def gGetStatements(chars):
-    newlinesCleaned = chars.replace("\n", "")
-    lines = newlinesCleaned.split(";")
-    return lines[:-1]
-
-def pGetStatements(chars):
-    lines = chars.split("\n")
-    return lines
-
-def gGetUnimplementedStatement(gtokens, line):
-    gtokens[gtokens["linecount"]] = [UNIMPLEMENTED, line]
-    gtokens["linecount"] += 1
-
-def pGetUnimplementedStatement(gtokens, line):
-    gtokens[gtokens["linecount"]] = [UNIMPLEMENTED, line]
-    gtokens["linecount"] += 1
-
-def gGetComment(gtokens, line):
-    gtokens[gtokens["linecount"]] = [COMMENT, line[1:]]
-    gtokens["linecount"] += 1
-
-def pGetComment(gtokens, line):
-    gtokens[gtokens["linecount"]] = [COMMENT, line[1:]]
-    gtokens["linecount"] += 1
-
-def gGetAssignment(gtokens, operands):
-    assignmentData = [ASSIGNMENT]
-    for operand in operands:
-        if operand == "$":
-            assignmentData.append("True")
-        elif operand == ":":
-            assignmentData.append("False")
-        elif operand == "@":
-            assignmentData.append("None")
-        elif operand.startswith('"'):
-            assignmentData.append(operand)
-        elif re.match(r"^[\d\.]+$", operand):
-            assignmentData.append(operand)
+    def execute(self, node):
+        if isinstance(node, AssignmentNode):
+            self.execute_assignment(node)
+        elif isinstance(node, BinaryOpNode):
+            return self.execute_binary_op(node)
+        elif isinstance(node, NumberNode):
+            return node.value
+        elif isinstance(node, IdentifierNode):
+            return self.variables.get(node.name, 0)  # Default to 0 if the variable isn't found
         else:
-            assignmentData.append(operand)
-    gtokens[gtokens["linecount"]] = assignmentData
-    gtokens["linecount"] += 1
+            raise ValueError(f"Unknown node type: {type(node)}")
 
-def pGetAssignment(gtokens, operands):
-    assignmentData = [ASSIGNMENT]
-    for operand in operands:
-        cleanedOperand = operand.replace(" ", "")
-        if cleanedOperand == "True":
-            assignmentData.append("True")
-        elif cleanedOperand == "False":
-            assignmentData.append("False")
-        elif cleanedOperand == "None":
-            assignmentData.append("None")
-        elif cleanedOperand.startswith('"'):
-            assignmentData.append(cleanedOperand)
-        elif re.match(r"^[\d\.]+$", cleanedOperand):
-            assignmentData.append(cleanedOperand)
+    def execute_assignment(self, node):
+        value = self.execute(node.value)
+        self.variables[node.identifier] = value
+        print(f"{node.identifier} = {value}")
+
+    def execute_binary_op(self, node):
+        left = self.execute(node.left)
+        right = self.execute(node.right)
+        if node.op == "+":
+            return left + right
         else:
-            assignmentData.append(cleanedOperand)
+            raise ValueError(f"Unknown operator: {node.op}")
 
-    gtokens[gtokens["linecount"]] = assignmentData
-    gtokens["linecount"] += 1
+def tokenize(code):
+    tokens = []
+    position = 0
+    while position < len(code):
+        match = None
+        for token_type, pattern in TOKEN_TYPES.items():
+            regex = re.compile(pattern)
+            match = regex.match(code, position)
+            if match:
+                if token_type != "WHITESPACE":
+                    tokens.append((token_type, match.group(0)))
+                position = match.end()
+                break
+        if not match:
+            raise SyntaxError(f"Unexpected character: {code[position]}")
+    return tokens
 
-def tokenizeGraveyard(chars):
-    statements = gGetStatements(chars)
+def main():
+    tokens = tokenize(graveyard_file)
+    parser = Parser(tokens)
+    ast = parser.parse()
 
-    for statement in statements:
-        if statement[0] == "#":
-            gGetComment(statement)
-        else:
-            remainingStatementChars = statement
-            arbitraryTokenQueue = [""]
-            tokenCounter = 0
-            statementType = ""
-            while len(remainingStatementChars) > 0:
-                if remainingStatementChars[0] == " ":
-                    remainingStatementChars = remainingStatementChars[1:]
-                elif remainingStatementChars[0] == "=":
-                    statementType = ASSIGNMENT
-                    arbitraryTokenQueue.append("")
-                    tokenCounter += 1
-                    remainingStatementChars = remainingStatementChars[1:]
-                else:
-                    arbitraryTokenQueue[tokenCounter] += remainingStatementChars[0]
-                    remainingStatementChars = remainingStatementChars[1:]
-            if statementType == ASSIGNMENT:
-                gGetAssignment(gtokendata, arbitraryTokenQueue)
-            else:
-                gGetUnimplementedStatement(gtokendata, statement)
-
-def tokenizePython(chars):
-    statements = pGetStatements(chars)
-    for statement in statements:
-        if statement[0] == "#":
-            pGetComment(statement)
-        else:
-            remainingStatementChars = statement
-            arbitraryTokenQueue = [""]
-            tokenCounter = 0
-            statementType = ""
-            while len(remainingStatementChars) > 0:
-                if remainingStatementChars[0] == "=":
-                    statementType = ASSIGNMENT
-                    arbitraryTokenQueue.append("")
-                    tokenCounter += 1
-                    remainingStatementChars = remainingStatementChars[1:]
-                else:
-                    arbitraryTokenQueue[tokenCounter] += remainingStatementChars[0]
-                    remainingStatementChars = remainingStatementChars[1:]
-            if statementType == ASSIGNMENT:
-                pGetAssignment(gtokendata, arbitraryTokenQueue)
-            else:
-                pGetUnimplementedStatement(gtokendata, statement)
-
-def translateToGraveyard(gtokens):
-    graveyard = ""
-    for statementIndex in range(gtokens["linecount"]):
-        if gtokens[statementIndex][0] == COMMENT:
-            graveyard += f"#{gtokens[statementIndex][1]};\n"
-        elif gtokens[statementIndex][0] == ASSIGNMENT:
-            graveyard += f"{gtokens[statementIndex][1]}={gtokens[statementIndex][2]};\n"
-        else:
-            graveyard += f"{gtokens[statementIndex][1]};\n"
-    return graveyard[:-1]
-
-def translateToGraveyardMinified(gtokens):
-    graveyard = translateToGraveyard(gtokens)
-    graveyardMinified = "".join(graveyard.split("\n"))
-    return graveyardMinified
-
-def translateToTombstone(gtokens):
-    tombstone = "sta\n"
-    for statementIndex in range(gtokens["linecount"]):
-        for token in gtokens[statementIndex]:
-            tombstone += f"{token} "
-        tombstone += "\n"
-    tombstone += "end\n"
-    return tombstone[:-1]
-
-def translateToPython(gtokens):
-    python = ""
-    for statementIndex in range(gtokens["linecount"]):
-        if gtokens[statementIndex][0] == COMMENT:
-            python += f"#{gtokens[statementIndex][1]}\n"
-        elif gtokens[statementIndex][0] == ASSIGNMENT:
-            python += f"{gtokens[statementIndex][1]} = {gtokens[statementIndex][2]}\n"
-        else:
-            python += f"{gtokens[statementIndex][1]}\n"
-    return python[:-1]
-
-def main(source, isTokenizeGraveyard, isTokenizePython, isOutputGraveyard, isOutputPython, isOutputTombstone, isInterpret):
-    chars = fread(source)
-
-    if isTokenizeGraveyard:
-        tokenizePython(chars)
-        debugGTokens(gtokendata)
-    elif isTokenizePython:
-        tokenizeGraveyard(chars)
-        debugGTokens(gtokendata)
-    if isOutputPython:
-        python = translateToPython(gtokendata)
-        debug(python)
-    elif isOutputGraveyard:
-        graveyardNewlines = translateToGraveyard(gtokendata)
-        debug(graveyardNewlines)
-        graveyardMinified = translateToGraveyardMinified(gtokendata)
-        debug(graveyardMinified)
-    elif isOutputTombstone:
-        tombstone = translateToTombstone(gtokendata)
-        debug(tombstone)
-    if isInterpret:
-        print("\nGraveyard interpretation is not implemented yet\n")
+    interpreter = Interpreter()
+    interpreter.interpret(ast)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("source", nargs="?", help="Graveyard source code to operate on.")
-    parser.add_argument("-tg", "--tokenizegraveyard", action="store_true", help="Tokenize the Graveyard source code.")
-    parser.add_argument("-tp", "--tokenizepython", action="store_true", help="Tokenize the Python source code.")
-    parser.add_argument("-og", "--outputgraveyard", action="store_true", help="Output the tokenized code as Graveyard.")
-    parser.add_argument("-op", "--outputpython", action="store_true", help="Output the tokenized code as Python.")
-    parser.add_argument("-ot", "--outputtombstone", action="store_true", help="Output the Tombstone representation of the source code.")
-    parser.add_argument("-i", "--interpret", action="store_true", help="Interpret the Graveyard source code.")
-    args = parser.parse_args()
-    main(args.source, args.tokenizegraveyard, args.tokenizepython, args.outputgraveyard, args.outputpython, args.outputtombstone, args.interpret)
+    main()
