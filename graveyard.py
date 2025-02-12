@@ -1,59 +1,65 @@
 import re
 
+WHITESPACE = 0
+IDENTIFIER = 1
+SEMICOLON = 2
+NUMBER = 3
+ASSIGNMENT = 4
+ADDITION = 5
+
 TOKEN_TYPES = {
-    "WHITESPACE": r"\s+",
-    "IDENTIFIER": r"[a-zA-Z_]\w*",
-    "SEMICOLON": r";",
-    "NUMBER": r"\d+",
-    "ASSIGNMENT": r"=",
-    "ADDITION": r"\+"
+    WHITESPACE: r"\s+",
+    IDENTIFIER: r"[a-zA-Z_]\w*",
+    SEMICOLON: r";",
+    NUMBER: r"\d+",
+    ASSIGNMENT: r"=",
+    ADDITION: r"\+"
 }
 
-class ASTNode:
-    pass
-
-class NumberNode(ASTNode):
+class NumberPrimitive():
     def __init__(self, value):
         self.value = int(value)
 
-class IdentifierNode(ASTNode):
+class IdentifierPrimitive():
     def __init__(self, name):
         self.name = name
 
-class BinaryOpNode(ASTNode):
+class BinaryOpPrimitive():
     def __init__(self, left, op, right):
         self.left = left
         self.op = op
         self.right = right
 
-class AssignmentNode(ASTNode):
+class AssignmentPrimitive():
     def __init__(self, identifier, value):
         self.identifier = identifier
         self.value = value
 
 class Tokenizer:
     def __init__(self):
-        pass
+        self.source = ""
     
     def tokenize(self, source):
+        self.source = source
         tokens = []
         position = 0
-        while position < len(source):
+        while position < len(self.source):
             match = None
             for token_type, pattern in TOKEN_TYPES.items():
                 regex = re.compile(pattern)
-                match = regex.match(source, position)
+                match = regex.match(self.source, position)
                 if match:
-                    if token_type != "WHITESPACE":
+                    if token_type != WHITESPACE:
                         tokens.append((token_type, match.group(0)))
                     position = match.end()
                     break
             if not match:
-                raise SyntaxError(f"Unexpected character: {source[position]}")
+                raise SyntaxError(f"Unexpected character: {self.source[position]}")
         return tokens
 
 class Parser:
     def __init__(self):
+        self.tokens = []
         self.current = 0
 
     def parse(self, tokens):
@@ -64,39 +70,39 @@ class Parser:
         return statements
 
     def parse_statement(self):
-        if self.match("IDENTIFIER"):
+        if self.match(IDENTIFIER):
             return self.parse_assignment()
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()}")
 
     def parse_assignment(self):
         # Expect IDENTIFIER
-        identifier = self.consume("IDENTIFIER")
+        identifier = self.consume(IDENTIFIER)
         # Expect ASSIGNMENT
-        self.consume("ASSIGNMENT")
+        self.consume(ASSIGNMENT)
         # Expect an expression (NUMBER or IDENTIFIER or something else)
         value = self.parse_expression()
         # Expect SEMICOLON
-        self.consume("SEMICOLON")
-        return AssignmentNode(identifier, value)
+        self.consume(SEMICOLON)
+        return AssignmentPrimitive(identifier, value)
 
     def parse_expression(self):
         left = self.parse_term()  # Start by parsing the first term (e.g., a number or identifier)
 
         # Handle addition (for now, we only have addition)
-        while self.match("ADDITION"):
-            op = self.consume("ADDITION")
+        while self.match(ADDITION):
+            op = self.consume(ADDITION)
             right = self.parse_term()  # Parse the right side of the addition
-            left = BinaryOpNode(left, op, right)
+            left = BinaryOpPrimitive(left, op, right)
 
         return left
 
     def parse_term(self):
         # This handles parsing a term, which could be a number or identifier
-        if self.match("NUMBER"):
-            return NumberNode(self.consume("NUMBER"))
-        elif self.match("IDENTIFIER"):
-            return IdentifierNode(self.consume("IDENTIFIER"))
+        if self.match(NUMBER):
+            return NumberPrimitive(self.consume(NUMBER))
+        elif self.match(IDENTIFIER):
+            return IdentifierPrimitive(self.consume(IDENTIFIER))
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()}")
 
@@ -104,7 +110,7 @@ class Parser:
         if self.match(token_type):
             token = self.tokens[self.current]
             self.current += 1
-            return token[1]  # Return token value (e.g., 'x', '5', etc.)
+            return token[1]
         raise SyntaxError(f"Expected {token_type}, found {self.peek()}")
 
     def match(self, *token_types):
@@ -120,42 +126,45 @@ class Parser:
 
 class Interpreter:
     def __init__(self):
+        # likely will turn this into the monolith later
         self.variables = {}
 
     def interpret(self, ast):
-        for node in ast:
-            self.execute(node)
+        for primitive in ast:
+            self.execute(primitive)
 
-    def execute(self, node):
-        if isinstance(node, AssignmentNode):
-            self.execute_assignment(node)
-        elif isinstance(node, BinaryOpNode):
-            return self.execute_binary_op(node)
-        elif isinstance(node, NumberNode):
-            return node.value
-        elif isinstance(node, IdentifierNode):
-            return self.variables.get(node.name, 0)  # Default to 0 if the variable isn't found
+    def execute(self, primitive):
+        if isinstance(primitive, AssignmentPrimitive):
+            self.execute_assignment(primitive)
+        elif isinstance(primitive, BinaryOpPrimitive):
+            return self.execute_binary_op(primitive)
+        elif isinstance(primitive, NumberPrimitive):
+            return primitive.value
+        elif isinstance(primitive, IdentifierPrimitive):
+            return self.variables[primitive.name]
         else:
-            raise ValueError(f"Unknown node type: {type(node)}")
+            raise ValueError(f"Unknown primitive type: {type(primitive)}")
 
-    def execute_assignment(self, node):
-        value = self.execute(node.value)
-        self.variables[node.identifier] = value
-        print(f"{node.identifier} = {value}")
+    def execute_assignment(self, primitive):
+        value = self.execute(primitive.value)
+        self.variables[primitive.identifier] = value
+        print(f"{primitive.identifier} = {value}")
 
-    def execute_binary_op(self, node):
-        left = self.execute(node.left)
-        right = self.execute(node.right)
-        if node.op == "+":
+    def execute_binary_op(self, primitive):
+        left = self.execute(primitive.left)
+        right = self.execute(primitive.right)
+        if primitive.op == "+":
             return left + right
         else:
-            raise ValueError(f"Unknown operator: {node.op}")
+            raise ValueError(f"Unknown operator: {primitive.op}")
 
 def main():
-    file = """Frederick = 69+69;"""
+    source = """frederick = 69+69;steve=1+1;"""
+
+    print("")
 
     tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize(file)
+    tokens = tokenizer.tokenize(source)
 
     parser = Parser()
     ast = parser.parse(tokens)
