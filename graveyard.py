@@ -1,7 +1,5 @@
 import re
 
-graveyard_file = """number = 41 + 2;"""
-
 TOKEN_TYPES = {
     "WHITESPACE": r"\s+",
     "IDENTIFIER": r"[a-zA-Z_]\w*",
@@ -33,12 +31,33 @@ class AssignmentNode(ASTNode):
         self.identifier = identifier
         self.value = value
 
+class Tokenizer:
+    def __init__(self):
+        pass
+    
+    def tokenize(self, source):
+        tokens = []
+        position = 0
+        while position < len(source):
+            match = None
+            for token_type, pattern in TOKEN_TYPES.items():
+                regex = re.compile(pattern)
+                match = regex.match(source, position)
+                if match:
+                    if token_type != "WHITESPACE":
+                        tokens.append((token_type, match.group(0)))
+                    position = match.end()
+                    break
+            if not match:
+                raise SyntaxError(f"Unexpected character: {source[position]}")
+        return tokens
+
 class Parser:
-    def __init__(self, tokens):
-        self.tokens = tokens
+    def __init__(self):
         self.current = 0
 
-    def parse(self):
+    def parse(self, tokens):
+        self.tokens = tokens
         statements = []
         while self.current < len(self.tokens):
             statements.append(self.parse_statement())
@@ -132,27 +151,14 @@ class Interpreter:
         else:
             raise ValueError(f"Unknown operator: {node.op}")
 
-def tokenize(code):
-    tokens = []
-    position = 0
-    while position < len(code):
-        match = None
-        for token_type, pattern in TOKEN_TYPES.items():
-            regex = re.compile(pattern)
-            match = regex.match(code, position)
-            if match:
-                if token_type != "WHITESPACE":
-                    tokens.append((token_type, match.group(0)))
-                position = match.end()
-                break
-        if not match:
-            raise SyntaxError(f"Unexpected character: {code[position]}")
-    return tokens
-
 def main():
-    tokens = tokenize(graveyard_file)
-    parser = Parser(tokens)
-    ast = parser.parse()
+    file = """Frederick = 69+69;"""
+
+    tokenizer = Tokenizer()
+    tokens = tokenizer.tokenize(file)
+
+    parser = Parser()
+    ast = parser.parse(tokens)
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
