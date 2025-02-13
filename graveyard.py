@@ -7,6 +7,8 @@ NUMBER = 3
 ASSIGNMENT = 4
 ADDITION = 5
 SUBTRACTION = 6
+MULTIPLICATION = 7
+DIVISION = 8
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -15,7 +17,9 @@ TOKEN_TYPES = {
     NUMBER: r"\d+",
     ASSIGNMENT: r"=",
     ADDITION: r"\+",
-    SUBTRACTION: r"\-"
+    SUBTRACTION: r"\-",
+    MULTIPLICATION: r"\*",
+    DIVISION: r"\/"
 }
 
 class IdentifierPrimitive():
@@ -91,7 +95,7 @@ class Parser:
     def parse_expression(self):
         left = self.parse_term()
 
-        while self.match(ADDITION, SUBTRACTION):
+        while self.match(ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION):
             op = self.consume(self.tokens[self.current][0])
             right = self.parse_term()
             left = BinaryOperationPrimitive(left, op, right)
@@ -156,13 +160,17 @@ class Interpreter:
         right = self.execute(primitive.right)
         if primitive.op == "+":
             return left + right
-        if primitive.op == "-":
+        elif primitive.op == "-":
             return left - right
+        elif primitive.op == "*":
+            return left * right
+        elif primitive.op == "/":
+            return left / right
         else:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
 def main():
-    source = """frederick = 1+2-1-1-1-1;"""
+    source = """frederick = 2/50;"""
 
     print("")
 
