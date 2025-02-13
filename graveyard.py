@@ -6,6 +6,7 @@ SEMICOLON = 2
 NUMBER = 3
 ASSIGNMENT = 4
 ADDITION = 5
+SUBTRACTION = 6
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -13,18 +14,19 @@ TOKEN_TYPES = {
     SEMICOLON: r";",
     NUMBER: r"\d+",
     ASSIGNMENT: r"=",
-    ADDITION: r"\+"
+    ADDITION: r"\+",
+    SUBTRACTION: r"\-"
 }
-
-class NumberPrimitive():
-    def __init__(self, value):
-        self.value = int(value)
 
 class IdentifierPrimitive():
     def __init__(self, name):
         self.name = name
 
-class BinaryOpPrimitive():
+class NumberPrimitive():
+    def __init__(self, value):
+        self.value = int(value)
+
+class BinaryOperationPrimitive():
     def __init__(self, left, op, right):
         self.left = left
         self.op = op
@@ -87,13 +89,12 @@ class Parser:
         return AssignmentPrimitive(identifier, value)
 
     def parse_expression(self):
-        left = self.parse_term()  # Start by parsing the first term (e.g., a number or identifier)
+        left = self.parse_term()
 
-        # Handle addition (for now, we only have addition)
-        while self.match(ADDITION):
-            op = self.consume(ADDITION)
-            right = self.parse_term()  # Parse the right side of the addition
-            left = BinaryOpPrimitive(left, op, right)
+        while self.match(ADDITION, SUBTRACTION):
+            op = self.consume(self.tokens[self.current][0])
+            right = self.parse_term()
+            left = BinaryOperationPrimitive(left, op, right)
 
         return left
 
@@ -136,7 +137,7 @@ class Interpreter:
     def execute(self, primitive):
         if isinstance(primitive, AssignmentPrimitive):
             self.execute_assignment(primitive)
-        elif isinstance(primitive, BinaryOpPrimitive):
+        elif isinstance(primitive, BinaryOperationPrimitive):
             return self.execute_binary_op(primitive)
         elif isinstance(primitive, NumberPrimitive):
             return primitive.value
@@ -155,11 +156,13 @@ class Interpreter:
         right = self.execute(primitive.right)
         if primitive.op == "+":
             return left + right
+        if primitive.op == "-":
+            return left - right
         else:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
 def main():
-    source = """frederick = 69+69;steve=1+1;"""
+    source = """frederick = 1+2-1-1-1-1;"""
 
     print("")
 
