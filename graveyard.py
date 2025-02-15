@@ -87,29 +87,41 @@ class Parser:
         # Expect ASSIGNMENT
         self.consume(ASSIGNMENT)
         # Expect an expression (NUMBER or IDENTIFIER or something else)
-        value = self.parse_expression()
+        value = self.parse_addition_subtraction()
         # Expect SEMICOLON
         self.consume(SEMICOLON)
         return AssignmentPrimitive(identifier, value)
 
-    def parse_expression(self):
-        left = self.parse_term()
+    def parse_addition_subtraction(self):
+        """Parse addition and subtraction (lowest precedence)"""
+        left = self.parse_multiplication_division()
 
-        while self.match(ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION):
+        while self.match(ADDITION, SUBTRACTION):
             op = self.consume(self.tokens[self.current][0])
-            right = self.parse_term()
+            right = self.parse_multiplication_division()
             left = BinaryOperationPrimitive(left, op, right)
 
         return left
 
-    def parse_term(self):
-        # This handles parsing a term, which could be a number or identifier
+    def parse_multiplication_division(self):
+        """Parse multiplication and division"""
+        left = self.parse_numbers_parentheses()
+
+        while self.match(MULTIPLICATION, DIVISION):
+            op = self.consume(self.tokens[self.current][0])
+            right = self.parse_numbers_parentheses()
+            left = BinaryOperationPrimitive(left, op, right)
+
+        return left
+
+    def parse_numbers_parentheses(self):
+        """Parse numbers and parentheses (highest precedence)"""
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(IDENTIFIER):
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         else:
-            raise SyntaxError(f"Unexpected token: {self.peek()}")
+            raise SyntaxError("Expected number, variable, or parenthases")
 
     def consume(self, token_type):
         if self.match(token_type):
@@ -142,7 +154,7 @@ class Interpreter:
         if isinstance(primitive, AssignmentPrimitive):
             self.execute_assignment(primitive)
         elif isinstance(primitive, BinaryOperationPrimitive):
-            return self.execute_binary_op(primitive)
+            return self.execute_binary_operation(primitive)
         elif isinstance(primitive, NumberPrimitive):
             return primitive.value
         elif isinstance(primitive, IdentifierPrimitive):
@@ -155,7 +167,7 @@ class Interpreter:
         self.variables[primitive.identifier] = value
         print(f"{primitive.identifier} = {value}")
 
-    def execute_binary_op(self, primitive):
+    def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
         right = self.execute(primitive.right)
         if primitive.op == "+":
@@ -170,9 +182,10 @@ class Interpreter:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
 def main():
-    source = """frederick = 2/50;"""
+    source = """frederick = 2*3+1+2/4;"""
 
     print("")
+    print(2*3+1+2/4)
 
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
