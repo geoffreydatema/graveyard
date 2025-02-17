@@ -9,6 +9,8 @@ ADDITION = 5
 SUBTRACTION = 6
 MULTIPLICATION = 7
 DIVISION = 8
+LEFTPARENTHESES = 9
+RIGHTPARENTHESES = 10
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -19,7 +21,9 @@ TOKEN_TYPES = {
     ADDITION: r"\+",
     SUBTRACTION: r"\-",
     MULTIPLICATION: r"\*",
-    DIVISION: r"\/"
+    DIVISION: r"\/",
+    LEFTPARENTHESES: r"\(",
+    RIGHTPARENTHESES: r"\)"
 }
 
 class IdentifierPrimitive():
@@ -120,6 +124,11 @@ class Parser:
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(IDENTIFIER):
             return IdentifierPrimitive(self.consume(IDENTIFIER))
+        elif self.match(LEFTPARENTHESES):
+            self.consume(LEFTPARENTHESES)
+            expression = self.parse_addition_subtraction()
+            self.consume(RIGHTPARENTHESES)
+            return expression
         else:
             raise SyntaxError("Expected number, variable, or parenthases")
 
@@ -182,10 +191,10 @@ class Interpreter:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
 def main():
-    source = """frederick = 2*3+1+2/4;"""
+    source = """frederick = (3+2)*2/(9-2-1);"""
 
     print("")
-    print(2*3+1+2/4)
+    print((3+2)*2/(9-2-1))
 
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
