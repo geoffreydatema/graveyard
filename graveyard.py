@@ -1,5 +1,6 @@
 import re
 
+#@! reoder these to match TOKEN_TYPES once we add them all
 WHITESPACE = 0
 IDENTIFIER = 1
 SEMICOLON = 2
@@ -11,6 +12,7 @@ MULTIPLICATION = 7
 DIVISION = 8
 LEFTPARENTHESES = 9
 RIGHTPARENTHESES = 10
+EXPONENTIATION = 11
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -20,6 +22,7 @@ TOKEN_TYPES = {
     ASSIGNMENT: r"=",
     ADDITION: r"\+",
     SUBTRACTION: r"\-",
+    EXPONENTIATION: r"\*\*",
     MULTIPLICATION: r"\*",
     DIVISION: r"\/",
     LEFTPARENTHESES: r"\(",
@@ -109,9 +112,20 @@ class Parser:
 
     def parse_multiplication_division(self):
         """Parse multiplication and division"""
-        left = self.parse_numbers_parentheses()
+        left = self.parse_exponentiation()
 
         while self.match(MULTIPLICATION, DIVISION):
+            op = self.consume(self.tokens[self.current][0])
+            right = self.parse_exponentiation()
+            left = BinaryOperationPrimitive(left, op, right)
+
+        return left
+    
+    def parse_exponentiation(self):
+        """Parse exponentiation"""
+        left = self.parse_numbers_parentheses()
+
+        while self.match(EXPONENTIATION):
             op = self.consume(self.tokens[self.current][0])
             right = self.parse_numbers_parentheses()
             left = BinaryOperationPrimitive(left, op, right)
@@ -130,7 +144,7 @@ class Parser:
             self.consume(RIGHTPARENTHESES)
             return expression
         else:
-            raise SyntaxError("Expected number, variable, or parenthases")
+            raise SyntaxError(f"Expected number, variable, or parenthases got {self.peek()}")
 
     def consume(self, token_type):
         if self.match(token_type):
@@ -179,23 +193,25 @@ class Interpreter:
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
         right = self.execute(primitive.right)
-        if primitive.op == "+":
-            return left + right
-        elif primitive.op == "-":
-            return left - right
-        elif primitive.op == "*":
-            return left * right
-        elif primitive.op == "/":
-            return left / right
-        else:
+        operations = {
+            "+": lambda x, y: x + y,
+            "-": lambda x, y: x - y,
+            "*": lambda x, y: x * y,
+            "/": lambda x, y: x / y,
+            "**": lambda x, y: x ** y,
+        }
+        operation = operations.get(primitive.op)
+
+        if operation is None:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
+        return operation(left, right)
+
 def main():
-    source = """frederick = (3+2)*2/(9-2-1);"""
+    source = """frederick = 1/2/3+2** 10;"""
 
     print("")
-    print((3+2)*2/(9-2-1))
-
+    print(1/2/3+2** 10)
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
 
