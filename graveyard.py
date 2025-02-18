@@ -205,7 +205,7 @@ class Parser:
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(LEFTPARENTHESES):
             self.consume(LEFTPARENTHESES)
-            expression = self.parse_addition_subtraction()
+            expression = self.parse_or()
             self.consume(RIGHTPARENTHESES)
             return expression
         else:
@@ -297,10 +297,12 @@ class Interpreter:
         return operation(right)
 
 def main():
-    source = """frederick = !1==1;"""
 
     print("")
-    print(not 1 == 1)
+    print((1 >= 1) and not (1 == 1))
+
+    source = """frederick = (1>=1) && ! (1==1);"""
+
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
     # print(tokens)
