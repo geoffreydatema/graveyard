@@ -22,6 +22,7 @@ LESSTHANEQUAL = 17
 NOT = 18
 AND = 19
 OR = 20
+COMMA = 21
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -44,7 +45,8 @@ TOKEN_TYPES = {
     LESSTHAN: r"<",
     NOT: r"!",
     AND: r"&&",
-    OR: r"\|\|"
+    OR: r"\|\|",
+    COMMA: r","
 }
 
 class IdentifierPrimitive():
@@ -70,6 +72,11 @@ class AssignmentPrimitive():
     def __init__(self, identifier, value):
         self.identifier = identifier
         self.value = value
+
+class FunctionCallPrimitive():
+    def __init__(self, name, args):
+        self.name = name
+        self.args = args
 
 class Tokenizer:
     def __init__(self):
@@ -107,9 +114,15 @@ class Parser:
 
     def parse_statement(self):
         if self.match(IDENTIFIER):
-            return self.parse_assignment()
+            if self.predict()[0] == ASSIGNMENT:
+                statement =  self.parse_assignment()
+            elif self.predict()[0] == LEFTPARENTHESES:
+                statement = self.parse_builtin_call()
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
+        
+        self.consume(SEMICOLON)
+        return statement
 
     def parse_assignment(self):
         # Expect IDENTIFIER
@@ -118,8 +131,6 @@ class Parser:
         self.consume(ASSIGNMENT)
         # Expect an expression (NUMBER or IDENTIFIER or something else)
         value = self.parse_or()
-        # Expect SEMICOLON
-        self.consume(SEMICOLON)
         return AssignmentPrimitive(identifier, value)
 
     def parse_or(self):
@@ -196,12 +207,33 @@ class Parser:
             left = BinaryOperationPrimitive(left, op, right)
 
         return left
+    
+    def parse_builtin_call(self):
+        """Parse builtin calls"""
+        self.consume(IDENTIFIER)
+        self.consume(LEFTPARENTHESES)
+        args = []
+
+        if not self.match(RIGHTPARENTHESES):
+            while True:
+                args.append(self.parse_or())
+                if self.match(COMMA):
+                    self.consume(COMMA)
+                else:
+                    break
+
+        self.consume(RIGHTPARENTHESES)
+
+        return FunctionCallPrimitive("print", args)
 
     def parse_numbers_parentheses(self):
         """Parse numbers and parentheses (highest precedence)"""
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(IDENTIFIER):
+            # print() builtin
+            if self.tokens[self.current][1] == "print":
+                return self.parse_builtin_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(LEFTPARENTHESES):
             self.consume(LEFTPARENTHESES)
@@ -228,6 +260,12 @@ class Parser:
         if self.current < len(self.tokens):
             return self.tokens[self.current]
         return None
+    
+    def predict(self, offset=1):
+        prediction_index = self.current + offset
+        if prediction_index < len(self.tokens):
+            return self.tokens[prediction_index]
+        return None
 
 class Interpreter:
     def __init__(self):
@@ -249,13 +287,21 @@ class Interpreter:
             return primitive.value
         elif isinstance(primitive, IdentifierPrimitive):
             return self.variables[primitive.name]
+        elif isinstance(primitive, FunctionCallPrimitive):
+            return self.execute_function_call(primitive)
         else:
             raise ValueError(f"Unknown primitive type: {type(primitive)}")
+
+    def execute_function_call(self, primitive):
+        if primitive.name == "print":
+            values = [self.execute(arg) for arg in primitive.args]
+            print(*values)
+        else:
+            raise ValueError(f"Unknown function: {primitive.name}")
 
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
         self.variables[primitive.identifier] = value
-        print(f"{primitive.identifier} = {value}")
 
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
@@ -298,10 +344,7 @@ class Interpreter:
 
 def main():
 
-    print("")
-    print((1 >= 1) and not (1 == 1))
-
-    source = """frederick = (1>=1) && ! (1==1);"""
+    source = """print(42);print(1+2*3);"""
 
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
@@ -309,6 +352,7 @@ def main():
 
     parser = Parser()
     ast = parser.parse(tokens)
+    # print(ast[0].name)
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
