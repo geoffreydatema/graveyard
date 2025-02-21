@@ -117,7 +117,7 @@ class Parser:
             if self.predict()[0] == ASSIGNMENT:
                 statement =  self.parse_assignment()
             elif self.predict()[0] == LEFTPARENTHESES:
-                statement = self.parse_builtin_call()
+                statement = self.parse_function_call()
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
         
@@ -125,13 +125,30 @@ class Parser:
         return statement
 
     def parse_assignment(self):
-        # Expect IDENTIFIER
+        """Parse assignment statement"""
         identifier = self.consume(IDENTIFIER)
-        # Expect ASSIGNMENT
         self.consume(ASSIGNMENT)
-        # Expect an expression (NUMBER or IDENTIFIER or something else)
         value = self.parse_or()
         return AssignmentPrimitive(identifier, value)
+
+    def parse_function_call(self):
+        """Parse function calls"""
+        name = self.peek()[1]
+        self.consume(IDENTIFIER)
+        self.consume(LEFTPARENTHESES)
+        args = []
+
+        if not self.match(RIGHTPARENTHESES):
+            while True:
+                args.append(self.parse_or())
+                if self.match(COMMA):
+                    self.consume(COMMA)
+                else:
+                    break
+
+        self.consume(RIGHTPARENTHESES)
+
+        return FunctionCallPrimitive(name, args)
 
     def parse_or(self):
         """Parse logical OR"""
@@ -207,24 +224,6 @@ class Parser:
             left = BinaryOperationPrimitive(left, op, right)
 
         return left
-    
-    def parse_builtin_call(self):
-        """Parse builtin calls"""
-        self.consume(IDENTIFIER)
-        self.consume(LEFTPARENTHESES)
-        args = []
-
-        if not self.match(RIGHTPARENTHESES):
-            while True:
-                args.append(self.parse_or())
-                if self.match(COMMA):
-                    self.consume(COMMA)
-                else:
-                    break
-
-        self.consume(RIGHTPARENTHESES)
-
-        return FunctionCallPrimitive("print", args)
 
     def parse_numbers_parentheses(self):
         """Parse numbers and parentheses (highest precedence)"""
@@ -292,10 +291,26 @@ class Interpreter:
         else:
             raise ValueError(f"Unknown primitive type: {type(primitive)}")
 
+    def execute_print(self, args):
+        values = [self.execute(arg) for arg in args]
+        print(*values)
+        return True
+    
+    def execute_hello(self):
+        print("hello world!")
+        return True
+
     def execute_function_call(self, primitive):
-        if primitive.name == "print":
-            values = [self.execute(arg) for arg in primitive.args]
-            print(*values)
+        """Execute builtins and user defined functions"""
+        builtins = {
+            "print": lambda x: self.execute_print(x),
+            "hello": lambda *args: self.execute_hello()
+        }
+
+        result = builtins.get(primitive.name)
+
+        if result:
+            result(primitive.args)
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
 
@@ -344,7 +359,10 @@ class Interpreter:
 
 def main():
 
-    source = """print(42);print(1+2*3);"""
+    source = """
+    print(42);
+    hello();
+    """
 
     tokenizer = Tokenizer()
     tokens = tokenizer.tokenize(source)
