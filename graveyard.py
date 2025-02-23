@@ -24,6 +24,8 @@ NOT = 18
 AND = 19
 OR = 20
 COMMA = 21
+TRUE = 22
+FALSE = 23
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -47,7 +49,9 @@ TOKEN_TYPES = {
     NOT: r"!",
     AND: r"&&",
     OR: r"\|\|",
-    COMMA: r","
+    COMMA: r",",
+    TRUE: r"\$",
+    FALSE: r"%"
 }
 
 class IdentifierPrimitive():
@@ -57,6 +61,10 @@ class IdentifierPrimitive():
 class NumberPrimitive():
     def __init__(self, value):
         self.value = int(value)
+
+class BooleanPrimitive():
+    def __init__(self, value):
+        self.value = value
 
 class BinaryOperationPrimitive():
     def __init__(self, left, op, right):
@@ -241,6 +249,12 @@ class Parser:
             expression = self.parse_or()
             self.consume(RIGHTPARENTHESES)
             return expression
+        elif self.match(TRUE):
+            self.consume(TRUE)
+            return BooleanPrimitive(True)
+        elif self.match(FALSE):
+            self.consume(FALSE)
+            return BooleanPrimitive(False)
         else:
             raise SyntaxError(f"Expected number, variable, or parenthases got {self.peek()[1]}")
 
@@ -285,6 +299,8 @@ class Interpreter:
         elif isinstance(primitive, UnaryOperationPrimitive):
             return self.execute_unary_operation(primitive)
         elif isinstance(primitive, NumberPrimitive):
+            return primitive.value
+        elif isinstance(primitive, BooleanPrimitive):
             return primitive.value
         elif isinstance(primitive, IdentifierPrimitive):
             return self.variables[primitive.name]
@@ -366,8 +382,7 @@ class Interpreter:
 def main():
 
     source = """
-    x = magic_number();
-    print(x);
+    print($ == %);
     """
 
     tokenizer = Tokenizer()
