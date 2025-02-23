@@ -1,4 +1,5 @@
 import re
+import random
 
 #@! reoder these to match TOKEN_TYPES once we add them all
 WHITESPACE = 0
@@ -118,6 +119,8 @@ class Parser:
                 statement =  self.parse_assignment()
             elif self.predict()[0] == LEFTPARENTHESES:
                 statement = self.parse_function_call()
+            else:
+                statement = self.parse_or()
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
         
@@ -230,9 +233,8 @@ class Parser:
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(IDENTIFIER):
-            # print() builtin
-            if self.tokens[self.current][1] == "print":
-                return self.parse_builtin_call()
+            if self.predict()[0] == LEFTPARENTHESES:
+                return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(LEFTPARENTHESES):
             self.consume(LEFTPARENTHESES)
@@ -300,17 +302,21 @@ class Interpreter:
         print("hello world!")
         return True
 
+    def execute_magic_number(self):
+        return random.randint(10000000, 99999999)
+
     def execute_function_call(self, primitive):
         """Execute builtins and user defined functions"""
         builtins = {
             "print": lambda x: self.execute_print(x),
-            "hello": lambda *args: self.execute_hello()
+            "hello": lambda *args: self.execute_hello(),
+            "magic_number": lambda *args: self.execute_magic_number()
         }
 
         result = builtins.get(primitive.name)
 
         if result:
-            result(primitive.args)
+            return result(primitive.args)
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
 
@@ -360,8 +366,8 @@ class Interpreter:
 def main():
 
     source = """
-    print(42);
-    hello();
+    x = magic_number();
+    print(x);
     """
 
     tokenizer = Tokenizer()
