@@ -26,6 +26,7 @@ OR = 20
 COMMA = 21
 TRUE = 22
 FALSE = 23
+NULL = 24
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -49,6 +50,7 @@ TOKEN_TYPES = {
     NOT: r"!",
     AND: r"&&",
     OR: r"\|\|",
+    NULL: r"\|",
     COMMA: r",",
     TRUE: r"\$",
     FALSE: r"%"
@@ -65,6 +67,10 @@ class NumberPrimitive():
 class BooleanPrimitive():
     def __init__(self, value):
         self.value = value
+
+class NullPrimitive():
+    def __init__(self):
+        self.value = None
 
 class BinaryOperationPrimitive():
     def __init__(self, left, op, right):
@@ -249,6 +255,9 @@ class Parser:
             expression = self.parse_or()
             self.consume(RIGHTPARENTHESES)
             return expression
+        elif self.match(NULL):
+            self.consume(NULL)
+            return NullPrimitive()
         elif self.match(TRUE):
             self.consume(TRUE)
             return BooleanPrimitive(True)
@@ -299,6 +308,8 @@ class Interpreter:
         elif isinstance(primitive, UnaryOperationPrimitive):
             return self.execute_unary_operation(primitive)
         elif isinstance(primitive, NumberPrimitive):
+            return primitive.value
+        elif isinstance(primitive, NullPrimitive):
             return primitive.value
         elif isinstance(primitive, BooleanPrimitive):
             return primitive.value
@@ -382,7 +393,7 @@ class Interpreter:
 def main():
 
     source = """
-    print($ == %);
+    print(|);
     """
 
     tokenizer = Tokenizer()
@@ -391,7 +402,7 @@ def main():
 
     parser = Parser()
     ast = parser.parse(tokens)
-    # print(ast[0].name)
+    # print(ast[0].value)
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
