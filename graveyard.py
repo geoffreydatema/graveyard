@@ -27,9 +27,13 @@ COMMA = 21
 TRUE = 22
 FALSE = 23
 NULL = 24
+SINGLELINECOMMENT = 25
+MULTILINECOMMENT = 26
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
+    SINGLELINECOMMENT: r"#.*?$",
+    MULTILINECOMMENT: r"//(.|\n)*?(\\|$)",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     NUMBER: r"\d+",
@@ -101,13 +105,21 @@ class Tokenizer:
         self.source = source
         tokens = []
         position = 0
+        skip_until = None
         while position < len(self.source):
             match = None
             for token_type, pattern in TOKEN_TYPES.items():
-                regex = re.compile(pattern)
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE  
+                regex = re.compile(pattern, regex_flags)
                 match = regex.match(self.source, position)
                 if match:
-                    if token_type != WHITESPACE:
+                    if token_type == SINGLELINECOMMENT:
+                        position = match.end()
+                        break
+                    elif token_type == MULTILINECOMMENT:
+                        position = match.end()
+                        # break
+                    elif token_type != WHITESPACE:
                         tokens.append((token_type, match.group(0)))
                     position = match.end()
                     break
@@ -393,7 +405,9 @@ class Interpreter:
 def main():
 
     source = """
-    print(|);
+    print($);
+    //print(42);print(1);
+    print(69);
     """
 
     tokenizer = Tokenizer()
