@@ -29,6 +29,7 @@ FALSE = 23
 NULL = 24
 SINGLELINECOMMENT = 25
 MULTILINECOMMENT = 26
+STRING = 27
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -57,18 +58,23 @@ TOKEN_TYPES = {
     NULL: r"\|",
     COMMA: r",",
     TRUE: r"\$",
-    FALSE: r"%"
+    FALSE: r"%",
+    STRING: r'"[^"\n]*"',
 }
 
 class IdentifierPrimitive():
     def __init__(self, name):
         self.name = name
 
+class BooleanPrimitive():
+    def __init__(self, value):
+        self.value = value
+
 class NumberPrimitive():
     def __init__(self, value):
         self.value = float(value)
 
-class BooleanPrimitive():
+class StringPrimitive:
     def __init__(self, value):
         self.value = value
 
@@ -258,6 +264,8 @@ class Parser:
         """Parse numbers and parentheses (highest precedence)"""
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
+        elif self.match(STRING):
+            return StringPrimitive(self.consume(STRING)[1:-1])
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
@@ -318,10 +326,11 @@ class Interpreter:
             BinaryOperationPrimitive: lambda p: self.execute_binary_operation(p),
             UnaryOperationPrimitive: lambda p: self.execute_unary_operation(p),
             NumberPrimitive: lambda p: p.value,
+            StringPrimitive: lambda p: p.value,
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.variables[p.name],
-            FunctionCallPrimitive: lambda p: self.execute_function_call(p),
+            FunctionCallPrimitive: lambda p: self.execute_function_call(p)
         }
 
         primitive_type = type(primitive)
@@ -403,8 +412,7 @@ class Interpreter:
 def main():
 
     source = """
-    print(123456789.123456789);
-    print(123.456 + magic_number());
+    print("hello world");
     """
 
     tokenizer = Tokenizer()
