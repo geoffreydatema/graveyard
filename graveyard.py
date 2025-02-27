@@ -36,7 +36,7 @@ TOKEN_TYPES = {
     MULTILINECOMMENT: r"//(.|\n)*?(\\|$)",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
-    NUMBER: r"\d+",
+    NUMBER: r"\d+(\.\d+)?",
     EQUALITY: r"==",
     ASSIGNMENT: r"=",
     ADDITION: r"\+",
@@ -66,7 +66,7 @@ class IdentifierPrimitive():
 
 class NumberPrimitive():
     def __init__(self, value):
-        self.value = int(value)
+        self.value = float(value)
 
 class BooleanPrimitive():
     def __init__(self, value):
@@ -118,7 +118,7 @@ class Tokenizer:
                         break
                     elif token_type == MULTILINECOMMENT:
                         position = match.end()
-                        # break
+                        break
                     elif token_type != WHITESPACE:
                         tokens.append((token_type, match.group(0)))
                     position = match.end()
@@ -313,24 +313,22 @@ class Interpreter:
             self.execute(primitive)
 
     def execute(self, primitive):
-        if isinstance(primitive, AssignmentPrimitive):
-            self.execute_assignment(primitive)
-        elif isinstance(primitive, BinaryOperationPrimitive):
-            return self.execute_binary_operation(primitive)
-        elif isinstance(primitive, UnaryOperationPrimitive):
-            return self.execute_unary_operation(primitive)
-        elif isinstance(primitive, NumberPrimitive):
-            return primitive.value
-        elif isinstance(primitive, NullPrimitive):
-            return primitive.value
-        elif isinstance(primitive, BooleanPrimitive):
-            return primitive.value
-        elif isinstance(primitive, IdentifierPrimitive):
-            return self.variables[primitive.name]
-        elif isinstance(primitive, FunctionCallPrimitive):
-            return self.execute_function_call(primitive)
-        else:
-            raise ValueError(f"Unknown primitive type: {type(primitive)}")
+        execute_map = {
+            AssignmentPrimitive: lambda p: self.execute_assignment(p),
+            BinaryOperationPrimitive: lambda p: self.execute_binary_operation(p),
+            UnaryOperationPrimitive: lambda p: self.execute_unary_operation(p),
+            NumberPrimitive: lambda p: p.value,
+            NullPrimitive: lambda p: p.value,
+            BooleanPrimitive: lambda p: p.value,
+            IdentifierPrimitive: lambda p: self.variables[p.name],
+            FunctionCallPrimitive: lambda p: self.execute_function_call(p),
+        }
+
+        primitive_type = type(primitive)
+        if primitive_type in execute_map:
+            return execute_map[primitive_type](primitive)
+
+        raise ValueError(f"Unknown primitive type: {primitive_type}")
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -405,9 +403,8 @@ class Interpreter:
 def main():
 
     source = """
-    print($);
-    //print(42);print(1);
-    print(69);
+    print(123456789.123456789);
+    print(123.456 + magic_number());
     """
 
     tokenizer = Tokenizer()
@@ -416,7 +413,7 @@ def main():
 
     parser = Parser()
     ast = parser.parse(tokens)
-    # print(ast[0].value)
+    # print(ast[0].value.value)
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
