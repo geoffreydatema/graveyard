@@ -30,6 +30,8 @@ NULL = 24
 SINGLELINECOMMENT = 25
 MULTILINECOMMENT = 26
 STRING = 27
+LEFTBRACE = 28
+RIGHTBRACE = 29
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -60,6 +62,8 @@ TOKEN_TYPES = {
     TRUE: r"\$",
     FALSE: r"%",
     STRING: r'"[^"\n]*"',
+    LEFTBRACE: r"\{",
+    RIGHTBRACE: r"\}"
 }
 
 class IdentifierPrimitive():
@@ -97,6 +101,12 @@ class AssignmentPrimitive():
     def __init__(self, identifier, value):
         self.identifier = identifier
         self.value = value
+
+class FunctionDefinitionPrimitive():
+    def __init__(self, name, parameters, body):
+        self.name = name
+        self.parameters = parameters
+        self.body = body
 
 class FunctionCallPrimitive():
     def __init__(self, name, args):
@@ -145,19 +155,40 @@ class Parser:
             statements.append(self.parse_statement())
         return statements
 
+    # def parse_statement(self):
+    #     if self.match(IDENTIFIER):
+    #         if self.predict()[0] == ASSIGNMENT:
+    #             statement =  self.parse_assignment()
+    #         elif self.predict()[0] == LEFTPARENTHESES:
+    #             statement = self.parse_function_call()
+    #         else:
+    #             statement = self.parse_or()
+    #     else:
+    #         raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
+        
+    #     self.consume(SEMICOLON)
+    #     return statement
+
     def parse_statement(self):
         if self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
-                statement =  self.parse_assignment()
+                statement = self.parse_assignment()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == LEFTPARENTHESES:
-                statement = self.parse_function_call()
+                if self.predict(2)[0] == RIGHTPARENTHESES and self.predict(3)[0] == LEFTBRACE:
+                    statement = self.parse_function_definition()
+                else:
+                    statement = self.parse_function_call()
+                    self.consume(SEMICOLON)
             else:
                 statement = self.parse_or()
+                self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
         
-        self.consume(SEMICOLON)
+        
         return statement
+
 
     def parse_assignment(self):
         """Parse assignment statement"""
@@ -165,6 +196,33 @@ class Parser:
         self.consume(ASSIGNMENT)
         value = self.parse_or()
         return AssignmentPrimitive(identifier, value)
+
+    def parse_function_definition(self):
+        """Parse function definitions"""
+        name = self.peek()[1]
+        self.consume(IDENTIFIER)
+        self.consume(LEFTPARENTHESES)
+        parameters = []
+
+        if not self.match(RIGHTPARENTHESES):
+            while True:
+                parameters.append(self.peek()[1])
+                self.consume(IDENTIFIER)
+                if self.match(COMMA):
+                    self.consume(COMMA)
+                else:
+                    break
+
+        self.consume(RIGHTPARENTHESES)
+        self.consume(LEFTBRACE)
+
+        body = []
+        while not self.match(RIGHTBRACE):
+            body.append(self.parse_statement())
+        
+        self.consume(RIGHTBRACE)
+
+        return FunctionDefinitionPrimitive(name, parameters, body)
 
     def parse_function_call(self):
         """Parse function calls"""
@@ -419,8 +477,10 @@ class Interpreter:
 
 def main():
 
-    source = """
-    print(magic_uid());
+    print("\n\n")
+
+    source = r"""
+    hello_world() {x = 1;}
     """
 
     tokenizer = Tokenizer()
@@ -429,10 +489,12 @@ def main():
 
     parser = Parser()
     ast = parser.parse(tokens)
-    # print(ast[0].value.value)
+    # print(ast[0].body[0].value)
 
-    interpreter = Interpreter()
-    interpreter.interpret(ast)
+    # interpreter = Interpreter()
+    # interpreter.interpret(ast)
+
+    # print(interpreter.variables)
 
 if __name__ == "__main__":
     main()
