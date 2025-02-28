@@ -351,12 +351,20 @@ class Interpreter:
     def execute_magic_number(self):
         return random.randint(10000000, 99999999)
 
+    def execute_magic_weight(self):
+        return round(random.random(), 8)
+    
+    def execute_magic_uid(self):
+        return str(hex(random.randint(286331153, 4294967295)))[2:]
+
     def execute_function_call(self, primitive):
         """Execute builtins and user defined functions"""
         builtins = {
             "print": lambda x: self.execute_print(x),
             "hello": lambda *args: self.execute_hello(),
-            "magic_number": lambda *args: self.execute_magic_number()
+            "magic_number": lambda *args: self.execute_magic_number(),
+            "magic_weight": lambda *args: self.execute_magic_weight(),
+            "magic_uid": lambda *args: self.execute_magic_uid()
         }
 
         result = builtins.get(primitive.name)
@@ -412,7 +420,7 @@ class Interpreter:
 def main():
 
     source = """
-    print("hello world");
+    print(magic_uid());
     """
 
     tokenizer = Tokenizer()
