@@ -109,9 +109,9 @@ class FunctionDefinitionPrimitive():
         self.body = body
 
 class FunctionCallPrimitive():
-    def __init__(self, name, args):
+    def __init__(self, name, arguments):
         self.name = name
-        self.args = args
+        self.arguments = arguments
 
 class Tokenizer:
     def __init__(self):
@@ -371,8 +371,7 @@ class Parser:
 
 class Interpreter:
     def __init__(self):
-        # likely will turn this into the monolith later
-        self.variables = {}
+        self.monolith = {}
 
     def interpret(self, ast):
         for primitive in ast:
@@ -387,8 +386,9 @@ class Interpreter:
             StringPrimitive: lambda p: p.value,
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
-            IdentifierPrimitive: lambda p: self.variables[p.name],
-            FunctionCallPrimitive: lambda p: self.execute_function_call(p)
+            IdentifierPrimitive: lambda p: self.monolith[p.name],
+            FunctionCallPrimitive: lambda p: self.execute_function_call(p),
+            FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p})
         }
 
         primitive_type = type(primitive)
@@ -416,25 +416,35 @@ class Interpreter:
         return str(hex(random.randint(286331153, 4294967295)))[2:]
 
     def execute_function_call(self, primitive):
-        """Execute builtins and user defined functions"""
+        """Execute built-in and user-defined functions"""
         builtins = {
-            "print": lambda x: self.execute_print(x),
+            "print": lambda args: self.execute_print(args),
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
             "magic_uid": lambda *args: self.execute_magic_uid()
         }
 
-        result = builtins.get(primitive.name)
-
-        if result:
-            return result(primitive.args)
+        if primitive.name in builtins:
+            return builtins[primitive.name](primitive.arguments)
+        elif primitive.name in self.monolith:
+            function = self.monolith[primitive.name]
+            if len(function.parameters) != len(primitive.arguments):
+                raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
+            
+            for parameter, arg in zip(function.parameters, primitive.arguments):
+                self.variables[parameter] = self.execute(arg)
+            
+            result = None
+            for statement in function.body:
+                result = self.execute(statement)
+            return result
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
 
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
-        self.variables[primitive.identifier] = value
+        self.monolith[primitive.identifier] = value
 
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
@@ -480,7 +490,11 @@ def main():
     print("\n\n")
 
     source = r"""
-    hello_world() {x = 1;}
+    damn_i_cant_believe_that_worked() {
+        print("damn, i can't believe that worked");
+    }
+    
+    damn_i_cant_believe_that_worked();
     """
 
     tokenizer = Tokenizer()
@@ -491,8 +505,8 @@ def main():
     ast = parser.parse(tokens)
     # print(ast[0].body[0].value)
 
-    # interpreter = Interpreter()
-    # interpreter.interpret(ast)
+    interpreter = Interpreter()
+    interpreter.interpret(ast)
 
     # print(interpreter.variables)
 
