@@ -155,20 +155,6 @@ class Parser:
             statements.append(self.parse_statement())
         return statements
 
-    # def parse_statement(self):
-    #     if self.match(IDENTIFIER):
-    #         if self.predict()[0] == ASSIGNMENT:
-    #             statement =  self.parse_assignment()
-    #         elif self.predict()[0] == LEFTPARENTHESES:
-    #             statement = self.parse_function_call()
-    #         else:
-    #             statement = self.parse_or()
-    #     else:
-    #         raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        
-    #     self.consume(SEMICOLON)
-    #     return statement
-
     def parse_statement(self):
         if self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
@@ -185,7 +171,6 @@ class Parser:
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        
         
         return statement
 
@@ -487,14 +472,15 @@ class Interpreter:
 
 def main():
 
-    print("\n\n")
+    print("\n")
 
     source = r"""
-    damn_i_cant_believe_that_worked() {
-        print("damn, i can't believe that worked");
+    test() {
+        x = 1;
+        print(x);
     }
-    
-    damn_i_cant_believe_that_worked();
+
+    test();
     """
 
     tokenizer = Tokenizer()
