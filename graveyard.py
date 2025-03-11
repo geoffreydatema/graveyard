@@ -32,6 +32,7 @@ MULTILINECOMMENT = 26
 STRING = 27
 LEFTBRACE = 28
 RIGHTBRACE = 29
+PARAMETER = 30
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -63,7 +64,8 @@ TOKEN_TYPES = {
     FALSE: r"%",
     STRING: r'"[^"\n]*"',
     LEFTBRACE: r"\{",
-    RIGHTBRACE: r"\}"
+    RIGHTBRACE: r"\}",
+    PARAMETER: r"&"
 }
 
 class IdentifierPrimitive():
@@ -155,25 +157,43 @@ class Parser:
             statements.append(self.parse_statement())
         return statements
 
+    # def parse_statement(self):
+    #     if self.match(IDENTIFIER):
+    #         if self.predict()[0] == ASSIGNMENT:
+    #             statement = self.parse_assignment()
+    #             self.consume(SEMICOLON)
+    #         elif self.predict()[0] == LEFTPARENTHESES:
+    #             if self.predict(2)[0] == RIGHTPARENTHESES and self.predict(3)[0] == LEFTBRACE:
+    #                 statement = self.parse_function_definition()
+    #             else:
+    #                 statement = self.parse_function_call()
+    #                 self.consume(SEMICOLON)
+    #         else:
+    #             statement = self.parse_or()
+    #             self.consume(SEMICOLON)
+    #     else:
+    #         raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
+        
+    #     return statement
+
     def parse_statement(self):
         if self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
                 self.consume(SEMICOLON)
             elif self.predict()[0] == LEFTPARENTHESES:
-                if self.predict(2)[0] == RIGHTPARENTHESES and self.predict(3)[0] == LEFTBRACE:
-                    statement = self.parse_function_definition()
-                else:
-                    statement = self.parse_function_call()
-                    self.consume(SEMICOLON)
+                statement = self.parse_function_call()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
+                # If an identifier is followed by & or {, it's a function definition
+                statement = self.parse_function_definition()
             else:
                 statement = self.parse_or()
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        
-        return statement
 
+        return statement
 
     def parse_assignment(self):
         """Parse assignment statement"""
@@ -182,29 +202,52 @@ class Parser:
         value = self.parse_or()
         return AssignmentPrimitive(identifier, value)
 
+    # def parse_function_definition(self):
+    #     """Parse function definitions"""
+    #     name = self.peek()[1]
+    #     self.consume(IDENTIFIER)
+    #     self.consume(LEFTPARENTHESES)
+    #     parameters = []
+
+    #     if not self.match(RIGHTPARENTHESES):
+    #         while True:
+    #             parameters.append(self.peek()[1])
+    #             self.consume(IDENTIFIER)
+    #             if self.match(COMMA):
+    #                 self.consume(COMMA)
+    #             else:
+    #                 break
+
+    #     self.consume(RIGHTPARENTHESES)
+    #     self.consume(LEFTBRACE)
+
+    #     body = []
+    #     while not self.match(RIGHTBRACE):
+    #         body.append(self.parse_statement())
+        
+    #     self.consume(RIGHTBRACE)
+
+    #     return FunctionDefinitionPrimitive(name, parameters, body)
+
     def parse_function_definition(self):
         """Parse function definitions"""
         name = self.peek()[1]
+
         self.consume(IDENTIFIER)
-        self.consume(LEFTPARENTHESES)
+
         parameters = []
+        while self.match(PARAMETER):
+            self.consume(PARAMETER)
 
-        if not self.match(RIGHTPARENTHESES):
-            while True:
-                parameters.append(self.peek()[1])
-                self.consume(IDENTIFIER)
-                if self.match(COMMA):
-                    self.consume(COMMA)
-                else:
-                    break
+            parameters.append(self.peek()[1])
+            self.consume(IDENTIFIER)
 
-        self.consume(RIGHTPARENTHESES)
         self.consume(LEFTBRACE)
 
         body = []
         while not self.match(RIGHTBRACE):
             body.append(self.parse_statement())
-        
+
         self.consume(RIGHTBRACE)
 
         return FunctionDefinitionPrimitive(name, parameters, body)
@@ -400,6 +443,33 @@ class Interpreter:
     def execute_magic_uid(self):
         return str(hex(random.randint(286331153, 4294967295)))[2:]
 
+    # def execute_function_call(self, primitive):
+    #     """Execute built-in and user-defined functions"""
+    #     builtins = {
+    #         "print": lambda args: self.execute_print(args),
+    #         "hello": lambda *args: self.execute_hello(),
+    #         "magic_number": lambda *args: self.execute_magic_number(),
+    #         "magic_weight": lambda *args: self.execute_magic_weight(),
+    #         "magic_uid": lambda *args: self.execute_magic_uid()
+    #     }
+
+    #     if primitive.name in builtins:
+    #         return builtins[primitive.name](primitive.arguments)
+    #     elif primitive.name in self.monolith:
+    #         function = self.monolith[primitive.name]
+    #         if len(function.parameters) != len(primitive.arguments):
+    #             raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
+            
+    #         for parameter, arg in zip(function.parameters, primitive.arguments):
+    #             self.variables[parameter] = self.execute(arg)
+            
+    #         result = None
+    #         for statement in function.body:
+    #             result = self.execute(statement)
+    #         return result
+    #     else:
+    #         raise ValueError(f"Unknown function: {primitive.name}")
+
     def execute_function_call(self, primitive):
         """Execute built-in and user-defined functions"""
         builtins = {
@@ -412,17 +482,20 @@ class Interpreter:
 
         if primitive.name in builtins:
             return builtins[primitive.name](primitive.arguments)
+
         elif primitive.name in self.monolith:
             function = self.monolith[primitive.name]
+
             if len(function.parameters) != len(primitive.arguments):
                 raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
             
-            for parameter, arg in zip(function.parameters, primitive.arguments):
-                self.variables[parameter] = self.execute(arg)
-            
+            for parameter, argument in zip(function.parameters, primitive.arguments):
+                self.monolith[parameter] = self.execute(argument)
+
             result = None
             for statement in function.body:
                 result = self.execute(statement)
+
             return result
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
@@ -475,12 +548,11 @@ def main():
     print("\n")
 
     source = r"""
-    test() {
-        x = 1;
-        print(x);
+    name &x {
+        print("my name is", x);
     }
-
-    test();
+    name("steve");
+    name("fred");
     """
 
     tokenizer = Tokenizer()
