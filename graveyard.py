@@ -33,6 +33,7 @@ STRING = 27
 LEFTBRACE = 28
 RIGHTBRACE = 29
 PARAMETER = 30
+RETURN = 31
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -40,6 +41,7 @@ TOKEN_TYPES = {
     MULTILINECOMMENT: r"//(.|\n)*?(\\|$)",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
+    RETURN: r"->",
     NUMBER: r"\d+(\.\d+)?",
     EQUALITY: r"==",
     ASSIGNMENT: r"=",
@@ -104,11 +106,12 @@ class AssignmentPrimitive():
         self.identifier = identifier
         self.value = value
 
-class FunctionDefinitionPrimitive():
-    def __init__(self, name, parameters, body):
+class FunctionDefinitionPrimitive:
+    def __init__(self, name, parameters, body, return_value=None):
         self.name = name
         self.parameters = parameters
         self.body = body
+        self.return_value = return_value
 
 class FunctionCallPrimitive():
     def __init__(self, name, arguments):
@@ -157,25 +160,6 @@ class Parser:
             statements.append(self.parse_statement())
         return statements
 
-    # def parse_statement(self):
-    #     if self.match(IDENTIFIER):
-    #         if self.predict()[0] == ASSIGNMENT:
-    #             statement = self.parse_assignment()
-    #             self.consume(SEMICOLON)
-    #         elif self.predict()[0] == LEFTPARENTHESES:
-    #             if self.predict(2)[0] == RIGHTPARENTHESES and self.predict(3)[0] == LEFTBRACE:
-    #                 statement = self.parse_function_definition()
-    #             else:
-    #                 statement = self.parse_function_call()
-    #                 self.consume(SEMICOLON)
-    #         else:
-    #             statement = self.parse_or()
-    #             self.consume(SEMICOLON)
-    #     else:
-    #         raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        
-    #     return statement
-
     def parse_statement(self):
         if self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
@@ -202,55 +186,31 @@ class Parser:
         value = self.parse_or()
         return AssignmentPrimitive(identifier, value)
 
-    # def parse_function_definition(self):
-    #     """Parse function definitions"""
-    #     name = self.peek()[1]
-    #     self.consume(IDENTIFIER)
-    #     self.consume(LEFTPARENTHESES)
-    #     parameters = []
-
-    #     if not self.match(RIGHTPARENTHESES):
-    #         while True:
-    #             parameters.append(self.peek()[1])
-    #             self.consume(IDENTIFIER)
-    #             if self.match(COMMA):
-    #                 self.consume(COMMA)
-    #             else:
-    #                 break
-
-    #     self.consume(RIGHTPARENTHESES)
-    #     self.consume(LEFTBRACE)
-
-    #     body = []
-    #     while not self.match(RIGHTBRACE):
-    #         body.append(self.parse_statement())
-        
-    #     self.consume(RIGHTBRACE)
-
-    #     return FunctionDefinitionPrimitive(name, parameters, body)
-
     def parse_function_definition(self):
         """Parse function definitions"""
         name = self.peek()[1]
-
         self.consume(IDENTIFIER)
-
+        
         parameters = []
         while self.match(PARAMETER):
             self.consume(PARAMETER)
-
             parameters.append(self.peek()[1])
             self.consume(IDENTIFIER)
-
+        
         self.consume(LEFTBRACE)
-
         body = []
+        return_value = None
+        
         while not self.match(RIGHTBRACE):
-            body.append(self.parse_statement())
-
+            if self.match(RETURN):
+                self.consume(RETURN)
+                return_value = self.parse_or()
+                self.consume(SEMICOLON)
+            else:
+                body.append(self.parse_statement())
+        
         self.consume(RIGHTBRACE)
-
-        return FunctionDefinitionPrimitive(name, parameters, body)
+        return FunctionDefinitionPrimitive(name, parameters, body, return_value)
 
     def parse_function_call(self):
         """Parse function calls"""
@@ -443,33 +403,6 @@ class Interpreter:
     def execute_magic_uid(self):
         return str(hex(random.randint(286331153, 4294967295)))[2:]
 
-    # def execute_function_call(self, primitive):
-    #     """Execute built-in and user-defined functions"""
-    #     builtins = {
-    #         "print": lambda args: self.execute_print(args),
-    #         "hello": lambda *args: self.execute_hello(),
-    #         "magic_number": lambda *args: self.execute_magic_number(),
-    #         "magic_weight": lambda *args: self.execute_magic_weight(),
-    #         "magic_uid": lambda *args: self.execute_magic_uid()
-    #     }
-
-    #     if primitive.name in builtins:
-    #         return builtins[primitive.name](primitive.arguments)
-    #     elif primitive.name in self.monolith:
-    #         function = self.monolith[primitive.name]
-    #         if len(function.parameters) != len(primitive.arguments):
-    #             raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
-            
-    #         for parameter, arg in zip(function.parameters, primitive.arguments):
-    #             self.variables[parameter] = self.execute(arg)
-            
-    #         result = None
-    #         for statement in function.body:
-    #             result = self.execute(statement)
-    #         return result
-    #     else:
-    #         raise ValueError(f"Unknown function: {primitive.name}")
-
     def execute_function_call(self, primitive):
         """Execute built-in and user-defined functions"""
         builtins = {
@@ -482,21 +415,21 @@ class Interpreter:
 
         if primitive.name in builtins:
             return builtins[primitive.name](primitive.arguments)
-
         elif primitive.name in self.monolith:
             function = self.monolith[primitive.name]
-
             if len(function.parameters) != len(primitive.arguments):
                 raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
             
+            # Bind arguments to parameters
             for parameter, argument in zip(function.parameters, primitive.arguments):
                 self.monolith[parameter] = self.execute(argument)
-
-            result = None
+            
+            # Execute function body
             for statement in function.body:
-                result = self.execute(statement)
-
-            return result
+                self.execute(statement)
+            
+            # Return the stored return value if one exists
+            return self.execute(function.return_value) if function.return_value is not None else None
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
 
@@ -548,11 +481,16 @@ def main():
     print("\n")
 
     source = r"""
-    name &x {
-        print("my name is", x);
-    }
-    name("steve");
-    name("fred");
+
+    add &a &b {-> a + b;}
+    subtract &a &b {-> a - b;}
+    multiply &a &b {-> a * b;}
+    divide &a &b {-> a / b;}
+
+    print(add(1, 2));
+    print(subtract(10, 1));
+    print(multiply(2, 2));
+    print(divide(10, 2));
     """
 
     tokenizer = Tokenizer()
