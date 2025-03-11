@@ -37,8 +37,8 @@ RETURN = 31
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
-    SINGLELINECOMMENT: r"#.*?$",
-    MULTILINECOMMENT: r"//(.|\n)*?(\\|$)",
+    SINGLELINECOMMENT: r"//.*?$",
+    MULTILINECOMMENT: r"#(.*?)#",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -487,10 +487,10 @@ def main():
     multiply &a &b {-> a * b;}
     divide &a &b {-> a / b;}
 
-    print(add(1, 2));
-    print(subtract(10, 1));
+    #print(add(1, 2));
+    print(subtract(10, 1));#
     print(multiply(2, 2));
-    print(divide(10, 2));
+    //print(divide(10, 2));
     """
 
     tokenizer = Tokenizer()
@@ -503,8 +503,7 @@ def main():
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
-
-    # print(interpreter.variables)
+    # print(interpreter.monolith)
 
 if __name__ == "__main__":
     main()
