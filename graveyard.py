@@ -34,6 +34,9 @@ LEFTBRACE = 28
 RIGHTBRACE = 29
 PARAMETER = 30
 RETURN = 31
+IF = 32
+ELSEIF = 33
+ELSE = 34
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -67,7 +70,9 @@ TOKEN_TYPES = {
     STRING: r'"[^"\n]*"',
     LEFTBRACE: r"\{",
     RIGHTBRACE: r"\}",
-    PARAMETER: r"&"
+    PARAMETER: r"&",
+    IF: r"\?",
+    ELSE: r":"
 }
 
 class IdentifierPrimitive():
@@ -118,6 +123,11 @@ class FunctionCallPrimitive():
         self.name = name
         self.arguments = arguments
 
+class IfStatementPrimitive:
+    def __init__(self, condition_blocks, else_body):
+        self.condition_blocks = condition_blocks
+        self.else_body = else_body
+
 class Tokenizer:
     def __init__(self):
         self.source = ""
@@ -161,7 +171,9 @@ class Parser:
         return statements
 
     def parse_statement(self):
-        if self.match(IDENTIFIER):
+        if self.match(IF):  # Check for `?` first
+            statement = self.parse_if_statement()
+        elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
                 self.consume(SEMICOLON)
@@ -169,7 +181,6 @@ class Parser:
                 statement = self.parse_function_call()
                 self.consume(SEMICOLON)
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
-                # If an identifier is followed by & or {, it's a function definition
                 statement = self.parse_function_definition()
             else:
                 statement = self.parse_or()
@@ -230,6 +241,44 @@ class Parser:
         self.consume(RIGHTPARENTHESES)
 
         return FunctionCallPrimitive(name, args)
+
+    def parse_if_statement(self):
+        """Parse if statements"""
+        self.consume(IF)  # Consume '?'
+        condition_blocks = []
+
+        # Parse the first condition
+        condition = self.parse_or()
+        self.consume(LEFTBRACE)
+        body = []
+        while not self.match(RIGHTBRACE):
+            body.append(self.parse_statement())
+        self.consume(RIGHTBRACE)
+        condition_blocks.append((condition, body))
+
+        # Parse else-if conditions
+        while self.match(COMMA):  # Consume ','
+            self.consume(COMMA)
+            condition = self.parse_or()
+            self.consume(LEFTBRACE)
+            body = []
+            while not self.match(RIGHTBRACE):
+                body.append(self.parse_statement())
+            self.consume(RIGHTBRACE)
+            condition_blocks.append((condition, body))
+
+        # Parse else block if present
+        else_body = None
+        if self.match(ELSE):  # Consume ':'
+            self.consume(ELSE)
+            self.consume(LEFTBRACE)
+            else_body = []
+            while not self.match(RIGHTBRACE):
+                else_body.append(self.parse_statement())
+            self.consume(RIGHTBRACE)
+
+        return IfStatementPrimitive(condition_blocks, else_body)
+
 
     def parse_or(self):
         """Parse logical OR"""
@@ -376,7 +425,8 @@ class Interpreter:
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.monolith[p.name],
             FunctionCallPrimitive: lambda p: self.execute_function_call(p),
-            FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p})
+            FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p}),
+            IfStatementPrimitive: lambda p: self.execute_if_statement(p)
         }
 
         primitive_type = type(primitive)
@@ -475,6 +525,20 @@ class Interpreter:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
         return operation(right)
+    
+    def execute_if_statement(self, primitive):
+        """Execute if statements"""
+        for condition, body in primitive.condition_blocks:
+            if self.execute(condition):  # Evaluate condition
+                for statement in body:
+                    self.execute(statement)
+                return  # Exit after the first matching condition
+        
+        # If no conditions matched, execute the else body if it exists
+        if primitive.else_body:
+            for statement in primitive.else_body:
+                self.execute(statement)
+
 
 def main():
 
@@ -482,15 +546,26 @@ def main():
 
     source = r"""
 
-    add &a &b {-> a + b;}
-    subtract &a &b {-> a - b;}
-    multiply &a &b {-> a * b;}
-    divide &a &b {-> a / b;}
+    x = 42;
 
-    #print(add(1, 2));
-    print(subtract(10, 1));#
-    print(multiply(2, 2));
-    //print(divide(10, 2));
+    ? x == 42 {
+        print("if statement is working!");
+    }
+
+    ? 1 > 2 {
+        print("first condition");
+    } , 1 < 2 {
+        print("second condition");
+    }
+
+    ? 1 == 2 {
+        print("first condition");
+    } , 3 == x {
+        print("second condition");
+    } : {
+        print("default case");
+    }
+
     """
 
     tokenizer = Tokenizer()
@@ -499,7 +574,7 @@ def main():
 
     parser = Parser()
     ast = parser.parse(tokens)
-    # print(ast[0].body[0].value)
+    # # print(ast[0].body[0].value)
 
     interpreter = Interpreter()
     interpreter.interpret(ast)
