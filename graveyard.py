@@ -38,6 +38,7 @@ IF = 32
 ELSE = 33
 WHILE = 34
 CONTINUE = 35
+BREAK = 36
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -75,7 +76,8 @@ TOKEN_TYPES = {
     IF: r"\?",
     ELSE: r":",
     WHILE: r"~",
-    CONTINUE: r"\^"
+    CONTINUE: r"\^",
+    BREAK: r"`"
 }
 
 class IdentifierPrimitive():
@@ -139,7 +141,13 @@ class WhileStatementPrimitive:
 class ContinuePrimitive:
     pass
 
+class BreakPrimitive:
+    pass
+
 class ContinueException(Exception):
+    pass
+
+class BreakException(Exception):
     pass
 
 class Tokenizer:
@@ -190,6 +198,10 @@ class Parser:
         elif self.match(CONTINUE):
             self.consume(CONTINUE)
             statement = ContinuePrimitive()
+            self.consume(SEMICOLON)
+        elif self.match(BREAK):
+            self.consume(BREAK)
+            statement = BreakPrimitive()
             self.consume(SEMICOLON)
         elif self.match(IF):
             statement = self.parse_if_statement()
@@ -460,7 +472,8 @@ class Interpreter:
             FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p}),
             IfStatementPrimitive: lambda p: self.execute_if_statement(p),
             WhileStatementPrimitive: lambda p: self.execute_while_statement(p),
-            ContinuePrimitive: lambda p: self.execute_continue(p)
+            ContinuePrimitive: lambda p: self.execute_continue(p),
+            BreakPrimitive: lambda p: self.execute_break(p)
         }
 
         primitive_type = type(primitive)
@@ -581,9 +594,15 @@ class Interpreter:
                     self.execute(statement)
             except ContinueException:
                 continue
+            except BreakException:
+                break
 
     def execute_continue(self, primitive):
         raise ContinueException()
+
+    def execute_break(self, primitive):
+        raise BreakException()
+
 
 def main():
     T = 900
@@ -595,19 +614,12 @@ def main():
 
     counter = 0;
 
-    ~ counter < 4 {
+    ~ counter < 10 {
         print("start");
         counter = counter + 1;
         print(counter);
-        ? counter == 2 {
-        
-        }
-        , counter == 3 {
-            print("conditional running");
-            ^;
-        }
-        
-        print("if continue is working, this should not run after elseif");
+        `;
+        print("this shouldnt run");
     }
 
     """
