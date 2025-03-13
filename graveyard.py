@@ -40,6 +40,7 @@ WHILE = 34
 CONTINUE = 35
 BREAK = 36
 FOR = 37
+FORMATTEDSTRING = 38
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -71,6 +72,7 @@ TOKEN_TYPES = {
     TRUE: r"\$",
     FALSE: r"%",
     STRING: r'"[^"\n]*"',
+    FORMATTEDSTRING: r"'([^'\\]*(\\.[^'\\]*)*)'",
     LEFTBRACE: r"\{",
     RIGHTBRACE: r"\}",
     PARAMETER: r"&",
@@ -145,6 +147,10 @@ class ForStatementPrimitive:
         self.iterator = iterator
         self.limit = limit
         self.body = body
+
+class FormattedStringPrimitive:
+    def __init__(self, value):
+        self.value = value
 
 class ContinuePrimitive:
     pass
@@ -428,6 +434,8 @@ class Parser:
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING)[1:-1])
+        elif self.match(FORMATTEDSTRING):
+            return FormattedStringPrimitive(self.consume(FORMATTEDSTRING)[1:-1])        
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
@@ -488,6 +496,7 @@ class Interpreter:
             UnaryOperationPrimitive: lambda p: self.execute_unary_operation(p),
             NumberPrimitive: lambda p: p.value,
             StringPrimitive: lambda p: p.value,
+            FormattedStringPrimitive: lambda p: self.execute_formatted_string(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.monolith[p.name],
@@ -597,6 +606,10 @@ class Interpreter:
 
         return operation(right)
     
+    def execute_formatted_string(self, primitive):
+        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), primitive.value)
+        return formatted_string
+    
     def execute_if_statement(self, primitive):
         """Execute if statements"""
         for condition, body in primitive.condition_blocks:
@@ -654,16 +667,16 @@ def main():
 
     source = r"""
     
-    x = 1;
-
-    counter @ 10 {
-        print(counter);
-        ? counter < 2 {
-            ^;
-        }
-        `;
-        print("this shouldn't run");
+    greet &input_name &input_age {
+        greeting = 'Hi, my name is {input_name} and I am {input_age} years old.';
+        print(greeting);
     }
+
+    name = "Steve";
+    age = 69;
+
+    greet(name, age);
+    greet("Fred", 101);
 
     """
 
