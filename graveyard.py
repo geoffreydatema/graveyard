@@ -35,8 +35,9 @@ RIGHTBRACE = 29
 PARAMETER = 30
 RETURN = 31
 IF = 32
-ELSEIF = 33
-ELSE = 34
+ELSE = 33
+WHILE = 34
+CONTINUE = 35
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -72,7 +73,9 @@ TOKEN_TYPES = {
     RIGHTBRACE: r"\}",
     PARAMETER: r"&",
     IF: r"\?",
-    ELSE: r":"
+    ELSE: r":",
+    WHILE: r"~",
+    CONTINUE: r"\^"
 }
 
 class IdentifierPrimitive():
@@ -128,6 +131,17 @@ class IfStatementPrimitive:
         self.condition_blocks = condition_blocks
         self.else_body = else_body
 
+class WhileStatementPrimitive:
+    def __init__(self, condition, body):
+        self.condition = condition
+        self.body = body
+
+class ContinuePrimitive:
+    pass
+
+class ContinueException(Exception):
+    pass
+
 class Tokenizer:
     def __init__(self):
         self.source = ""
@@ -171,7 +185,13 @@ class Parser:
         return statements
 
     def parse_statement(self):
-        if self.match(IF):  # Check for `?` first
+        if self.match(WHILE):
+            statement = self.parse_while_statement()
+        elif self.match(CONTINUE):
+            self.consume(CONTINUE)
+            statement = ContinuePrimitive()
+            self.consume(SEMICOLON)
+        elif self.match(IF):
             statement = self.parse_if_statement()
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
@@ -279,6 +299,18 @@ class Parser:
 
         return IfStatementPrimitive(condition_blocks, else_body)
 
+    def parse_while_statement(self):
+        """Parse while loops"""
+        self.consume(WHILE)  # Consume the '~' token
+        condition = self.parse_or()  # Parse the loop condition
+        self.consume(LEFTBRACE)  # Consume '{'
+
+        body = []
+        while not self.match(RIGHTBRACE):
+            body.append(self.parse_statement())
+
+        self.consume(RIGHTBRACE)  # Consume '}'
+        return WhileStatementPrimitive(condition, body)
 
     def parse_or(self):
         """Parse logical OR"""
@@ -426,7 +458,9 @@ class Interpreter:
             IdentifierPrimitive: lambda p: self.monolith[p.name],
             FunctionCallPrimitive: lambda p: self.execute_function_call(p),
             FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p}),
-            IfStatementPrimitive: lambda p: self.execute_if_statement(p)
+            IfStatementPrimitive: lambda p: self.execute_if_statement(p),
+            WhileStatementPrimitive: lambda p: self.execute_while_statement(p),
+            ContinuePrimitive: lambda p: self.execute_continue(p)
         }
 
         primitive_type = type(primitive)
@@ -539,46 +573,65 @@ class Interpreter:
             for statement in primitive.else_body:
                 self.execute(statement)
 
+    def execute_while_statement(self, primitive):
+        """Execute a while loop"""
+        while self.execute(primitive.condition):
+            try:
+                for statement in primitive.body:
+                    self.execute(statement)
+            except ContinueException:
+                continue
+
+    def execute_continue(self, primitive):
+        raise ContinueException()
 
 def main():
-
+    T = 900
+    P = 901
+    I = 902
     print("\n")
 
     source = r"""
 
-    x = 42;
+    counter = 0;
 
-    ? x == 42 {
-        print("if statement is working!");
-    }
-
-    ? 1 > 2 {
-        print("first condition");
-    } , 1 < 2 {
-        print("second condition");
-    }
-
-    ? 1 == 2 {
-        print("first condition");
-    } , 3 == x {
-        print("second condition");
-    } : {
-        print("default case");
+    ~ counter < 4 {
+        print("start");
+        counter = counter + 1;
+        print(counter);
+        ? counter == 2 {
+        
+        }
+        , counter == 3 {
+            print("conditional running");
+            ^;
+        }
+        
+        print("if continue is working, this should not run after elseif");
     }
 
     """
 
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize(source)
-    # print(tokens)
 
-    parser = Parser()
-    ast = parser.parse(tokens)
-    # # print(ast[0].body[0].value)
+    mode = I
 
-    interpreter = Interpreter()
-    interpreter.interpret(ast)
-    # print(interpreter.monolith)
+    if mode == T:
+        tokenizer = Tokenizer()
+        tokens = tokenizer.tokenize(source)
+        print(tokens)
+    elif mode == P:
+        tokenizer = Tokenizer()
+        tokens = tokenizer.tokenize(source)
+        parser = Parser()
+        ast = parser.parse(tokens)
+        print("parsed successfully")
+    elif mode == I:
+        tokenizer = Tokenizer()
+        tokens = tokenizer.tokenize(source)
+        parser = Parser()
+        ast = parser.parse(tokens)
+        interpreter = Interpreter()
+        interpreter.interpret(ast)
 
 if __name__ == "__main__":
     main()
