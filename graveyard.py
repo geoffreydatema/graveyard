@@ -39,6 +39,7 @@ ELSE = 33
 WHILE = 34
 CONTINUE = 35
 BREAK = 36
+FOR = 37
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -77,7 +78,8 @@ TOKEN_TYPES = {
     ELSE: r":",
     WHILE: r"~",
     CONTINUE: r"\^",
-    BREAK: r"`"
+    BREAK: r"`",
+    FOR: r"@"
 }
 
 class IdentifierPrimitive():
@@ -138,6 +140,12 @@ class WhileStatementPrimitive:
         self.condition = condition
         self.body = body
 
+class ForStatementPrimitive:
+    def __init__(self, iterator, limit, body):
+        self.iterator = iterator
+        self.limit = limit
+        self.body = body
+
 class ContinuePrimitive:
     pass
 
@@ -195,6 +203,8 @@ class Parser:
     def parse_statement(self):
         if self.match(WHILE):
             statement = self.parse_while_statement()
+        elif self.match(IDENTIFIER) and self.predict()[0] == FOR:
+            statement = self.parse_for_statement()
         elif self.match(CONTINUE):
             self.consume(CONTINUE)
             statement = ContinuePrimitive()
@@ -219,7 +229,7 @@ class Parser:
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-
+        
         return statement
 
     def parse_assignment(self):
@@ -323,6 +333,19 @@ class Parser:
 
         self.consume(RIGHTBRACE)  # Consume '}'
         return WhileStatementPrimitive(condition, body)
+    
+    def parse_for_statement(self):
+        iterator = self.consume(IDENTIFIER)  # Get loop variable name
+        self.consume(FOR)  # Consume `@`
+        limit = self.parse_or()  # Parse the loop bound
+        self.consume(LEFTBRACE)  # Consume `{`
+        
+        body = []
+        while not self.match(RIGHTBRACE):  # Read loop body until `}`
+            body.append(self.parse_statement())
+
+        self.consume(RIGHTBRACE)
+        return ForStatementPrimitive(iterator, limit, body)
 
     def parse_or(self):
         """Parse logical OR"""
@@ -472,6 +495,7 @@ class Interpreter:
             FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p}),
             IfStatementPrimitive: lambda p: self.execute_if_statement(p),
             WhileStatementPrimitive: lambda p: self.execute_while_statement(p),
+            ForStatementPrimitive: lambda p: self.execute_for_statement(p),
             ContinuePrimitive: lambda p: self.execute_continue(p),
             BreakPrimitive: lambda p: self.execute_break(p)
         }
@@ -597,6 +621,23 @@ class Interpreter:
             except BreakException:
                 break
 
+    def execute_for_statement(self, primitive):
+        iterator_name = primitive.iterator
+        limit = self.execute(primitive.limit)  # Evaluate loop limit
+        if type(limit) == float:
+            limit = int(limit)
+
+        for i in range(limit):
+            self.monolith[iterator_name] = i  # Assign the loop variable
+
+            try:
+                for statement in primitive.body:
+                    self.execute(statement)
+            except ContinueException:
+                continue  # Skip remaining statements and start next iteration
+            except BreakException:
+                break  # Exit loop completely
+
     def execute_continue(self, primitive):
         raise ContinueException()
 
@@ -608,22 +649,23 @@ def main():
     T = 900
     P = 901
     I = 902
+    M = 903
     print("\n")
 
     source = r"""
+    
+    x = 1;
 
-    counter = 0;
-
-    ~ counter < 10 {
-        print("start");
-        counter = counter + 1;
+    counter @ 10 {
         print(counter);
+        ? counter < 2 {
+            ^;
+        }
         `;
-        print("this shouldnt run");
+        print("this shouldn't run");
     }
 
     """
-
 
     mode = I
 
@@ -644,6 +686,14 @@ def main():
         ast = parser.parse(tokens)
         interpreter = Interpreter()
         interpreter.interpret(ast)
+    elif mode == M:
+        tokenizer = Tokenizer()
+        tokens = tokenizer.tokenize(source)
+        parser = Parser()
+        ast = parser.parse(tokens)
+        interpreter = Interpreter()
+        interpreter.interpret(ast)
+        print(interpreter.monolith)
 
 if __name__ == "__main__":
     main()
