@@ -41,6 +41,8 @@ CONTINUE = 35
 BREAK = 36
 FOR = 37
 FORMATTEDSTRING = 38
+LEFTBRACKET = 39
+RIGHTBRACKET = 40
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -81,7 +83,9 @@ TOKEN_TYPES = {
     WHILE: r"~",
     CONTINUE: r"\^",
     BREAK: r"`",
-    FOR: r"@"
+    FOR: r"@",
+    LEFTBRACKET: r"\[",
+    RIGHTBRACKET: r"\]"
 }
 
 class IdentifierPrimitive():
@@ -151,6 +155,15 @@ class ForStatementPrimitive:
 class FormattedStringPrimitive:
     def __init__(self, value):
         self.value = value
+
+class ArrayPrimitive:
+    def __init__(self, elements):
+        self.elements = elements
+
+class ArrayAccessPrimitive:
+    def __init__(self, identifier, index):
+        self.identifier = identifier  # The identifier (e.g., x)
+        self.index = index  # The index expression (e.g., 2)
 
 class ContinuePrimitive:
     pass
@@ -428,6 +441,33 @@ class Parser:
 
         return left
 
+    def parse_array(self):
+        self.consume(LEFTBRACKET)
+        elements = []
+
+        if not self.match(RIGHTBRACKET):  # Check for an empty array
+            while True:
+                elements.append(self.parse_or())  # Parse an expression inside the array
+                if self.match(COMMA):  # If there’s a comma, continue parsing
+                    self.consume(COMMA)
+                else:
+                    break
+
+        self.consume(RIGHTBRACKET)
+        return ArrayPrimitive(elements)
+    
+    def parse_array_access(self):
+        identifier = self.consume(IDENTIFIER)
+                
+        # Check if the next token is `[`
+        while self.match(LEFTBRACKET):
+            self.consume(LEFTBRACKET)
+            index = self.parse_or()  # Parse the index expression
+            self.consume(RIGHTBRACKET)
+            identifier = ArrayAccessPrimitive(identifier, index)
+        
+        return identifier
+
     def parse_numbers_parentheses(self):
         """Parse numbers and parentheses (highest precedence)"""
         if self.match(NUMBER):
@@ -437,7 +477,9 @@ class Parser:
         elif self.match(FORMATTEDSTRING):
             return FormattedStringPrimitive(self.consume(FORMATTEDSTRING)[1:-1])        
         elif self.match(IDENTIFIER):
-            if self.predict()[0] == LEFTPARENTHESES:
+            if self.predict()[0] == LEFTBRACKET:
+                return self.parse_array_access()
+            elif self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(LEFTPARENTHESES):
@@ -445,6 +487,8 @@ class Parser:
             expression = self.parse_or()
             self.consume(RIGHTPARENTHESES)
             return expression
+        elif self.match(LEFTBRACKET):
+            return self.parse_array()
         elif self.match(NULL):
             self.consume(NULL)
             return NullPrimitive()
@@ -497,6 +541,8 @@ class Interpreter:
             NumberPrimitive: lambda p: p.value,
             StringPrimitive: lambda p: p.value,
             FormattedStringPrimitive: lambda p: self.execute_formatted_string(p),
+            ArrayPrimitive: lambda p: self.execute_array(p),
+            ArrayAccessPrimitive: lambda p: self.execute_array_access(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.monolith[p.name],
@@ -610,6 +656,24 @@ class Interpreter:
         formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), primitive.value)
         return formatted_string
     
+    def execute_array(self, primitive):
+        return [self.execute(element) for element in primitive.elements]
+    
+    def execute_array_access(self, primitive):
+        array = self.monolith[primitive.identifier]
+        index = self.execute(primitive.index)
+        if type(index) == int:
+            pass
+        elif type(index) == float:
+            index = int(index)
+        
+        if not isinstance(array, list):
+            raise TypeError(f"Cannot index non-array type: {array}")
+        if not isinstance(index, int):
+            raise TypeError(f"Array index must be an integer, got {type(index).__name__}")
+
+        return array[index]
+    
     def execute_if_statement(self, primitive):
         """Execute if statements"""
         for condition, body in primitive.condition_blocks:
@@ -667,16 +731,10 @@ def main():
 
     source = r"""
     
-    greet &input_name &input_age {
-        greeting = 'Hi, my name is {input_name} and I am {input_age} years old.';
-        print(greeting);
-    }
-
-    name = "Steve";
-    age = 69;
-
-    greet(name, age);
-    greet("Fred", 101);
+    x = ["test", 2, 3];
+    print(x[0]);
+    print(x[2]);
+    print(x[1]);
 
     """
 
@@ -691,6 +749,7 @@ def main():
         tokens = tokenizer.tokenize(source)
         parser = Parser()
         ast = parser.parse(tokens)
+        # print(ast[1].value)
         print("parsed successfully")
     elif mode == I:
         tokenizer = Tokenizer()
