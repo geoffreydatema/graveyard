@@ -165,6 +165,12 @@ class ArrayAccessPrimitive:
         self.identifier = identifier  # The identifier (e.g., x)
         self.index = index  # The index expression (e.g., 2)
 
+class ArrayAssignmentPrimitive:
+    def __init__(self, identifier, index, value):
+        self.identifier = identifier
+        self.index = index
+        self.value = value
+
 class ContinuePrimitive:
     pass
 
@@ -241,6 +247,9 @@ class Parser:
             elif self.predict()[0] == LEFTPARENTHESES:
                 statement = self.parse_function_call()
                 self.consume(SEMICOLON)
+            elif self.predict()[0] == LEFTBRACKET:
+                statement = self.parse_array_assignment()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -250,6 +259,17 @@ class Parser:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
         
         return statement
+
+    def parse_array_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        index = None
+        if self.match(LEFTBRACKET):
+            self.consume(LEFTBRACKET)
+            index = self.parse_or()
+            self.consume(RIGHTBRACKET)
+        self.consume(ASSIGNMENT)
+        value = self.parse_or()
+        return ArrayAssignmentPrimitive(identifier, index, value)
 
     def parse_assignment(self):
         """Parse assignment statement"""
@@ -543,6 +563,7 @@ class Interpreter:
             FormattedStringPrimitive: lambda p: self.execute_formatted_string(p),
             ArrayPrimitive: lambda p: self.execute_array(p),
             ArrayAccessPrimitive: lambda p: self.execute_array_access(p),
+            ArrayAssignmentPrimitive: lambda p: self.execute_array_assignment(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.monolith[p.name],
@@ -661,18 +682,15 @@ class Interpreter:
     
     def execute_array_access(self, primitive):
         array = self.monolith[primitive.identifier]
-        index = self.execute(primitive.index)
-        if type(index) == int:
-            pass
-        elif type(index) == float:
-            index = int(index)
-        
-        if not isinstance(array, list):
-            raise TypeError(f"Cannot index non-array type: {array}")
-        if not isinstance(index, int):
-            raise TypeError(f"Array index must be an integer, got {type(index).__name__}")
+        index = int(self.execute(primitive.index))
 
         return array[index]
+    
+    def execute_array_assignment(self, primitive):
+        index = int(self.execute(primitive.index))
+        value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier][index] = value
     
     def execute_if_statement(self, primitive):
         """Execute if statements"""
@@ -730,12 +748,10 @@ def main():
     print("\n")
 
     source = r"""
-    
-    x = ["test", 2, 3];
-    print(x[0]);
-    print(x[2]);
-    print(x[1]);
-
+    x = ["test", 1, 2];
+    print(x);
+    x[0] = 42;
+    print(x);
     """
 
     mode = I
