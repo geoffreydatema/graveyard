@@ -47,7 +47,7 @@ RIGHTBRACKET = 40
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
-    MULTILINECOMMENT: r"#(.*?)#",
+    MULTILINECOMMENT: r"/\*.*?\*/",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -754,11 +754,8 @@ def main():
     print("\n")
 
     source = r"""
-    x = 42 + 69 + "third concat";
-    print(x);
-
-    y = 'formatted string with value <{x}>' + ' some concat';
-    print(y);
+    /*x = ["first", 42, 69];
+    print(x);*/
     """
 
     mode = I
