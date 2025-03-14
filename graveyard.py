@@ -637,21 +637,27 @@ class Interpreter:
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
         right = self.execute(primitive.right)
-        operations = {
-            "+": lambda x, y: x + y,
-            "-": lambda x, y: x - y,
-            "*": lambda x, y: x * y,
-            "/": lambda x, y: x / y,
-            "**": lambda x, y: x ** y,
-            "==": lambda x, y: x == y,
-            "!=": lambda x, y: x != y,
-            ">=": lambda x, y: x >= y,
-            "<=": lambda x, y: x <= y,
-            ">": lambda x, y: x > y,
-            "<": lambda x, y: x < y,
-            "&&": lambda x, y: x and y,
-            "||": lambda x, y: x or y
-        }
+
+        if type(left) == str or type(right) == str:
+            operations = {
+                "+": lambda x, y: str(x) + str(y)
+            }
+        else:
+            operations = {
+                "+": lambda x, y: x + y,
+                "-": lambda x, y: x - y,
+                "*": lambda x, y: x * y,
+                "/": lambda x, y: x / y,
+                "**": lambda x, y: x ** y,
+                "==": lambda x, y: x == y,
+                "!=": lambda x, y: x != y,
+                ">=": lambda x, y: x >= y,
+                "<=": lambda x, y: x <= y,
+                ">": lambda x, y: x > y,
+                "<": lambda x, y: x < y,
+                "&&": lambda x, y: x and y,
+                "||": lambda x, y: x or y
+            }
         operation = operations.get(primitive.op)
 
         if operation is None:
@@ -748,10 +754,11 @@ def main():
     print("\n")
 
     source = r"""
-    x = ["test", 1, 2];
+    x = 42 + 69 + "third concat";
     print(x);
-    x[0] = 42;
-    print(x);
+
+    y = 'formatted string with value <{x}>' + ' some concat';
+    print(y);
     """
 
     mode = I
