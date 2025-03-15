@@ -49,6 +49,8 @@ SUBTRACTIONASSIGNMENT = 43
 MULTIPLICATIONASSIGNMENT = 44
 DIVISIONASSIGNMENT = 45
 EXPONENTIATIONASSIGNMENT = 46
+INCREMENT = 47
+DECREMENT = 48
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -60,9 +62,11 @@ TOKEN_TYPES = {
     NUMBER: r"\d+(\.\d+)?",
     EQUALITY: r"==",
     ASSIGNMENT: r"=",
+    INCREMENT: r"\+\+",
     ADDITIONASSIGNMENT: r"\+=",
     ADDITION: r"\+",
     SUBTRACTIONASSIGNMENT: r"-=",
+    DECREMENT: r"--",
     SUBTRACTION: r"\-",
     EXPONENTIATIONASSIGNMENT: r"\*\*=",
     EXPONENTIATION: r"\*\*",
@@ -285,6 +289,12 @@ class Parser:
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == INCREMENT:
+                statement = self.parse_increment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == DECREMENT:
+                statement = self.parse_decrement()
                 self.consume(SEMICOLON)
             elif self.predict()[0] == ADDITIONASSIGNMENT:
                 statement = self.parse_addition_assignment()
@@ -551,6 +561,16 @@ class Parser:
 
         return left
 
+    def parse_increment(self):
+        identifier = self.consume(IDENTIFIER)
+        operator = self.consume(INCREMENT)
+        return UnaryOperationPrimitive(operator, identifier)
+    
+    def parse_decrement(self):
+        identifier = self.consume(IDENTIFIER)
+        operator = self.consume(DECREMENT)
+        return UnaryOperationPrimitive(operator, identifier)
+
     def parse_array(self):
         self.consume(LEFTBRACKET)
         elements = []
@@ -742,8 +762,10 @@ class Interpreter:
 
         current_value = self.monolith[primitive.identifier]
         new_value = self.execute(primitive.value)
-
-        self.monolith[primitive.identifier] = current_value + new_value
+        if type(current_value) == str or type(new_value) == str:
+            self.monolith[primitive.identifier] = str(current_value) + str(new_value)
+        else:
+            self.monolith[primitive.identifier] = current_value + new_value
 
     def execute_subtraction_assignment(self, primitive):
         if primitive.identifier not in self.monolith:
@@ -813,10 +835,21 @@ class Interpreter:
         return operation(left, right)
     
     def execute_unary_operation(self, primitive):
-        right = self.execute(primitive.right)
+        if primitive.op == "++":
+            self.monolith[primitive.right] += 1
+            return self.monolith[primitive.right]
+        elif primitive.op == "--":
+            self.monolith[primitive.right] -= 1
+            return self.monolith[primitive.right]
+
+        #@! might want to clean this up and make it consistent later on if there are no other unary operators (including the use of "right" instead of "value")
+        right = 0
+        if type(primitive.right) != str:
+            right = self.execute(primitive.right)
 
         operations = {
             "!": lambda x: not x,
+
         }
 
         operation = operations.get(primitive.op)
@@ -913,12 +946,10 @@ def main():
     print("\n")
 
     source = r"""
-    x = 1;
-    x += 2;
-    x -= 1;
-    x *= 2;
-    x /= 2;
-    x **= 2;
+    x = 42;
+    x++;
+    x++;
+    x--;
     print(x);
     """
 
@@ -933,7 +964,7 @@ def main():
         tokens = tokenizer.tokenize(source)
         parser = Parser()
         ast = parser.parse(tokens)
-        # print(ast[1].value)
+        # print(ast[1].op)
         print("parsed successfully")
     elif mode == I:
         tokenizer = Tokenizer()
