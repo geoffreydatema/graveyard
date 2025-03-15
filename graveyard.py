@@ -43,6 +43,7 @@ FOR = 37
 FORMATTEDSTRING = 38
 LEFTBRACKET = 39
 RIGHTBRACKET = 40
+APPEND = 41
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -65,6 +66,7 @@ TOKEN_TYPES = {
     GREATERTHANEQUAL: r">=",
     LESSTHANEQUAL: r"<=",
     GREATERTHAN: r">",
+    APPEND: r"<-",
     LESSTHAN: r"<",
     NOT: r"!",
     AND: r"&&",
@@ -170,6 +172,11 @@ class ArrayAssignmentPrimitive:
         self.identifier = identifier
         self.index = index
         self.value = value
+        
+class ArrayAppendPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
 
 class ContinuePrimitive:
     pass
@@ -250,6 +257,14 @@ class Parser:
             elif self.predict()[0] == LEFTBRACKET:
                 statement = self.parse_array_assignment()
                 self.consume(SEMICOLON)
+            elif self.predict()[0] == APPEND:
+                statement = self.parse_array_append()
+                self.consume(SEMICOLON)
+
+
+
+
+
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -487,6 +502,12 @@ class Parser:
             identifier = ArrayAccessPrimitive(identifier, index)
         
         return identifier
+    
+    def parse_array_append(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(APPEND)
+        value = self.parse_or()  # Parse the value being appended
+        return ArrayAppendPrimitive(identifier, value)
 
     def parse_numbers_parentheses(self):
         """Parse numbers and parentheses (highest precedence)"""
@@ -564,6 +585,7 @@ class Interpreter:
             ArrayPrimitive: lambda p: self.execute_array(p),
             ArrayAccessPrimitive: lambda p: self.execute_array_access(p),
             ArrayAssignmentPrimitive: lambda p: self.execute_array_assignment(p),
+            ArrayAppendPrimitive: lambda p: self.execute_array_append(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.monolith[p.name],
@@ -697,6 +719,18 @@ class Interpreter:
         value = self.execute(primitive.value)
 
         self.monolith[primitive.identifier][index] = value
+
+    def execute_array_append(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Array '{primitive.identifier}' is not defined")
+
+        array = self.monolith[primitive.identifier]
+
+        if not isinstance(array, list):
+            raise TypeError(f"'{primitive.identifier}' is not an array")
+
+        value = self.execute(primitive.value)  # Get the evaluated value
+        array.append(value)
     
     def execute_if_statement(self, primitive):
         """Execute if statements"""
@@ -754,8 +788,12 @@ def main():
     print("\n")
 
     source = r"""
-    /*x = ["first", 42, 69];
-    print(x);*/
+    x = ["first", 42, 69];
+    print(x);
+    x <- 420;
+    print(x);
+    x <- 3.14159;
+    print(x);
     """
 
     mode = I
