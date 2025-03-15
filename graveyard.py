@@ -178,8 +178,8 @@ class ArrayPrimitive:
 
 class ArrayAccessPrimitive:
     def __init__(self, identifier, index):
-        self.identifier = identifier  # The identifier (e.g., x)
-        self.index = index  # The index expression (e.g., 2)
+        self.identifier = identifier
+        self.index = index
 
 class ArrayAssignmentPrimitive:
     def __init__(self, identifier, index, value):
@@ -342,14 +342,12 @@ class Parser:
         return ArrayAssignmentPrimitive(identifier, index, value)
 
     def parse_assignment(self):
-        """Parse assignment statement"""
         identifier = self.consume(IDENTIFIER)
         self.consume(ASSIGNMENT)
         value = self.parse_or()
         return AssignmentPrimitive(identifier, value)
 
     def parse_function_definition(self):
-        """Parse function definitions"""
         name = self.peek()[1]
         self.consume(IDENTIFIER)
         
@@ -405,7 +403,6 @@ class Parser:
         return ExponentiationAssignmentPrimitive(identifier, value)
 
     def parse_function_call(self):
-        """Parse function calls"""
         name = self.peek()[1]
         self.consume(IDENTIFIER)
         self.consume(LEFTPARENTHESES)
@@ -424,11 +421,8 @@ class Parser:
         return FunctionCallPrimitive(name, args)
 
     def parse_if_statement(self):
-        """Parse if statements"""
-        self.consume(IF)  # Consume '?'
+        self.consume(IF)
         condition_blocks = []
-
-        # Parse the first condition
         condition = self.parse_or()
         self.consume(LEFTBRACE)
         body = []
@@ -437,8 +431,7 @@ class Parser:
         self.consume(RIGHTBRACE)
         condition_blocks.append((condition, body))
 
-        # Parse else-if conditions
-        while self.match(COMMA):  # Consume ','
+        while self.match(COMMA):
             self.consume(COMMA)
             condition = self.parse_or()
             self.consume(LEFTBRACE)
@@ -448,9 +441,8 @@ class Parser:
             self.consume(RIGHTBRACE)
             condition_blocks.append((condition, body))
 
-        # Parse else block if present
         else_body = None
-        if self.match(ELSE):  # Consume ':'
+        if self.match(ELSE):
             self.consume(ELSE)
             self.consume(LEFTBRACE)
             else_body = []
@@ -461,33 +453,31 @@ class Parser:
         return IfStatementPrimitive(condition_blocks, else_body)
 
     def parse_while_statement(self):
-        """Parse while loops"""
-        self.consume(WHILE)  # Consume the '~' token
-        condition = self.parse_or()  # Parse the loop condition
-        self.consume(LEFTBRACE)  # Consume '{'
+        self.consume(WHILE)
+        condition = self.parse_or()
+        self.consume(LEFTBRACE)
 
         body = []
         while not self.match(RIGHTBRACE):
             body.append(self.parse_statement())
 
-        self.consume(RIGHTBRACE)  # Consume '}'
+        self.consume(RIGHTBRACE)
         return WhileStatementPrimitive(condition, body)
     
     def parse_for_statement(self):
-        iterator = self.consume(IDENTIFIER)  # Get loop variable name
-        self.consume(FOR)  # Consume `@`
-        limit = self.parse_or()  # Parse the loop bound
-        self.consume(LEFTBRACE)  # Consume `{`
+        iterator = self.consume(IDENTIFIER)
+        self.consume(FOR)
+        limit = self.parse_or()
+        self.consume(LEFTBRACE)
         
         body = []
-        while not self.match(RIGHTBRACE):  # Read loop body until `}`
+        while not self.match(RIGHTBRACE):
             body.append(self.parse_statement())
 
         self.consume(RIGHTBRACE)
         return ForStatementPrimitive(iterator, limit, body)
 
     def parse_or(self):
-        """Parse logical OR"""
         left = self.parse_and()
 
         while self.match(OR):
@@ -498,7 +488,6 @@ class Parser:
         return left
 
     def parse_and(self):
-        """Parse logical AND"""
         left = self.parse_not()
 
         while self.match(AND):
@@ -509,7 +498,6 @@ class Parser:
         return left
     
     def parse_not(self):
-        """Parse logical NOT"""
         if self.match(NOT):
             op = self.consume(NOT)
             right = self.parse_not()
@@ -518,7 +506,6 @@ class Parser:
             return self.parse_comparison()
 
     def parse_comparison(self):
-        """Parse comparison"""
         left = self.parse_addition_subtraction()
 
         while self.match(EQUALITY, INEQUALITY, GREATERTHANEQUAL, LESSTHANEQUAL, GREATERTHAN, LESSTHAN):
@@ -529,7 +516,6 @@ class Parser:
         return left
 
     def parse_addition_subtraction(self):
-        """Parse addition and subtraction"""
         left = self.parse_multiplication_division()
 
         while self.match(ADDITION, SUBTRACTION):
@@ -540,7 +526,6 @@ class Parser:
         return left
 
     def parse_multiplication_division(self):
-        """Parse multiplication and division"""
         left = self.parse_exponentiation()
 
         while self.match(MULTIPLICATION, DIVISION):
@@ -551,7 +536,6 @@ class Parser:
         return left
     
     def parse_exponentiation(self):
-        """Parse exponentiation"""
         left = self.parse_numbers_parentheses()
 
         while self.match(EXPONENTIATION):
@@ -575,10 +559,10 @@ class Parser:
         self.consume(LEFTBRACKET)
         elements = []
 
-        if not self.match(RIGHTBRACKET):  # Check for an empty array
+        if not self.match(RIGHTBRACKET):
             while True:
-                elements.append(self.parse_or())  # Parse an expression inside the array
-                if self.match(COMMA):  # If there’s a comma, continue parsing
+                elements.append(self.parse_or())
+                if self.match(COMMA):
                     self.consume(COMMA)
                 else:
                     break
@@ -588,11 +572,10 @@ class Parser:
     
     def parse_array_access(self):
         identifier = self.consume(IDENTIFIER)
-                
-        # Check if the next token is `[`
+
         while self.match(LEFTBRACKET):
             self.consume(LEFTBRACKET)
-            index = self.parse_or()  # Parse the index expression
+            index = self.parse_or()
             self.consume(RIGHTBRACKET)
             identifier = ArrayAccessPrimitive(identifier, index)
         
@@ -601,11 +584,10 @@ class Parser:
     def parse_array_append(self):
         identifier = self.consume(IDENTIFIER)
         self.consume(APPEND)
-        value = self.parse_or()  # Parse the value being appended
+        value = self.parse_or()
         return ArrayAppendPrimitive(identifier, value)
 
     def parse_numbers_parentheses(self):
-        """Parse numbers and parentheses (highest precedence)"""
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(STRING):
@@ -704,6 +686,15 @@ class Interpreter:
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
 
+    def execute_cast_integer(self, args):
+        return int(self.monolith[args[0].name])
+    
+    def execute_cast_float(self, args):
+        return float(self.monolith[args[0].name])
+    
+    def execute_cast_string(self, args):
+        return str(self.monolith[args[0].name])
+
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
         print(*values)
@@ -723,8 +714,10 @@ class Interpreter:
         return str(hex(random.randint(286331153, 4294967295)))[2:]
 
     def execute_function_call(self, primitive):
-        """Execute built-in and user-defined functions"""
         builtins = {
+            "i": lambda args: self.execute_cast_integer(args),
+            "f": lambda args: self.execute_cast_float(args),
+            "s": lambda args: self.execute_cast_string(args),
             "print": lambda args: self.execute_print(args),
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
@@ -739,15 +732,12 @@ class Interpreter:
             if len(function.parameters) != len(primitive.arguments):
                 raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
             
-            # Bind arguments to parameters
             for parameter, argument in zip(function.parameters, primitive.arguments):
                 self.monolith[parameter] = self.execute(argument)
-            
-            # Execute function body
+
             for statement in function.body:
                 self.execute(statement)
-            
-            # Return the stored return value if one exists
+
             return self.execute(function.return_value) if function.return_value is not None else None
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
@@ -887,24 +877,21 @@ class Interpreter:
         if not isinstance(array, list):
             raise TypeError(f"'{primitive.identifier}' is not an array")
 
-        value = self.execute(primitive.value)  # Get the evaluated value
+        value = self.execute(primitive.value)
         array.append(value)
     
     def execute_if_statement(self, primitive):
-        """Execute if statements"""
         for condition, body in primitive.condition_blocks:
-            if self.execute(condition):  # Evaluate condition
+            if self.execute(condition):
                 for statement in body:
                     self.execute(statement)
-                return  # Exit after the first matching condition
-        
-        # If no conditions matched, execute the else body if it exists
+                return
+
         if primitive.else_body:
             for statement in primitive.else_body:
                 self.execute(statement)
 
     def execute_while_statement(self, primitive):
-        """Execute a while loop"""
         while self.execute(primitive.condition):
             try:
                 for statement in primitive.body:
@@ -916,27 +903,26 @@ class Interpreter:
 
     def execute_for_statement(self, primitive):
         iterator_name = primitive.iterator
-        limit = self.execute(primitive.limit)  # Evaluate loop limit
+        limit = self.execute(primitive.limit)
         if type(limit) == float:
             limit = int(limit)
 
         for i in range(limit):
-            self.monolith[iterator_name] = i  # Assign the loop variable
+            self.monolith[iterator_name] = i
 
             try:
                 for statement in primitive.body:
                     self.execute(statement)
             except ContinueException:
-                continue  # Skip remaining statements and start next iteration
+                continue
             except BreakException:
-                break  # Exit loop completely
+                break
 
     def execute_continue(self, primitive):
         raise ContinueException()
 
     def execute_break(self, primitive):
         raise BreakException()
-
 
 def main():
     T = 900
@@ -947,13 +933,13 @@ def main():
 
     source = r"""
     x = 42;
-    x++;
-    x++;
-    x--;
+    x = i(x);
+    x = f(x);
+    x = s(x);
     print(x);
     """
 
-    mode = I
+    mode = M
 
     if mode == T:
         tokenizer = Tokenizer()
