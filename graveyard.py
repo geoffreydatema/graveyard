@@ -44,6 +44,11 @@ FORMATTEDSTRING = 38
 LEFTBRACKET = 39
 RIGHTBRACKET = 40
 APPEND = 41
+ADDITIONASSIGNMENT = 42
+SUBTRACTIONASSIGNMENT = 43
+MULTIPLICATIONASSIGNMENT = 44
+DIVISIONASSIGNMENT = 45
+EXPONENTIATIONASSIGNMENT = 46
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -55,10 +60,15 @@ TOKEN_TYPES = {
     NUMBER: r"\d+(\.\d+)?",
     EQUALITY: r"==",
     ASSIGNMENT: r"=",
+    ADDITIONASSIGNMENT: r"\+=",
     ADDITION: r"\+",
+    SUBTRACTIONASSIGNMENT: r"-=",
     SUBTRACTION: r"\-",
+    EXPONENTIATIONASSIGNMENT: r"\*\*=",
     EXPONENTIATION: r"\*\*",
+    MULTIPLICATIONASSIGNMENT: r"\*=",
     MULTIPLICATION: r"\*",
+    DIVISIONASSIGNMENT: r"/=",
     DIVISION: r"\/",
     LEFTPARENTHESES: r"\(",
     RIGHTPARENTHESES: r"\)",
@@ -178,6 +188,31 @@ class ArrayAppendPrimitive:
         self.identifier = identifier
         self.value = value
 
+class AdditionAssignmentPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
+class SubtractionAssignmentPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
+class MultiplicationAssignmentPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
+class DivisionAssignmentPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
+class ExponentiationAssignmentPrimitive:
+    def __init__(self, identifier, value):
+        self.identifier = identifier
+        self.value = value
+
 class ContinuePrimitive:
     pass
 
@@ -251,6 +286,21 @@ class Parser:
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
                 self.consume(SEMICOLON)
+            elif self.predict()[0] == ADDITIONASSIGNMENT:
+                statement = self.parse_addition_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == SUBTRACTIONASSIGNMENT:
+                statement = self.parse_subtraction_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == MULTIPLICATIONASSIGNMENT:
+                statement = self.parse_multiplication_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == DIVISIONASSIGNMENT:
+                statement = self.parse_division_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == EXPONENTIATIONASSIGNMENT:
+                statement = self.parse_exponentiation_assignment()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == LEFTPARENTHESES:
                 statement = self.parse_function_call()
                 self.consume(SEMICOLON)
@@ -260,11 +310,6 @@ class Parser:
             elif self.predict()[0] == APPEND:
                 statement = self.parse_array_append()
                 self.consume(SEMICOLON)
-
-
-
-
-
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -318,6 +363,36 @@ class Parser:
         
         self.consume(RIGHTBRACE)
         return FunctionDefinitionPrimitive(name, parameters, body, return_value)
+
+    def parse_addition_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(ADDITIONASSIGNMENT)
+        value = self.parse_or()
+        return AdditionAssignmentPrimitive(identifier, value)
+    
+    def parse_subtraction_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(SUBTRACTIONASSIGNMENT)
+        value = self.parse_or()
+        return SubtractionAssignmentPrimitive(identifier, value)
+    
+    def parse_multiplication_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(MULTIPLICATIONASSIGNMENT)
+        value = self.parse_or()
+        return MultiplicationAssignmentPrimitive(identifier, value)
+    
+    def parse_division_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(DIVISIONASSIGNMENT)
+        value = self.parse_or()
+        return DivisionAssignmentPrimitive(identifier, value)
+    
+    def parse_exponentiation_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(EXPONENTIATIONASSIGNMENT)
+        value = self.parse_or()
+        return ExponentiationAssignmentPrimitive(identifier, value)
 
     def parse_function_call(self):
         """Parse function calls"""
@@ -577,6 +652,11 @@ class Interpreter:
     def execute(self, primitive):
         execute_map = {
             AssignmentPrimitive: lambda p: self.execute_assignment(p),
+            AdditionAssignmentPrimitive: lambda p: self.execute_addition_assignment(p),
+            SubtractionAssignmentPrimitive: lambda p: self.execute_subtraction_assignment(p),
+            MultiplicationAssignmentPrimitive: lambda p: self.execute_multiplication_assignment(p),
+            DivisionAssignmentPrimitive: lambda p: self.execute_division_assignment(p),
+            ExponentiationAssignmentPrimitive: lambda p: self.execute_exponentiation_assignment(p),
             BinaryOperationPrimitive: lambda p: self.execute_binary_operation(p),
             UnaryOperationPrimitive: lambda p: self.execute_unary_operation(p),
             NumberPrimitive: lambda p: p.value,
@@ -655,6 +735,51 @@ class Interpreter:
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
         self.monolith[primitive.identifier] = value
+
+    def execute_addition_assignment(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Variable '{primitive.identifier}' is not defined")
+
+        current_value = self.monolith[primitive.identifier]
+        new_value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier] = current_value + new_value
+
+    def execute_subtraction_assignment(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Variable '{primitive.identifier}' is not defined")
+
+        current_value = self.monolith[primitive.identifier]
+        new_value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier] = current_value - new_value
+
+    def execute_multiplication_assignment(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Variable '{primitive.identifier}' is not defined")
+
+        current_value = self.monolith[primitive.identifier]
+        new_value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier] = current_value * new_value
+
+    def execute_division_assignment(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Variable '{primitive.identifier}' is not defined")
+
+        current_value = self.monolith[primitive.identifier]
+        new_value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier] = current_value / new_value
+
+    def execute_exponentiation_assignment(self, primitive):
+        if primitive.identifier not in self.monolith:
+            raise NameError(f"Variable '{primitive.identifier}' is not defined")
+
+        current_value = self.monolith[primitive.identifier]
+        new_value = self.execute(primitive.value)
+
+        self.monolith[primitive.identifier] = current_value ** new_value
 
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
@@ -788,11 +913,12 @@ def main():
     print("\n")
 
     source = r"""
-    x = ["first", 42, 69];
-    print(x);
-    x <- 420;
-    print(x);
-    x <- 3.14159;
+    x = 1;
+    x += 2;
+    x -= 1;
+    x *= 2;
+    x /= 2;
+    x **= 2;
     print(x);
     """
 
