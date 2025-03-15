@@ -694,6 +694,9 @@ class Interpreter:
     
     def execute_cast_string(self, args):
         return str(self.monolith[args[0].name])
+    
+    def execute_cast_array(self, args):
+        return [self.monolith[args[0].name]]
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -718,6 +721,7 @@ class Interpreter:
             "i": lambda args: self.execute_cast_integer(args),
             "f": lambda args: self.execute_cast_float(args),
             "s": lambda args: self.execute_cast_string(args),
+            "a": lambda args: self.execute_cast_array(args),
             "print": lambda args: self.execute_print(args),
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
@@ -933,9 +937,9 @@ def main():
 
     source = r"""
     x = 42;
-    x = i(x);
-    x = f(x);
-    x = s(x);
+    x = a(x);
+    x <- 69;
+
     print(x);
     """
 
