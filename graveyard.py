@@ -723,16 +723,36 @@ class Interpreter:
         return key_audit
 
     def execute_cast_integer(self, args):
-        return int(self.monolith[args[0].name])
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            value = self.monolith[args[0].name]
+        else:
+            value = self.execute(args[0])
+        return int(value)
     
     def execute_cast_float(self, args):
-        return float(self.monolith[args[0].name])
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            value = self.monolith[args[0].name]
+        else:
+            value = self.execute(args[0])
+        return float(value)
     
     def execute_cast_string(self, args):
-        return str(self.monolith[args[0].name])
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            value = self.monolith[args[0].name]
+        else:
+            value = self.execute(args[0])
+        return str(value)
     
     def execute_cast_array(self, args):
-        return [self.monolith[args[0].name]]
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            value = self.monolith[args[0].name]
+        else:
+            value = self.execute(args[0])
+        return [value]
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -973,13 +993,12 @@ def main():
     print("\n")
 
     source = r"""
-    y = 42;
-    x = {
-        "test_key": magic_number(),
-        "another_test": 42,
-        69: magic_weight(),
-        magic_uid(): "stuff"
-    };
+
+    generate {
+        -> [69, 42];
+    }
+    x = 4.2;
+    x = a(generate());
 
     print(x);
     """
