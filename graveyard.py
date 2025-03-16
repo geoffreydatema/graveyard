@@ -35,7 +35,7 @@ RIGHTBRACE = 29
 PARAMETER = 30
 RETURN = 31
 IF = 32
-ELSE = 33
+COLON = 33
 WHILE = 34
 CONTINUE = 35
 BREAK = 36
@@ -95,13 +95,13 @@ TOKEN_TYPES = {
     RIGHTBRACE: r"\}",
     PARAMETER: r"&",
     IF: r"\?",
-    ELSE: r":",
     WHILE: r"~",
     CONTINUE: r"\^",
     BREAK: r"`",
     FOR: r"@",
     LEFTBRACKET: r"\[",
-    RIGHTBRACKET: r"\]"
+    RIGHTBRACKET: r"\]",
+    COLON: r":"
 }
 
 class IdentifierPrimitive():
@@ -215,6 +215,10 @@ class DivisionAssignmentPrimitive:
 class ExponentiationAssignmentPrimitive:
     def __init__(self, identifier, value):
         self.identifier = identifier
+        self.value = value
+
+class HashtablePrimitive:
+    def __init__(self, value):
         self.value = value
 
 class ContinuePrimitive:
@@ -442,8 +446,8 @@ class Parser:
             condition_blocks.append((condition, body))
 
         else_body = None
-        if self.match(ELSE):
-            self.consume(ELSE)
+        if self.match(COLON):
+            self.consume(COLON)
             self.consume(LEFTBRACE)
             else_body = []
             while not self.match(RIGHTBRACE):
@@ -587,6 +591,22 @@ class Parser:
         value = self.parse_or()
         return ArrayAppendPrimitive(identifier, value)
 
+    def parse_hashtable(self):
+        self.consume(LEFTBRACE)
+        hashtable = {}
+
+        while not self.match(RIGHTBRACE):
+            key = self.parse_or()
+            self.consume(COLON)
+            value = self.parse_or()
+            hashtable[key] = value
+
+            if not self.match(RIGHTBRACE):
+                self.consume(COMMA)
+
+        self.consume(RIGHTBRACE)
+        return HashtablePrimitive(hashtable)
+
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
@@ -607,6 +627,8 @@ class Parser:
             return expression
         elif self.match(LEFTBRACKET):
             return self.parse_array()
+        elif self.match(LEFTBRACE):
+            return self.parse_hashtable()
         elif self.match(NULL):
             self.consume(NULL)
             return NullPrimitive()
@@ -677,7 +699,8 @@ class Interpreter:
             WhileStatementPrimitive: lambda p: self.execute_while_statement(p),
             ForStatementPrimitive: lambda p: self.execute_for_statement(p),
             ContinuePrimitive: lambda p: self.execute_continue(p),
-            BreakPrimitive: lambda p: self.execute_break(p)
+            BreakPrimitive: lambda p: self.execute_break(p),
+            HashtablePrimitive: lambda p: self.execute_hashtable(p),
         }
 
         primitive_type = type(primitive)
@@ -685,6 +708,19 @@ class Interpreter:
             return execute_map[primitive_type](primitive)
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_hashtable(self, primitive):
+        key_audit = {}
+
+        for key in primitive.value:
+            evaluated_key = self.execute(key)
+
+            if type(evaluated_key) == int or type(evaluated_key) == str:
+                key_audit[evaluated_key] = self.execute(primitive.value[key])
+            elif type(evaluated_key) == float:
+                key_audit[int(evaluated_key)] = self.execute(primitive.value[key])
+
+        return key_audit
 
     def execute_cast_integer(self, args):
         return int(self.monolith[args[0].name])
@@ -933,17 +969,28 @@ def main():
     P = 901
     I = 902
     M = 903
+    D = 904
     print("\n")
 
     source = r"""
-    x = 42;
-    x = a(x);
-    x <- 69;
+    y = 42;
+    x = {
+        "test_key": magic_number(),
+        "another_test": 42,
+        69: magic_weight(),
+        magic_uid(): "stuff"
+    };
 
     print(x);
     """
+    mode = I
 
-    mode = M
+
+
+
+
+
+
 
     if mode == T:
         tokenizer = Tokenizer()
@@ -971,6 +1018,8 @@ def main():
         interpreter = Interpreter()
         interpreter.interpret(ast)
         print(interpreter.monolith)
+    elif mode == D:
+        pass
 
 if __name__ == "__main__":
     main()
