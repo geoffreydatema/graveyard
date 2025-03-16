@@ -1009,22 +1009,97 @@ class Interpreter:
             except BreakException:
                 break
 
+    # def execute_for_statement(self, primitive):
+    #     iterator_name = primitive.iterator
+    #     limit = self.execute(primitive.limit)
+    #     if type(limit) == float:
+    #         limit = int(limit)
+
+    #     for i in range(limit):
+    #         self.monolith[iterator_name] = i
+
+    #         try:
+    #             for statement in primitive.body:
+    #                 self.execute(statement)
+    #         except ContinueException:
+    #             continue
+    #         except BreakException:
+    #             break
+
+    # def execute_for_statement(self, primitive):
+    #     iterator_name = primitive.iterator
+    #     limit = self.execute(primitive.limit)
+
+    #     # Check if limit is an array (list)
+    #     if type(limit) == list:
+    #         for item in limit:
+    #             self.monolith[iterator_name] = item
+
+    #             try:
+    #                 for statement in primitive.body:
+    #                     self.execute(statement)
+    #             except ContinueException:
+    #                 continue
+    #             except BreakException:
+    #                 break
+    #     else:
+    #         # Assume limit is an integer (range-based iteration)
+    #         if type(limit) == float:
+    #             limit = int(limit)
+
+    #         for i in range(limit):
+    #             self.monolith[iterator_name] = i
+
+    #             try:
+    #                 for statement in primitive.body:
+    #                     self.execute(statement)
+    #             except ContinueException:
+    #                 continue
+    #             except BreakException:
+    #                 break
+
     def execute_for_statement(self, primitive):
         iterator_name = primitive.iterator
         limit = self.execute(primitive.limit)
-        if type(limit) == float:
-            limit = int(limit)
 
-        for i in range(limit):
-            self.monolith[iterator_name] = i
+        if type(limit) == dict:  
+            for key in limit.keys():
+                self.monolith[iterator_name] = key
 
-            try:
-                for statement in primitive.body:
-                    self.execute(statement)
-            except ContinueException:
-                continue
-            except BreakException:
-                break
+                try:
+                    for statement in primitive.body:
+                        self.execute(statement)
+                except ContinueException:
+                    continue
+                except BreakException:
+                    break
+
+        elif type(limit) == list:
+            for item in limit:
+                self.monolith[iterator_name] = item
+
+                try:
+                    for statement in primitive.body:
+                        self.execute(statement)
+                except ContinueException:
+                    continue
+                except BreakException:
+                    break
+
+        else:
+            if type(limit) == float:
+                limit = int(limit)
+
+            for i in range(limit):
+                self.monolith[iterator_name] = i
+
+                try:
+                    for statement in primitive.body:
+                        self.execute(statement)
+                except ContinueException:
+                    continue
+                except BreakException:
+                    break
 
     def execute_continue(self, primitive):
         raise ContinueException()
@@ -1042,10 +1117,17 @@ def main():
 
     source = r"""
 
-    y = 4269;
-    x = h([magic_uid(), magic_number(), "this should be ignored"]);
+    x = {
+        "first": 42,
+        "second": "test",
+        300: magic_number()
+    };
 
-    print(x);
+    y = ["first", "second", "third"];
+
+    i @ x {print(i);}
+    j @ y {print(j);}
+
     """
     mode = I
 
