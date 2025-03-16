@@ -753,6 +753,20 @@ class Interpreter:
         else:
             value = self.execute(args[0])
         return [value]
+    
+    def execute_cast_hashtable(self, args):
+        key = None
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            key = self.monolith[args[0].name]
+        else:
+            key = self.execute(args[0])
+            
+        if type(key) == float:
+                key = int(key)
+
+        if len(args) == 1:
+            return {key: None}
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -778,6 +792,7 @@ class Interpreter:
             "f": lambda args: self.execute_cast_float(args),
             "s": lambda args: self.execute_cast_string(args),
             "a": lambda args: self.execute_cast_array(args),
+            "h": lambda args: self.execute_cast_hashtable(args),
             "print": lambda args: self.execute_print(args),
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
@@ -994,11 +1009,8 @@ def main():
 
     source = r"""
 
-    generate {
-        -> [69, 42];
-    }
-    x = 4.2;
-    x = a(generate());
+    x = "test";
+    x = h(x);
 
     print(x);
     """
