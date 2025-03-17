@@ -228,6 +228,12 @@ class HashtableAccessPrimitive:
         self.identifier = identifier
         self.key = key
 
+class HashtableAssignmentPrimitive:
+    def __init__(self, identifier, key, value):
+        self.identifier = identifier
+        self.key = key
+        self.value = value
+
 class ContinuePrimitive:
     pass
 
@@ -331,6 +337,9 @@ class Parser:
             elif self.predict()[0] == APPEND:
                 statement = self.parse_array_append()
                 self.consume(SEMICOLON)
+            elif self.predict()[0] == REFERENCE:
+                statement = self.parse_hashtable_assignment()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -340,6 +349,14 @@ class Parser:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
         
         return statement
+
+    def parse_hashtable_assignment(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        key = self.parse_or()
+        self.consume(ASSIGNMENT)
+        value = self.parse_or()
+        return HashtableAssignmentPrimitive(identifier, key, value)
 
     def parse_array_assignment(self):
         identifier = self.consume(IDENTIFIER)
@@ -716,7 +733,8 @@ class Interpreter:
             ContinuePrimitive: lambda p: self.execute_continue(p),
             BreakPrimitive: lambda p: self.execute_break(p),
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
-            HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p)
+            HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p),
+            HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p)
         }
 
         primitive_type = type(primitive)
@@ -1004,6 +1022,14 @@ class Interpreter:
 
         self.monolith[primitive.identifier][index] = value
 
+    def execute_hashtable_assignment(self, primitive):
+            key = self.execute(primitive.key)
+            if type(key) == float:
+                key = int(key)
+            value = self.execute(primitive.value)
+
+            self.monolith[primitive.identifier][key] = value
+
     def execute_array_append(self, primitive):
         if primitive.identifier not in self.monolith:
             raise NameError(f"Array '{primitive.identifier}' is not defined")
@@ -1097,20 +1123,16 @@ def main():
     source = r"""
 
     x = {
-        "some_key": 42,
-        "number": magic_number(),
-        123: "stuff"
+        "some_key": 42
     };
 
-    v = x # "some_key";
-    print(v);
+    x # "new_key" = 69;
 
-    print(x#"number");
-
-    print(x#123);
+    x#12 = 42;
+    x#"test" = magic_uid();
 
     """
-    mode = I
+    mode = M
 
 
 
