@@ -118,7 +118,10 @@ class BooleanPrimitive():
 
 class NumberPrimitive():
     def __init__(self, value):
-        self.value = float(value)
+        if "." in value:
+            self.value = float(value)
+        else:
+            self.value = int(value)
 
 class StringPrimitive:
     def __init__(self, value):
@@ -787,16 +790,13 @@ class Interpreter:
             if type(evaluated_key) == int or type(evaluated_key) == str:
                 key_audit[evaluated_key] = self.execute(primitive.value[key])
             elif type(evaluated_key) == float:
-                key_audit[int(evaluated_key)] = self.execute(primitive.value[key])
+                raise TypeError("Hashtable keys cannot be float, must be integer or string")
 
         return key_audit
     
     def execute_hashtable_access(self, primitive):
         hashtable = self.monolith[primitive.identifier]
         key = self.execute(primitive.key)
-        
-        if not isinstance(hashtable, dict):
-            raise TypeError(f"Attempted to access {hashtable} as a hashtable, but it's {type(hashtable)}")
 
         if key not in hashtable:
             raise KeyError(f"Key {key} not found in hashtable")
@@ -848,7 +848,6 @@ class Interpreter:
                 key = self.execute(args[0].elements[0])
 
             if len(args[0].elements) > 1:
-                print(args[0].elements[1])
                 if type(args[0].elements[1]) == IdentifierPrimitive:
                     value = self.monolith[args[0].elements[1].name]
                 elif type(args[0].elements[1]) == ArrayPrimitive:
@@ -1048,21 +1047,25 @@ class Interpreter:
     
     def execute_array_access(self, primitive):
         array = self.monolith[primitive.identifier]
-        index = int(self.execute(primitive.index))
+        index = self.execute(primitive.index)
+        if type(index) != int:
+            raise TypeError("Array indices must be integers")
 
         return array[index]
     
     def execute_array_assignment(self, primitive):
-        index = int(self.execute(primitive.index))
+        index = self.execute(primitive.index)
         value = self.execute(primitive.value)
-
+        if type(index) != int:
+            raise TypeError("Array indices must be integers")
         self.monolith[primitive.identifier][index] = value
 
     def execute_hashtable_assignment(self, primitive):
             key = self.execute(primitive.key)
-            if type(key) == float:
-                key = int(key)
-            value = self.execute(primitive.value)
+            if type(key) == int or type(key) == str:
+                value = self.execute(primitive.value)
+            elif type(key) == float:
+                raise TypeError("Hashtable keys cannot be float, must be integer or string")
 
             self.monolith[primitive.identifier][key] = value
 
@@ -1128,8 +1131,8 @@ class Interpreter:
                     break
 
         else:
-            if type(limit) == float:
-                limit = int(limit)
+            if type(limit) != int:
+                raise TypeError(f"Cannot iterate through {type(limit)} range")
 
             for i in range(limit):
                 self.monolith[iterator_name] = i
@@ -1157,19 +1160,16 @@ def main():
     print("\n")
 
     source = r"""
-    x = 5 ... 10;
-    print(x);
-    print(15 ... 10);
-    print(2 ... 2);
+    test = ["one", "two"];
+
+    one = test[0];
+
+    test<-"three";
+
+    test[2] = "steve";
+
     """
     mode = I
-
-
-
-
-
-
-
 
     if mode == T:
         tokenizer = Tokenizer()
