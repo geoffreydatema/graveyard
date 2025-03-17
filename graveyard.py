@@ -90,8 +90,8 @@ TOKEN_TYPES = {
     COMMA: r",",
     TRUE: r"\$",
     FALSE: r"%",
-    STRING: r'"[^"\n]*"',
-    FORMATTEDSTRING: r"'([^'\\]*(\\.[^'\\]*)*)'",
+    STRING: r'"(?:\\\"|[^"\\\n])*"',
+    FORMATTEDSTRING: r"'(?:\\'|[^'\\\n])*'",
     LEFTBRACE: r"\{",
     RIGHTBRACE: r"\}",
     PARAMETER: r"&",
@@ -641,9 +641,9 @@ class Parser:
         if self.match(NUMBER):
             return NumberPrimitive(self.consume(NUMBER))
         elif self.match(STRING):
-            return StringPrimitive(self.consume(STRING)[1:-1])
+            return StringPrimitive(self.consume(STRING))
         elif self.match(FORMATTEDSTRING):
-            return FormattedStringPrimitive(self.consume(FORMATTEDSTRING)[1:-1])        
+            return FormattedStringPrimitive(self.consume(FORMATTEDSTRING))        
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTBRACKET:
                 return self.parse_array_access()
@@ -716,7 +716,7 @@ class Interpreter:
             BinaryOperationPrimitive: lambda p: self.execute_binary_operation(p),
             UnaryOperationPrimitive: lambda p: self.execute_unary_operation(p),
             NumberPrimitive: lambda p: p.value,
-            StringPrimitive: lambda p: p.value,
+            StringPrimitive: lambda p: self.execute_string(p),
             FormattedStringPrimitive: lambda p: self.execute_formatted_string(p),
             ArrayPrimitive: lambda p: self.execute_array(p),
             ArrayAccessPrimitive: lambda p: self.execute_array_access(p),
@@ -742,6 +742,9 @@ class Interpreter:
             return execute_map[primitive_type](primitive)
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_string(self, primitive):
+        return primitive.value[1:-1].replace('\\"', '"')
 
     def execute_hashtable(self, primitive):
         key_audit = {}
@@ -1004,7 +1007,8 @@ class Interpreter:
         return operation(right)
     
     def execute_formatted_string(self, primitive):
-        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), primitive.value)
+        escaped_string = primitive.value[1:-1].replace("\\'", "'")
+        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), escaped_string)
         return formatted_string
     
     def execute_array(self, primitive):
@@ -1121,18 +1125,13 @@ def main():
     print("\n")
 
     source = r"""
-
-    x = {
-        "some_key": 42
-    };
-
-    x # "new_key" = 69;
-
-    x#12 = 42;
-    x#"test" = magic_uid();
-
+    substitution = 42;
+    x = "test escape with \"string literal\"";
+    y = 'test escape with \'formatted string\' and {substitution}';
+    print(x);
+    print(y);
     """
-    mode = M
+    mode = I
 
 
 
