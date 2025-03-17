@@ -51,6 +51,7 @@ DIVISIONASSIGNMENT = 45
 EXPONENTIATIONASSIGNMENT = 46
 INCREMENT = 47
 DECREMENT = 48
+REFERENCE = 49
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -101,7 +102,8 @@ TOKEN_TYPES = {
     FOR: r"@",
     LEFTBRACKET: r"\[",
     RIGHTBRACKET: r"\]",
-    COLON: r":"
+    COLON: r":",
+    REFERENCE: r"#"
 }
 
 class IdentifierPrimitive():
@@ -220,6 +222,11 @@ class ExponentiationAssignmentPrimitive:
 class HashtablePrimitive:
     def __init__(self, value):
         self.value = value
+
+class HashtableAccessPrimitive:
+    def __init__(self, identifier, key):
+        self.identifier = identifier
+        self.key = key
 
 class ContinuePrimitive:
     pass
@@ -606,6 +613,12 @@ class Parser:
 
         self.consume(RIGHTBRACE)
         return HashtablePrimitive(hashtable)
+    
+    def parse_hashtable_access(self):
+        identifier = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        key = self.parse_or()
+        return HashtableAccessPrimitive(identifier, key)
 
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
@@ -617,6 +630,8 @@ class Parser:
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTBRACKET:
                 return self.parse_array_access()
+            elif self.predict()[0] == REFERENCE:
+                return self.parse_hashtable_access()
             elif self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
@@ -701,6 +716,7 @@ class Interpreter:
             ContinuePrimitive: lambda p: self.execute_continue(p),
             BreakPrimitive: lambda p: self.execute_break(p),
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
+            HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p)
         }
 
         primitive_type = type(primitive)
@@ -721,6 +737,18 @@ class Interpreter:
                 key_audit[int(evaluated_key)] = self.execute(primitive.value[key])
 
         return key_audit
+    
+    def execute_hashtable_access(self, primitive):
+        hashtable = self.monolith[primitive.identifier]
+        key = self.execute(primitive.key)
+        
+        if not isinstance(hashtable, dict):
+            raise TypeError(f"Attempted to access {hashtable} as a hashtable, but it's {type(hashtable)}")
+
+        if key not in hashtable:
+            raise KeyError(f"Key {key} not found in hashtable")
+
+        return hashtable[key]
 
     def execute_cast_integer(self, args):
         value = None
@@ -1009,55 +1037,6 @@ class Interpreter:
             except BreakException:
                 break
 
-    # def execute_for_statement(self, primitive):
-    #     iterator_name = primitive.iterator
-    #     limit = self.execute(primitive.limit)
-    #     if type(limit) == float:
-    #         limit = int(limit)
-
-    #     for i in range(limit):
-    #         self.monolith[iterator_name] = i
-
-    #         try:
-    #             for statement in primitive.body:
-    #                 self.execute(statement)
-    #         except ContinueException:
-    #             continue
-    #         except BreakException:
-    #             break
-
-    # def execute_for_statement(self, primitive):
-    #     iterator_name = primitive.iterator
-    #     limit = self.execute(primitive.limit)
-
-    #     # Check if limit is an array (list)
-    #     if type(limit) == list:
-    #         for item in limit:
-    #             self.monolith[iterator_name] = item
-
-    #             try:
-    #                 for statement in primitive.body:
-    #                     self.execute(statement)
-    #             except ContinueException:
-    #                 continue
-    #             except BreakException:
-    #                 break
-    #     else:
-    #         # Assume limit is an integer (range-based iteration)
-    #         if type(limit) == float:
-    #             limit = int(limit)
-
-    #         for i in range(limit):
-    #             self.monolith[iterator_name] = i
-
-    #             try:
-    #                 for statement in primitive.body:
-    #                     self.execute(statement)
-    #             except ContinueException:
-    #                 continue
-    #             except BreakException:
-    #                 break
-
     def execute_for_statement(self, primitive):
         iterator_name = primitive.iterator
         limit = self.execute(primitive.limit)
@@ -1118,15 +1097,17 @@ def main():
     source = r"""
 
     x = {
-        "first": 42,
-        "second": "test",
-        300: magic_number()
+        "some_key": 42,
+        "number": magic_number(),
+        123: "stuff"
     };
 
-    y = ["first", "second", "third"];
+    v = x # "some_key";
+    print(v);
 
-    i @ x {print(i);}
-    j @ y {print(j);}
+    print(x#"number");
+
+    print(x#123);
 
     """
     mode = I
