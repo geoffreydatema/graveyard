@@ -52,6 +52,7 @@ EXPONENTIATIONASSIGNMENT = 46
 INCREMENT = 47
 DECREMENT = 48
 REFERENCE = 49
+RANGE = 50
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -103,7 +104,8 @@ TOKEN_TYPES = {
     LEFTBRACKET: r"\[",
     RIGHTBRACKET: r"\]",
     COLON: r":",
-    REFERENCE: r"#"
+    REFERENCE: r"#",
+    RANGE: r"\.\.\."
 }
 
 class IdentifierPrimitive():
@@ -233,6 +235,11 @@ class HashtableAssignmentPrimitive:
         self.identifier = identifier
         self.key = key
         self.value = value
+
+class RangePrimitive:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
 
 class ContinuePrimitive:
     pass
@@ -639,7 +646,15 @@ class Parser:
 
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
-            return NumberPrimitive(self.consume(NUMBER))
+            # return NumberPrimitive(self.consume(NUMBER))
+            if self.match(NUMBER):
+                left = NumberPrimitive(self.consume(NUMBER))
+                if self.match(RANGE):
+                    self.consume(RANGE)
+                    right = self.parse_numbers_parentheses()
+                    return RangePrimitive(left, right)
+
+                return left
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING))
         elif self.match(FORMATTEDSTRING):
@@ -734,7 +749,8 @@ class Interpreter:
             BreakPrimitive: lambda p: self.execute_break(p),
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
             HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p),
-            HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p)
+            HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
+            RangePrimitive: lambda p: self.execute_range(p),
         }
 
         primitive_type = type(primitive)
@@ -742,6 +758,22 @@ class Interpreter:
             return execute_map[primitive_type](primitive)
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_range(self, primitive):
+        start = self.execute(primitive.start)
+        end = self.execute(primitive.end)
+
+        if type(start) != int:
+            start = int(start)
+        if type(end) != int:
+            end = int(end)
+
+        if start < end:
+            return list(range(start, end + 1))
+        elif start > end:
+            return list(range(start, end - 1, -1))
+        elif start == end:
+            return [start]
 
     def execute_string(self, primitive):
         return primitive.value[1:-1].replace('\\"', '"')
@@ -1125,11 +1157,10 @@ def main():
     print("\n")
 
     source = r"""
-    substitution = 42;
-    x = "test escape with \"string literal\"";
-    y = 'test escape with \'formatted string\' and {substitution}';
+    x = 5 ... 10;
     print(x);
-    print(y);
+    print(15 ... 10);
+    print(2 ... 2);
     """
     mode = I
 
