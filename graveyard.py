@@ -886,6 +886,50 @@ class Interpreter:
         print(*values)
         return True
     
+    def execute_type(self, args):
+        types = []
+        for item in args:
+            if type(item) == NullPrimitive:
+                types.append("null")
+            elif type(item) == BooleanPrimitive:
+                types.append("boolean")
+            elif type(item) == NumberPrimitive:
+                if type(item.value) == int:
+                    types.append("integer")
+                elif type(item.value) == float:
+                    types.append("float")
+            elif type(item) == StringPrimitive or type(item) == FormattedStringPrimitive:
+                if type(item.value) == str:
+                    types.append("string")
+            elif type(item) == ArrayPrimitive:
+                if type(item.elements) == list:
+                    types.append("array")
+            elif type(item) == HashtablePrimitive:
+                if type(item.value) == dict:
+                    types.append("hashtable")
+            elif type(item) == IdentifierPrimitive:
+                if self.monolith[item.name] == None:
+                    types.append("null")
+                elif type(self.monolith[item.name]) == bool:
+                    types.append("boolean")
+                elif type(self.monolith[item.name]) == int:
+                    types.append("integer")
+                elif type(self.monolith[item.name]) == float:
+                    types.append("float")
+                elif type(self.monolith[item.name]) == str:
+                    types.append("string")
+                elif type(self.monolith[item.name]) == list:
+                    types.append("array")
+                elif type(self.monolith[item.name]) == dict:
+                    types.append("hashtable")
+
+        if len(types) == 0:
+            return None
+        elif len(types) == 1:
+            return types[0]
+        else:
+            return types
+    
     def execute_hello(self):
         print("hello world!")
         return True
@@ -907,6 +951,7 @@ class Interpreter:
             "a": lambda args: self.execute_cast_array(args),
             "h": lambda args: self.execute_cast_hashtable(args),
             "print": lambda args: self.execute_print(args),
+            "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
@@ -1154,22 +1199,15 @@ class Interpreter:
 def main():
     T = 900
     P = 901
-    I = 902
+    E = 902
     M = 903
     D = 904
     print("\n")
 
     source = r"""
-    test = ["one", "two"];
-
-    one = test[0];
-
-    test<-"three";
-
-    test[2] = "steve";
-
+    print(type($,%,|,1,1.1,"1.1",'f',[1],{1:1}));
     """
-    mode = I
+    mode = E
 
     if mode == T:
         tokenizer = Tokenizer()
@@ -1182,7 +1220,7 @@ def main():
         ast = parser.parse(tokens)
         # print(ast[1].op)
         print("parsed successfully")
-    elif mode == I:
+    elif mode == E:
         tokenizer = Tokenizer()
         tokens = tokenizer.tokenize(source)
         parser = Parser()
