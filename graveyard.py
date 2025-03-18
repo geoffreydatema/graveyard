@@ -1,5 +1,6 @@
 import re
 import random
+import os
 
 #@! reoder these to match TOKEN_TYPES once we add them all
 WHITESPACE = 0
@@ -53,11 +54,14 @@ INCREMENT = 47
 DECREMENT = 48
 REFERENCE = 49
 RANGE = 50
+PERIOD = 51
+PATH = 52
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
+    PATH: r'(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -256,9 +260,13 @@ class ContinueException(Exception):
 class BreakException(Exception):
     pass
 
-class Tokenizer:
+class Graveyard:
     def __init__(self):
         self.source = ""
+        self.tokens = []
+        self.library_tokens = []
+        self.current = 0
+        self.monolith = {}
     
     def tokenize(self, source):
         self.source = source
@@ -285,11 +293,6 @@ class Tokenizer:
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[position]}")
         return tokens
-
-class Parser:
-    def __init__(self):
-        self.tokens = []
-        self.current = 0
 
     def parse(self, tokens):
         self.tokens = tokens
@@ -715,10 +718,6 @@ class Parser:
             return self.tokens[prediction_index]
         return None
 
-class Interpreter:
-    def __init__(self):
-        self.monolith = {}
-
     def interpret(self, ast):
         for primitive in ast:
             self.execute(primitive)
@@ -753,7 +752,7 @@ class Interpreter:
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
             HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p),
             HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
-            RangePrimitive: lambda p: self.execute_range(p),
+            RangePrimitive: lambda p: self.execute_range(p)
         }
 
         primitive_type = type(primitive)
@@ -802,6 +801,14 @@ class Interpreter:
             raise KeyError(f"Key {key} not found in hashtable")
 
         return hashtable[key]
+    
+    def execute_cast_boolean(self, args):
+        value = None
+        if type(args[0]) == IdentifierPrimitive:
+            value = self.monolith[args[0].name]
+        else:
+            value = self.execute(args[0])
+        return bool(value)
 
     def execute_cast_integer(self, args):
         value = None
@@ -945,6 +952,7 @@ class Interpreter:
 
     def execute_function_call(self, primitive):
         builtins = {
+            "b": lambda args: self.execute_cast_boolean(args),
             "i": lambda args: self.execute_cast_integer(args),
             "f": lambda args: self.execute_cast_float(args),
             "s": lambda args: self.execute_cast_string(args),
@@ -1205,36 +1213,30 @@ def main():
     print("\n")
 
     source = r"""
-    print(type($,%,|,1,1.1,"1.1",'f',[1],{1:1}));
+    x = {0:b(42)};
+    print(x);
+
     """
+    graveyard = Graveyard()
     mode = E
 
     if mode == T:
-        tokenizer = Tokenizer()
-        tokens = tokenizer.tokenize(source)
+        tokens = graveyard.tokenize(source)
         print(tokens)
     elif mode == P:
-        tokenizer = Tokenizer()
-        tokens = tokenizer.tokenize(source)
-        parser = Parser()
-        ast = parser.parse(tokens)
-        # print(ast[1].op)
+        tokens = graveyard.tokenize(source)
+        ast = graveyard.parse(tokens)
+        # print(ast[0])
         print("parsed successfully")
     elif mode == E:
-        tokenizer = Tokenizer()
-        tokens = tokenizer.tokenize(source)
-        parser = Parser()
-        ast = parser.parse(tokens)
-        interpreter = Interpreter()
-        interpreter.interpret(ast)
+        tokens = graveyard.tokenize(source)
+        ast = graveyard.parse(tokens)
+        graveyard.interpret(ast)
     elif mode == M:
-        tokenizer = Tokenizer()
-        tokens = tokenizer.tokenize(source)
-        parser = Parser()
-        ast = parser.parse(tokens)
-        interpreter = Interpreter()
-        interpreter.interpret(ast)
-        print(interpreter.monolith)
+        tokens = graveyard.tokenize(source)
+        ast = graveyard.parse(tokens)
+        graveyard.interpret(ast)
+        print(graveyard.monolith)
     elif mode == D:
         pass
 
