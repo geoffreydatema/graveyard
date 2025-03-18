@@ -264,8 +264,8 @@ class Graveyard:
     def __init__(self):
         self.source = ""
         self.tokens = []
-        self.library_tokens = []
         self.current = 0
+        self.primitives = []
         self.monolith = {}
     
     def tokenize(self, source):
@@ -292,14 +292,15 @@ class Graveyard:
                     break
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[position]}")
-        return tokens
-
-    def parse(self, tokens):
+            
         self.tokens = tokens
-        statements = []
+
+    def parse(self):
+        # self.tokens = tokens
+        primitives = []
         while self.current < len(self.tokens):
-            statements.append(self.parse_statement())
-        return statements
+            primitives.append(self.parse_statement())
+        self.primitives = primitives
 
     def parse_statement(self):
         if self.match(WHILE):
@@ -718,8 +719,8 @@ class Graveyard:
             return self.tokens[prediction_index]
         return None
 
-    def interpret(self, ast):
-        for primitive in ast:
+    def interpret(self):
+        for primitive in self.primitives:
             self.execute(primitive)
 
     def execute(self, primitive):
@@ -1213,29 +1214,30 @@ def main():
     print("\n")
 
     source = r"""
-    x = {0:b(42)};
+    x = [1,2,3];
+    hello();
+    x[0] = "test";
     print(x);
-
     """
     graveyard = Graveyard()
     mode = E
 
     if mode == T:
-        tokens = graveyard.tokenize(source)
-        print(tokens)
+        graveyard.tokenize(source)
+        print(graveyard.tokens)
     elif mode == P:
-        tokens = graveyard.tokenize(source)
-        ast = graveyard.parse(tokens)
-        # print(ast[0])
+        graveyard.tokenize(source)
+        graveyard.parse()
+        # print(graveyard.primitives[0])
         print("parsed successfully")
     elif mode == E:
-        tokens = graveyard.tokenize(source)
-        ast = graveyard.parse(tokens)
-        graveyard.interpret(ast)
+        graveyard.tokenize(source)
+        graveyard.parse()
+        graveyard.interpret()
     elif mode == M:
-        tokens = graveyard.tokenize(source)
-        ast = graveyard.parse(tokens)
-        graveyard.interpret(ast)
+        graveyard.tokenize(source)
+        graveyard.parse()
+        graveyard.interpret()
         print(graveyard.monolith)
     elif mode == D:
         pass
