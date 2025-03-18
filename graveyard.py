@@ -61,7 +61,7 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    PATH: r'(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)',
+    PATH: r'#(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+);',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -292,8 +292,58 @@ class Graveyard:
                     break
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[position]}")
-            
+        
         self.tokens = tokens
+
+        insert_position = 0
+        for token in tokens:
+            if token[0] == PATH:
+                self.evaluate_library_reference(token[1], insert_position)
+            insert_position += 1
+
+
+    def tokenize_library(self, source):
+        tokens = []
+        position = 0
+        skip_until = None
+        while position < len(source):
+            match = None
+            for token_type, pattern in TOKEN_TYPES.items():
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE  
+                regex = re.compile(pattern, regex_flags)
+                match = regex.match(source, position)
+                if match:
+                    if token_type == SINGLELINECOMMENT:
+                        position = match.end()
+                        break
+                    elif token_type == MULTILINECOMMENT:
+                        position = match.end()
+                        break
+                    elif token_type != WHITESPACE:
+                        tokens.append((token_type, match.group(0)))
+                    position = match.end()
+                    break
+            if not match:
+                raise SyntaxError(f"Unexpected character: {self.source[position]}")
+
+        return tokens
+
+    def evaluate_library_reference(self, path, insert_position):
+        fixed_path = path.replace("\\", "/")[1:-1]
+        base_path = os.path.dirname(fixed_path)
+        library_name = fixed_path.split("/")[-1]
+
+        available_libraries = os.listdir(base_path)
+        expected_file_name = library_name + ".graveyard"
+        library = None
+        if expected_file_name in available_libraries:
+            with open(os.path.join(base_path, expected_file_name), 'r') as file:
+                library = file.read()
+        else:
+            raise ReferenceError(f"Cannot find library {library_name}")
+
+        referenced_tokens = self.tokenize_library(library)
+        self.tokens[insert_position:insert_position + 1] = referenced_tokens
 
     def parse(self):
         # self.tokens = tokens
@@ -1214,10 +1264,9 @@ def main():
     print("\n")
 
     source = r"""
-    x = [1,2,3];
-    hello();
-    x[0] = "test";
-    print(x);
+    #./standard;
+    debug("this is a standard library function from an external file", |);
+    
     """
     graveyard = Graveyard()
     mode = E
