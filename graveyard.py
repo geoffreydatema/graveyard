@@ -61,7 +61,7 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    PATH: r'#(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+);',
+    PATH: r'<(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)>;',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -187,7 +187,7 @@ class ArrayPrimitive:
     def __init__(self, elements):
         self.elements = elements
 
-class ArrayAccessPrimitive:
+class ArrayLookupPrimitive:
     def __init__(self, identifier, index):
         self.identifier = identifier
         self.index = index
@@ -232,7 +232,7 @@ class HashtablePrimitive:
     def __init__(self, value):
         self.value = value
 
-class HashtableAccessPrimitive:
+class HashtableLookupPrimitive:
     def __init__(self, identifier, key):
         self.identifier = identifier
         self.key = key
@@ -329,7 +329,7 @@ class Graveyard:
         return tokens
 
     def evaluate_library_reference(self, path, insert_position):
-        fixed_path = path.replace("\\", "/")[1:-1]
+        fixed_path = path.replace("\\", "/")[1:-2]
         base_path = os.path.dirname(fixed_path)
         library_name = fixed_path.split("/")[-1]
 
@@ -662,11 +662,16 @@ class Graveyard:
         self.consume(RIGHTBRACKET)
         return ArrayPrimitive(elements)
     
-    def parse_array_access(self):
+    def parse_array_lookup(self):
         identifier = self.consume(IDENTIFIER)
-        self.consume(REFERENCE)
-        index = self.parse_or()
-        return ArrayAccessPrimitive(identifier, index)
+
+        while self.match(LEFTBRACKET):
+            self.consume(LEFTBRACKET)
+            index = self.parse_or()
+            self.consume(RIGHTBRACKET)
+            identifier = ArrayLookupPrimitive(identifier, index)
+        
+        return identifier
     
     def parse_array_append(self):
         identifier = self.consume(IDENTIFIER)
@@ -690,11 +695,11 @@ class Graveyard:
         self.consume(RIGHTBRACE)
         return HashtablePrimitive(hashtable)
     
-    def parse_hashtable_access(self):
+    def parse_hashtable_lookup(self):
         identifier = self.consume(IDENTIFIER)
         self.consume(REFERENCE)
         key = self.parse_or()
-        return HashtableAccessPrimitive(identifier, key)
+        return HashtableLookupPrimitive(identifier, key)
 
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
@@ -712,10 +717,10 @@ class Graveyard:
         elif self.match(FORMATTEDSTRING):
             return FormattedStringPrimitive(self.consume(FORMATTEDSTRING))        
         elif self.match(IDENTIFIER):
-            if self.predict()[0] == REFERENCE:
-                return self.parse_array_access()
+            if self.predict()[0] == LEFTBRACKET:
+                return self.parse_array_lookup()
             elif self.predict()[0] == REFERENCE:
-                return self.parse_hashtable_access()
+                return self.parse_hashtable_lookup()
             elif self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
@@ -782,7 +787,7 @@ class Graveyard:
             StringPrimitive: lambda p: self.execute_string(p),
             FormattedStringPrimitive: lambda p: self.execute_formatted_string(p),
             ArrayPrimitive: lambda p: self.execute_array(p),
-            ArrayAccessPrimitive: lambda p: self.execute_array_access(p),
+            ArrayLookupPrimitive: lambda p: self.execute_array_lookup(p),
             ArrayAssignmentPrimitive: lambda p: self.execute_array_assignment(p),
             ArrayAppendPrimitive: lambda p: self.execute_array_append(p),
             NullPrimitive: lambda p: p.value,
@@ -796,7 +801,7 @@ class Graveyard:
             ContinuePrimitive: lambda p: self.execute_continue(p),
             BreakPrimitive: lambda p: self.execute_break(p),
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
-            HashtableAccessPrimitive: lambda p: self.execute_hashtable_access(p),
+            HashtableLookupPrimitive: lambda p: self.execute_hashtable_lookup(p),
             HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
             RangePrimitive: lambda p: self.execute_range(p)
         }
@@ -839,7 +844,7 @@ class Graveyard:
 
         return key_audit
     
-    def execute_hashtable_access(self, primitive):
+    def execute_hashtable_lookup(self, primitive):
         hashtable = self.monolith[primitive.identifier]
         key = self.execute(primitive.key)
 
@@ -1144,7 +1149,7 @@ class Graveyard:
     def execute_array(self, primitive):
         return [self.execute(element) for element in primitive.elements]
     
-    def execute_array_access(self, primitive):
+    def execute_array_lookup(self, primitive):
         array = self.monolith[primitive.identifier]
         index = self.execute(primitive.index)
         if type(index) != int:
@@ -1259,16 +1264,12 @@ def main():
     print("\n")
 
     source = r"""
-    data = ["first", "second", "third"];
+    <./standard>;
+    sanity();
 
-    x = data#0;
-    data#0 = 42;
-
-    data <- x;
-    
     """
     graveyard = Graveyard()
-    mode = M
+    mode = E
 
     if mode == T:
         graveyard.tokenize(source)
@@ -1276,7 +1277,7 @@ def main():
     elif mode == P:
         graveyard.tokenize(source)
         graveyard.parse()
-        print(graveyard.primitives[1].value)
+        # print(graveyard.primitives[0])
         print("parsed successfully")
     elif mode == E:
         graveyard.tokenize(source)
