@@ -664,14 +664,9 @@ class Graveyard:
     
     def parse_array_access(self):
         identifier = self.consume(IDENTIFIER)
-
-        while self.match(LEFTBRACKET):
-            self.consume(LEFTBRACKET)
-            index = self.parse_or()
-            self.consume(RIGHTBRACKET)
-            identifier = ArrayAccessPrimitive(identifier, index)
-        
-        return identifier
+        self.consume(REFERENCE)
+        index = self.parse_or()
+        return ArrayAccessPrimitive(identifier, index)
     
     def parse_array_append(self):
         identifier = self.consume(IDENTIFIER)
@@ -717,7 +712,7 @@ class Graveyard:
         elif self.match(FORMATTEDSTRING):
             return FormattedStringPrimitive(self.consume(FORMATTEDSTRING))        
         elif self.match(IDENTIFIER):
-            if self.predict()[0] == LEFTBRACKET:
+            if self.predict()[0] == REFERENCE:
                 return self.parse_array_access()
             elif self.predict()[0] == REFERENCE:
                 return self.parse_hashtable_access()
@@ -1264,12 +1259,16 @@ def main():
     print("\n")
 
     source = r"""
-    #./standard;
-    debug("this is a standard library function from an external file", |);
+    data = ["first", "second", "third"];
+
+    x = data#0;
+    data#0 = 42;
+
+    data <- x;
     
     """
     graveyard = Graveyard()
-    mode = E
+    mode = M
 
     if mode == T:
         graveyard.tokenize(source)
@@ -1277,7 +1276,7 @@ def main():
     elif mode == P:
         graveyard.tokenize(source)
         graveyard.parse()
-        # print(graveyard.primitives[0])
+        print(graveyard.primitives[1].value)
         print("parsed successfully")
     elif mode == E:
         graveyard.tokenize(source)
