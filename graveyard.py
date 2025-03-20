@@ -878,6 +878,8 @@ class Graveyard:
     
     def execute_hashtable_lookup(self, primitive):
         hashtable = self.monolith[primitive.identifier]
+        if type(hashtable) != dict:
+            raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
         key = self.execute(primitive.key)
 
         if key not in hashtable:
@@ -1183,6 +1185,8 @@ class Graveyard:
     
     def execute_array_lookup(self, primitive):
         array = self.monolith[primitive.identifier]
+        if type(array) != list:
+            raise TypeError(f"Variable {primitive.identifier} is not an array")
         index = self.execute(primitive.index)
         if type(index) != int:
             raise TypeError("Array indices must be integers")
@@ -1190,6 +1194,8 @@ class Graveyard:
         return array[index]
     
     def execute_array_assignment(self, primitive):
+        if type(self.monolith[primitive.identifier]) != list:
+            raise TypeError(f"Variable {primitive.identifier} is not an array")
         index = self.execute(primitive.index)
         value = self.execute(primitive.value)
         if type(index) != int:
@@ -1197,6 +1203,8 @@ class Graveyard:
         self.monolith[primitive.identifier][index] = value
 
     def execute_hashtable_assignment(self, primitive):
+            if type(self.monolith[primitive.identifier]) != dict:
+                raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
             key = self.execute(primitive.key)
             if type(key) == int or type(key) == str:
                 value = self.execute(primitive.value)
@@ -1296,13 +1304,12 @@ def main():
     print("\n")
 
     source = r"""
-    <./standard>#debug,sanity,test;
+    <./standard>#sanity;
     sanity();
-    debug("testing test()", test());
 
     """
     graveyard = Graveyard()
-    mode = E
+    mode = M
 
     if mode == T:
         graveyard.tokenize(source)
