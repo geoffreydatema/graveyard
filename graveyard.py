@@ -266,7 +266,7 @@ class Graveyard:
         self.tokens = []
         self.current = 0
         self.primitives = []
-        self.monolith = {}
+        self.monolith = [{}]
 
     def tokenize(self, source):
         self.source = source
@@ -290,18 +290,17 @@ class Graveyard:
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[position]}")
         
-        # Replace library imports in a separate pass
-        self.tokens = tokens[:]  # Make a copy to avoid modifying while iterating
+        self.tokens = tokens[:]
         self.process_library_references()
 
     def process_library_references(self):
-        offset = 0  # Keep track of insertions
-        for index, token in enumerate(self.tokens[:]):  # Iterate over a copy
+        offset = 0
+        for index, token in enumerate(self.tokens[:]):
             if token[0] == PATH:
                 new_tokens = self.evaluate_library_reference(token[1])
                 insert_index = index + offset
                 self.tokens[insert_index:insert_index + 1] = new_tokens
-                offset += len(new_tokens) - 1  # Adjust offset for future insertions
+                offset += len(new_tokens) - 1
 
     def tokenize_library(self, source):
         tokens = []
@@ -805,6 +804,27 @@ class Graveyard:
         for primitive in self.primitives:
             self.execute(primitive)
 
+    def push_scope(self):
+        self.monolith.append({})
+
+    def pop_scope(self):
+        if len(self.monolith) > 1:
+            self.monolith.pop()
+        else:
+            raise RuntimeError("Cannot pop global scope")
+        
+    def get_variable(self, name):
+        for scope in reversed(self.monolith):
+            if name in scope:
+                return scope[name]
+        raise NameError(f"Variable '{name}' is not defined")
+    
+    def set_variable(self, name, value, global_scope=False):
+        if global_scope:
+            self.monolith[0][name] = value
+        else:
+            self.monolith[-1][name] = value
+
     def execute(self, primitive):
         execute_map = {
             AssignmentPrimitive: lambda p: self.execute_assignment(p),
@@ -824,9 +844,9 @@ class Graveyard:
             ArrayAppendPrimitive: lambda p: self.execute_array_append(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
-            IdentifierPrimitive: lambda p: self.monolith[p.name],
+            IdentifierPrimitive: lambda p: self.execute_identifier(p),
             FunctionCallPrimitive: lambda p: self.execute_function_call(p),
-            FunctionDefinitionPrimitive: lambda p: self.monolith.update({p.name: p}),
+            FunctionDefinitionPrimitive: lambda p: self.execute_function_definition(p),
             IfStatementPrimitive: lambda p: self.execute_if_statement(p),
             WhileStatementPrimitive: lambda p: self.execute_while_statement(p),
             ForStatementPrimitive: lambda p: self.execute_for_statement(p),
@@ -843,6 +863,15 @@ class Graveyard:
             return execute_map[primitive_type](primitive)
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_identifier(self, primitive):
+        for scope in reversed(self.monolith):
+            if primitive.name in scope:
+                return scope[primitive.name]
+        raise ValueError(f"Undefined variable: {primitive.name}")
+
+    def execute_function_definition(self, primitive):
+        self.monolith[0][primitive.name] = primitive
 
     def execute_range(self, primitive):
         start = self.execute(primitive.start)
@@ -1053,24 +1082,34 @@ class Graveyard:
 
         if primitive.name in builtins:
             return builtins[primitive.name](primitive.arguments)
-        elif primitive.name in self.monolith:
-            function = self.monolith[primitive.name]
+        
+        elif primitive.name in self.monolith[0]:
+            function = self.monolith[0][primitive.name]
+
             if len(function.parameters) != len(primitive.arguments):
                 raise ValueError(f"Incorrect number of arguments for function {primitive.name}")
             
-            for parameter, argument in zip(function.parameters, primitive.arguments):
-                self.monolith[parameter] = self.execute(argument)
+            self.push_scope()
 
-            for statement in function.body:
-                self.execute(statement)
+            try:
+                for parameter, argument in zip(function.parameters, primitive.arguments):
+                    self.monolith[-1][parameter] = self.execute(argument)
 
-            return self.execute(function.return_value) if function.return_value is not None else None
+                result = None
+                for statement in function.body:
+                    result = self.execute(statement)
+
+                return self.execute(function.return_value) if function.return_value is not None else result
+
+            finally:
+                self.pop_scope()
+
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
 
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
-        self.monolith[primitive.identifier] = value
+        self.monolith[-1][primitive.identifier] = value
 
     def execute_addition_assignment(self, primitive):
         if primitive.identifier not in self.monolith:
@@ -1152,20 +1191,29 @@ class Graveyard:
     
     def execute_unary_operation(self, primitive):
         if primitive.op == "++":
-            self.monolith[primitive.right] += 1
-            return self.monolith[primitive.right]
-        elif primitive.op == "--":
-            self.monolith[primitive.right] -= 1
-            return self.monolith[primitive.right]
+            if isinstance(primitive.right, str):
+                if primitive.right in self.monolith[-1]:
+                    self.monolith[-1][primitive.right] += 1
+                elif primitive.right in self.monolith[0]:
+                    self.monolith[0][primitive.right] += 1
+                return self.monolith[-1][primitive.right] if primitive.right in self.monolith[-1] else self.monolith[0][primitive.right]
+            operand += 1
+            return operand
 
-        #@! might want to clean this up and make it consistent later on if there are no other unary operators (including the use of "right" instead of "value")
-        right = 0
-        if type(primitive.right) != str:
-            right = self.execute(primitive.right)
+        elif primitive.op == "--":
+            if isinstance(primitive.right, str):
+                if primitive.right in self.monolith[-1]:
+                    self.monolith[-1][primitive.right] -= 1
+                elif primitive.right in self.monolith[0]:
+                    self.monolith[0][primitive.right] -= 1
+                return self.monolith[-1][primitive.right] if primitive.right in self.monolith[-1] else self.monolith[0][primitive.right]
+            operand -= 1
+            return operand
+
+        operand = self.execute(primitive.right)
 
         operations = {
             "!": lambda x: not x,
-
         }
 
         operation = operations.get(primitive.op)
@@ -1173,8 +1221,8 @@ class Graveyard:
         if operation is None:
             raise ValueError(f"Unknown operator: {primitive.op}")
 
-        return operation(right)
-    
+        return operation(operand)
+
     def execute_formatted_string(self, primitive):
         escaped_string = primitive.value[1:-1].replace("\\'", "'")
         formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), escaped_string)
@@ -1224,20 +1272,29 @@ class Graveyard:
 
         value = self.execute(primitive.value)
         array.append(value)
-    
+
     def execute_if_statement(self, primitive):
         for condition, body in primitive.condition_blocks:
             if self.execute(condition):
-                for statement in body:
-                    self.execute(statement)
+                self.push_scope()
+                try:
+                    for statement in body:
+                        self.execute(statement)
+                finally:
+                    self.pop_scope()
                 return
 
         if primitive.else_body:
-            for statement in primitive.else_body:
-                self.execute(statement)
+            self.push_scope()
+            try:
+                for statement in primitive.else_body:
+                    self.execute(statement)
+            finally:
+                self.pop_scope()
 
     def execute_while_statement(self, primitive):
         while self.execute(primitive.condition):
+            self.push_scope()
             try:
                 for statement in primitive.body:
                     self.execute(statement)
@@ -1245,49 +1302,51 @@ class Graveyard:
                 continue
             except BreakException:
                 break
+            finally:
+                self.pop_scope()
 
     def execute_for_statement(self, primitive):
         iterator_name = primitive.iterator
         limit = self.execute(primitive.limit)
 
-        if type(limit) == dict:  
+        if type(limit) == dict:
             for key in limit.keys():
-                self.monolith[iterator_name] = key
-
+                self.push_scope()
                 try:
+                    self.monolith[-1][iterator_name] = key
+
                     for statement in primitive.body:
                         self.execute(statement)
-                except ContinueException:
-                    continue
-                except BreakException:
-                    break
+
+                finally:
+                    self.pop_scope()
 
         elif type(limit) == list:
             for item in limit:
-                self.monolith[iterator_name] = item
-
+                self.push_scope()
                 try:
+                    self.monolith[-1][iterator_name] = item
+
                     for statement in primitive.body:
                         self.execute(statement)
-                except ContinueException:
-                    continue
-                except BreakException:
-                    break
+
+                finally:
+                    self.pop_scope()
 
         else:
             if type(limit) != int:
                 raise TypeError(f"Cannot iterate through {type(limit)} range")
 
             for i in range(limit):
-                self.monolith[iterator_name] = i
-
+                self.push_scope()
                 try:
+                    self.monolith[-1][iterator_name] = i
+
                     for statement in primitive.body:
                         self.execute(statement)
-                except ContinueException:
-                    continue
-                except BreakException:
-                    break
+
+                finally:
+                    self.pop_scope()
 
     def execute_continue(self, primitive):
         raise ContinueException()
@@ -1304,9 +1363,15 @@ def main():
     print("\n")
 
     source = r"""
-    <./standard>#sanity;
-    sanity();
-
+    ?${
+        x = 1;
+        x++;
+        x++;
+        x--;
+        x = !(!x);
+        print(x);    
+    }
+    
     """
     graveyard = Graveyard()
     mode = M
