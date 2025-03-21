@@ -1112,51 +1112,87 @@ class Graveyard:
         self.monolith[-1][primitive.identifier] = value
 
     def execute_addition_assignment(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[primitive.identifier]
+        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
         new_value = self.execute(primitive.value)
-        if type(current_value) == str or type(new_value) == str:
-            self.monolith[primitive.identifier] = str(current_value) + str(new_value)
+
+        if isinstance(current_value, str) or isinstance(new_value, str):
+            new_value = str(current_value) + str(new_value)
         else:
-            self.monolith[primitive.identifier] = current_value + new_value
+            new_value = current_value + new_value
+
+        if primitive.identifier in self.monolith[-1]:
+            self.monolith[-1][primitive.identifier] = new_value
+        else:
+            self.monolith[0][primitive.identifier] = new_value
+
+        return new_value
 
     def execute_subtraction_assignment(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[primitive.identifier]
+        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
         new_value = self.execute(primitive.value)
 
-        self.monolith[primitive.identifier] = current_value - new_value
+        new_value = current_value - new_value
+
+        if primitive.identifier in self.monolith[-1]:
+            self.monolith[-1][primitive.identifier] = new_value
+        else:
+            self.monolith[0][primitive.identifier] = new_value
+
+        return new_value
 
     def execute_multiplication_assignment(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[primitive.identifier]
+        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
         new_value = self.execute(primitive.value)
 
-        self.monolith[primitive.identifier] = current_value * new_value
+        new_value = current_value * new_value
+
+        if primitive.identifier in self.monolith[-1]:
+            self.monolith[-1][primitive.identifier] = new_value
+        else:
+            self.monolith[0][primitive.identifier] = new_value
+
+        return new_value
 
     def execute_division_assignment(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[primitive.identifier]
+        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
         new_value = self.execute(primitive.value)
 
-        self.monolith[primitive.identifier] = current_value / new_value
+        new_value = current_value / new_value
+
+        if primitive.identifier in self.monolith[-1]:
+            self.monolith[-1][primitive.identifier] = new_value
+        else:
+            self.monolith[0][primitive.identifier] = new_value
+
+        return new_value
 
     def execute_exponentiation_assignment(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[primitive.identifier]
+        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
         new_value = self.execute(primitive.value)
 
-        self.monolith[primitive.identifier] = current_value ** new_value
+        new_value = current_value ** new_value
+
+        if primitive.identifier in self.monolith[-1]:
+            self.monolith[-1][primitive.identifier] = new_value
+        else:
+            self.monolith[0][primitive.identifier] = new_value
+
+        return new_value
 
     def execute_binary_operation(self, primitive):
         left = self.execute(primitive.left)
@@ -1364,14 +1400,10 @@ def main():
 
     source = r"""
     ?${
-        x = 1;
-        x++;
-        x++;
-        x--;
-        x = !(!x);
-        print(x);    
-    }
-    
+        x = 42;
+        x **= 2;
+        print(x);
+        }
     """
     graveyard = Graveyard()
     mode = M
