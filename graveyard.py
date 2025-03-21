@@ -1117,10 +1117,17 @@ class Graveyard:
         self.monolith[-1][primitive.identifier] = value
 
     def execute_addition_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        # Search through scopes to find the correct one
+        scope_to_update = None
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope_to_update = scope
+                break
+
+        if scope_to_update is None:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        current_value = scope_to_update[primitive.identifier]
         new_value = self.execute(primitive.value)
 
         if isinstance(current_value, str) or isinstance(new_value, str):
@@ -1128,75 +1135,87 @@ class Graveyard:
         else:
             new_value = current_value + new_value
 
-        if primitive.identifier in self.monolith[-1]:
-            self.monolith[-1][primitive.identifier] = new_value
-        else:
-            self.monolith[0][primitive.identifier] = new_value
-
+        scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_subtraction_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        # Search through scopes to find the correct one
+        scope_to_update = None
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope_to_update = scope
+                break
+
+        if scope_to_update is None:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        current_value = scope_to_update[primitive.identifier]
         new_value = self.execute(primitive.value)
 
         new_value = current_value - new_value
 
-        if primitive.identifier in self.monolith[-1]:
-            self.monolith[-1][primitive.identifier] = new_value
-        else:
-            self.monolith[0][primitive.identifier] = new_value
-
+        # Update the variable in the correct scope
+        scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_multiplication_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        # Search through scopes to find the correct one
+        scope_to_update = None
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope_to_update = scope
+                break
+
+        if scope_to_update is None:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        current_value = scope_to_update[primitive.identifier]
         new_value = self.execute(primitive.value)
 
         new_value = current_value * new_value
 
-        if primitive.identifier in self.monolith[-1]:
-            self.monolith[-1][primitive.identifier] = new_value
-        else:
-            self.monolith[0][primitive.identifier] = new_value
-
+        # Update the variable in the correct scope
+        scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_division_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        # Search through scopes to find the correct one
+        scope_to_update = None
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope_to_update = scope
+                break
+
+        if scope_to_update is None:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        current_value = scope_to_update[primitive.identifier]
         new_value = self.execute(primitive.value)
 
         new_value = current_value / new_value
 
-        if primitive.identifier in self.monolith[-1]:
-            self.monolith[-1][primitive.identifier] = new_value
-        else:
-            self.monolith[0][primitive.identifier] = new_value
-
+        # Update the variable in the correct scope
+        scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_exponentiation_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        # Search through scopes to find the correct one
+        scope_to_update = None
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope_to_update = scope
+                break
+
+        if scope_to_update is None:
             raise NameError(f"Variable '{primitive.identifier}' is not defined")
 
-        current_value = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        current_value = scope_to_update[primitive.identifier]
         new_value = self.execute(primitive.value)
 
         new_value = current_value ** new_value
 
-        if primitive.identifier in self.monolith[-1]:
-            self.monolith[-1][primitive.identifier] = new_value
-        else:
-            self.monolith[0][primitive.identifier] = new_value
-
+        # Update the variable in the correct scope
+        scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_binary_operation(self, primitive):
@@ -1231,26 +1250,29 @@ class Graveyard:
         return operation(left, right)
     
     def execute_unary_operation(self, primitive):
-        if primitive.op == "++":
-            if isinstance(primitive.right, str):
-                if primitive.right in self.monolith[-1]:
-                    self.monolith[-1][primitive.right] += 1
-                elif primitive.right in self.monolith[0]:
-                    self.monolith[0][primitive.right] += 1
-                return self.monolith[-1][primitive.right] if primitive.right in self.monolith[-1] else self.monolith[0][primitive.right]
-            operand += 1
+        if primitive.op == "++" or primitive.op == "--":
+            # Search for the variable in the scopes
+            scope_to_update = None
+            for scope in reversed(self.monolith):
+                if primitive.right in scope:
+                    scope_to_update = scope
+                    break
+
+            if scope_to_update is None:
+                raise NameError(f"Variable '{primitive.right}' is not defined")
+
+            # Retrieve the current value and update it
+            operand = scope_to_update[primitive.right]
+            if primitive.op == "++":
+                operand += 1
+            elif primitive.op == "--":
+                operand -= 1
+
+            # Update the variable in the correct scope
+            scope_to_update[primitive.right] = operand
             return operand
 
-        elif primitive.op == "--":
-            if isinstance(primitive.right, str):
-                if primitive.right in self.monolith[-1]:
-                    self.monolith[-1][primitive.right] -= 1
-                elif primitive.right in self.monolith[0]:
-                    self.monolith[0][primitive.right] -= 1
-                return self.monolith[-1][primitive.right] if primitive.right in self.monolith[-1] else self.monolith[0][primitive.right]
-            operand -= 1
-            return operand
-
+        # For the negation operator "!"
         operand = self.execute(primitive.right)
 
         operations = {
@@ -1417,17 +1439,23 @@ def main():
     print("\n")
 
     source = r"""
-    //<./standard>#sanity;
-    //sanity();
-
-    /*counter = 0;
-    ~ counter < 3 {
-        counter++;
-    }*/
-    
+    <./standard>#sanity;
+    sanity();
+    /*
+    test_function {
+        counter = 42;
+        ? $ {
+            other = 2;
+            ? $ {
+                counter ++;
+                print(counter);
+            }
+        }
+    }
+    test_function();*/
     """
     graveyard = Graveyard()
-    mode = M
+    mode = E
 
     if mode == T:
         graveyard.tokenize(source)
