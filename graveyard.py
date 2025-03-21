@@ -906,9 +906,14 @@ class Graveyard:
         return key_audit
     
     def execute_hashtable_lookup(self, primitive):
-        hashtable = self.monolith[primitive.identifier]
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+            raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
+
+        hashtable = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+
         if type(hashtable) != dict:
             raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
+
         key = self.execute(primitive.key)
 
         if key not in hashtable:
@@ -1261,17 +1266,23 @@ class Graveyard:
 
     def execute_formatted_string(self, primitive):
         escaped_string = primitive.value[1:-1].replace("\\'", "'")
-        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith.get(match.group(1), match.group(0))), escaped_string)
+        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith[-1].get(match.group(1), self.monolith[0].get(match.group(1), match.group(0)))), escaped_string)
         return formatted_string
     
     def execute_array(self, primitive):
         return [self.execute(element) for element in primitive.elements]
     
     def execute_array_lookup(self, primitive):
-        array = self.monolith[primitive.identifier]
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+            raise NameError(f"Array '{primitive.identifier}' is not defined")
+
+        array = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+
         if type(array) != list:
             raise TypeError(f"Variable {primitive.identifier} is not an array")
+
         index = self.execute(primitive.index)
+
         if type(index) != int:
             raise TypeError("Array indices must be integers")
 
@@ -1287,21 +1298,28 @@ class Graveyard:
         self.monolith[primitive.identifier][index] = value
 
     def execute_hashtable_assignment(self, primitive):
-            if type(self.monolith[primitive.identifier]) != dict:
-                raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
-            key = self.execute(primitive.key)
-            if type(key) == int or type(key) == str:
-                value = self.execute(primitive.value)
-            elif type(key) == float:
-                raise TypeError("Hashtable keys cannot be float, must be integer or string")
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+            raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
 
-            self.monolith[primitive.identifier][key] = value
+        hashtable = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+
+        if type(hashtable) != dict:
+            raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
+
+        key = self.execute(primitive.key)
+
+        if type(key) == int or type(key) == str:
+            value = self.execute(primitive.value)
+        elif type(key) == float:
+            raise TypeError("Hashtable keys cannot be float, must be integer or string")
+
+        hashtable[key] = value
 
     def execute_array_append(self, primitive):
-        if primitive.identifier not in self.monolith:
+        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
             raise NameError(f"Array '{primitive.identifier}' is not defined")
 
-        array = self.monolith[primitive.identifier]
+        array = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
 
         if not isinstance(array, list):
             raise TypeError(f"'{primitive.identifier}' is not an array")
@@ -1399,11 +1417,14 @@ def main():
     print("\n")
 
     source = r"""
-    ?${
-        x = 42;
-        x **= 2;
-        print(x);
-        }
+    //<./standard>#sanity;
+    //sanity();
+
+    /*counter = 0;
+    ~ counter < 3 {
+        counter++;
+    }*/
+    
     """
     graveyard = Graveyard()
     mode = M
