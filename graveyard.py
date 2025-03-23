@@ -61,7 +61,7 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    PATH: r'<(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)>(?:#([a-zA-Z_][a-zA-Z0-9_]*(?:,[a-zA-Z_][a-zA-Z0-9_]*)*))?;',
+    PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#([a-zA-Z_][a-zA-Z0-9_]*(?:,[a-zA-Z_][a-zA-Z0-9_]*)*))?;',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -327,14 +327,12 @@ class Graveyard:
 
     def evaluate_library_reference(self, path):
         fixed_path = path.replace("\\", "/")
-        
         if "#" in fixed_path:
             split = fixed_path.split("#", 1)
-            library_path, elements = split[0][1:-1], split[1][:-1]
+            library_path, elements = split[0][1:], split[1][:-1]
             element_names = elements.split(",")
         else:
-            library_path, element_names = fixed_path[1:-2], None
-
+            library_path, element_names = fixed_path[1:-1], None
         base_path = os.path.dirname(library_path)
         library_name = library_path.split("/")[-1]
 
@@ -1439,20 +1437,9 @@ def main():
     print("\n")
 
     source = r"""
-    <./standard>#sanity;
-    sanity();
-    /*
-    test_function {
-        counter = 42;
-        ? $ {
-            other = 2;
-            ? $ {
-                counter ++;
-                print(counter);
-            }
-        }
-    }
-    test_function();*/
+    @./standard#sanity,debug;
+    result = sanity();
+    debug("sanity result", result);
     """
     graveyard = Graveyard()
     mode = E
