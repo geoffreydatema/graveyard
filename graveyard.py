@@ -56,6 +56,7 @@ REFERENCE = 49
 RANGE = 50
 PERIOD = 51
 PATH = 52
+NAMESPACE = 53
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -107,6 +108,7 @@ TOKEN_TYPES = {
     FOR: r"@",
     LEFTBRACKET: r"\[",
     RIGHTBRACKET: r"\]",
+    NAMESPACE: r"::",
     COLON: r":",
     REFERENCE: r"#",
     RANGE: r"\.\.\."
@@ -247,6 +249,16 @@ class RangePrimitive:
     def __init__(self, start, end):
         self.start = start
         self.end = end
+
+class NamespaceDefinitionPrimitive:
+    def __init__(self, name, body):
+        self.name = name
+        self.body = body
+
+class NamespaceAccessPrimitive:
+    def __init__(self, namespace, identifier):
+        self.namespace = namespace
+        self.identifier = identifier
 
 class ContinuePrimitive:
     pass
@@ -396,6 +408,9 @@ class Graveyard:
             self.consume(SEMICOLON)
         elif self.match(IF):
             statement = self.parse_if_statement()
+        elif self.match(NAMESPACE):
+            if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == LEFTBRACE:
+                return self.parse_namespace_definition()
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
@@ -440,8 +455,28 @@ class Graveyard:
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-
+        #print(statement)
         return statement
+
+    def parse_namespace_definition(self):
+        self.consume(NAMESPACE)
+        name = self.consume(IDENTIFIER)
+        self.consume(LEFTBRACE)
+        
+        body = []
+        while not self.match(RIGHTBRACE):
+            body.append(self.parse_statement())
+        
+        self.consume(RIGHTBRACE)
+        return NamespaceDefinitionPrimitive(name, body)
+    
+    def parse_namespace_access(self):
+        self.consume(NAMESPACE)
+        namespace = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        identifier = self.consume(IDENTIFIER)
+        
+        return NamespaceAccessPrimitive(namespace, identifier)
 
     def parse_hashtable_assignment(self):
         identifier = self.consume(IDENTIFIER)
@@ -739,7 +774,6 @@ class Graveyard:
                     self.consume(RANGE)
                     right = self.parse_numbers_parentheses()
                     return RangePrimitive(left, right)
-
                 return left
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING))
@@ -771,6 +805,9 @@ class Graveyard:
         elif self.match(FALSE):
             self.consume(FALSE)
             return BooleanPrimitive(False)
+        elif self.match(NAMESPACE):
+            if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == REFERENCE:
+                return self.parse_namespace_access()
         else:
             raise SyntaxError(f"Expected number, variable, or parenthases got {self.peek()[1]}")
 
@@ -853,7 +890,9 @@ class Graveyard:
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
             HashtableLookupPrimitive: lambda p: self.execute_hashtable_lookup(p),
             HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
-            RangePrimitive: lambda p: self.execute_range(p)
+            RangePrimitive: lambda p: self.execute_range(p),
+            NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_definition(p),
+            NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p)
         }
 
         primitive_type = type(primitive)
@@ -861,6 +900,35 @@ class Graveyard:
             return execute_map[primitive_type](primitive)
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_namespace_definition(self, primitive):
+        namespace_name = primitive.name
+
+        # Find or create namespace in the global scope (bottom of the stack)
+        global_scope = self.monolith[0]
+        if namespace_name not in global_scope:
+            global_scope[namespace_name] = {}
+
+        # Push the namespace scope onto the stack
+        self.monolith.append(global_scope[namespace_name])
+
+        # Execute the body inside the new namespace scope
+        for statement in primitive.body:
+            self.execute(statement)
+
+        # Pop the namespace scope off the stack after execution
+        self.monolith.pop()
+
+    def execute_namespace_access(self, primitive):
+        namespace_name = primitive.namespace
+        identifier = primitive.identifier
+
+        # Look for the namespace in the global scope (bottom of the stack)
+        global_scope = self.monolith[0]
+        if namespace_name in global_scope and identifier in global_scope[namespace_name]:
+            return global_scope[namespace_name][identifier]
+        
+        raise NameError(f"'{identifier}' not found in namespace '{namespace_name}'")
 
     def execute_identifier(self, primitive):
         for scope in reversed(self.monolith):
@@ -1437,9 +1505,21 @@ def main():
     print("\n")
 
     source = r"""
-    @./standard#sanity,debug;
-    result = sanity();
-    debug("sanity result", result);
+    outside = 42;
+    
+    ::first_space {
+        inside_first = 69;
+    }
+
+    ::second_space {
+        inside_second = outside;
+    }
+
+    outside = ::second_space#inside_second;
+
+    print(outside);
+    print(::first_space#inside_first);
+
     """
     graveyard = Graveyard()
     mode = E
@@ -1450,7 +1530,7 @@ def main():
     elif mode == P:
         graveyard.tokenize(source)
         graveyard.parse()
-        # print(graveyard.primitives[0])
+        # print(graveyard.primitives[2].body[0].value.identifier)
         print("parsed successfully")
     elif mode == E:
         graveyard.tokenize(source)
