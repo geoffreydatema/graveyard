@@ -1207,10 +1207,17 @@ class Graveyard:
 
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
+
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                scope[primitive.identifier] = value
+                return value
+
         self.monolith[-1][primitive.identifier] = value
+        return value
+
 
     def execute_addition_assignment(self, primitive):
-        # Search through scopes to find the correct one
         scope_to_update = None
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
@@ -1232,7 +1239,6 @@ class Graveyard:
         return new_value
 
     def execute_subtraction_assignment(self, primitive):
-        # Search through scopes to find the correct one
         scope_to_update = None
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
@@ -1247,12 +1253,10 @@ class Graveyard:
 
         new_value = current_value - new_value
 
-        # Update the variable in the correct scope
         scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_multiplication_assignment(self, primitive):
-        # Search through scopes to find the correct one
         scope_to_update = None
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
@@ -1267,12 +1271,10 @@ class Graveyard:
 
         new_value = current_value * new_value
 
-        # Update the variable in the correct scope
         scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_division_assignment(self, primitive):
-        # Search through scopes to find the correct one
         scope_to_update = None
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
@@ -1287,12 +1289,10 @@ class Graveyard:
 
         new_value = current_value / new_value
 
-        # Update the variable in the correct scope
         scope_to_update[primitive.identifier] = new_value
         return new_value
 
     def execute_exponentiation_assignment(self, primitive):
-        # Search through scopes to find the correct one
         scope_to_update = None
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
@@ -1307,7 +1307,6 @@ class Graveyard:
 
         new_value = current_value ** new_value
 
-        # Update the variable in the correct scope
         scope_to_update[primitive.identifier] = new_value
         return new_value
 
@@ -1533,7 +1532,8 @@ def main():
 
     source = r"""
     ::{
-        print(magic_time(), magic_date_time());
+        @./standard;
+        sanity();
     }
     """
     graveyard = Graveyard()
