@@ -1,6 +1,8 @@
 import re
 import random
 import os
+import time
+from datetime import datetime
 
 #@! reoder these to match TOKEN_TYPES once we add them all
 WHITESPACE = 0
@@ -57,6 +59,8 @@ RANGE = 50
 PERIOD = 51
 PATH = 52
 NAMESPACE = 53
+OPENGLOBAL = 54
+CLOSEGLOBAL = 55
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -111,7 +115,9 @@ TOKEN_TYPES = {
     NAMESPACE: r"::",
     COLON: r":",
     REFERENCE: r"#",
-    RANGE: r"\.\.\."
+    RANGE: r"\.\.\.",
+    OPENGLOBAL: r"^\s*::\s*{",
+    CLOSEGLOBAL: r"\s*}\s*$"
 }
 
 class IdentifierPrimitive():
@@ -276,31 +282,44 @@ class Graveyard:
     def __init__(self):
         self.source = ""
         self.tokens = []
+        self.position = 0
         self.current = 0
         self.primitives = []
         self.monolith = [{}]
 
-    def tokenize(self, source):
+    def entry(self, source):
         self.source = source
+        global_namespace = re.match(TOKEN_TYPES[OPENGLOBAL], self.source)
+        if global_namespace:
+            self.position = global_namespace.end()
+        else:
+            raise SyntaxError("Global namespace not declared")
+
+        close_global_match = re.search(TOKEN_TYPES[CLOSEGLOBAL], self.source[self.position:])
+        if close_global_match:
+            self.source = self.source.rstrip().rstrip("}")
+        else:
+            raise SyntaxError("Global namespace is not terminated with '}'")
+
+    def tokenize(self):
         tokens = []
-        position = 0
-        
-        while position < len(self.source):
+
+        while self.position < len(self.source):
             match = None
             for token_type, pattern in TOKEN_TYPES.items():
                 regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE  
                 regex = re.compile(pattern, regex_flags)
-                match = regex.match(self.source, position)
+                match = regex.match(self.source, self.position)
                 if match:
                     if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
-                        position = match.end()
+                        self.position = match.end()
                         break
                     elif token_type != WHITESPACE:
                         tokens.append((token_type, match.group(0)))
-                    position = match.end()
+                    self.position = match.end()
                     break
             if not match:
-                raise SyntaxError(f"Unexpected character: {self.source[position]}")
+                raise SyntaxError(f"Unexpected character: {self.source[self.position]}")
         
         self.tokens = tokens[:]
         self.process_library_references()
@@ -410,7 +429,7 @@ class Graveyard:
             statement = self.parse_if_statement()
         elif self.match(NAMESPACE):
             if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == LEFTBRACE:
-                return self.parse_namespace_definition()
+                return self.parse_namespace_declaration()
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
@@ -455,10 +474,10 @@ class Graveyard:
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        #print(statement)
+        
         return statement
 
-    def parse_namespace_definition(self):
+    def parse_namespace_declaration(self):
         self.consume(NAMESPACE)
         name = self.consume(IDENTIFIER)
         self.consume(LEFTBRACE)
@@ -891,7 +910,7 @@ class Graveyard:
             HashtableLookupPrimitive: lambda p: self.execute_hashtable_lookup(p),
             HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
             RangePrimitive: lambda p: self.execute_range(p),
-            NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_definition(p),
+            NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_declaration(p),
             NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p)
         }
 
@@ -901,7 +920,7 @@ class Graveyard:
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
 
-    def execute_namespace_definition(self, primitive):
+    def execute_namespace_declaration(self, primitive):
         namespace_name = primitive.name
 
         # Find or create namespace in the global scope (bottom of the stack)
@@ -1134,6 +1153,12 @@ class Graveyard:
     
     def execute_magic_uid(self):
         return str(hex(random.randint(286331153, 4294967295)))[2:]
+    
+    def execute_magic_time(self):
+        return time.time()
+
+    def execute_magic_date_time(self):
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def execute_function_call(self, primitive):
         builtins = {
@@ -1148,7 +1173,9 @@ class Graveyard:
             "hello": lambda *args: self.execute_hello(),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
-            "magic_uid": lambda *args: self.execute_magic_uid()
+            "magic_uid": lambda *args: self.execute_magic_uid(),
+            "magic_time": lambda *args: self.execute_magic_time(),
+            "magic_date_time": lambda *args: self.execute_magic_date_time(), 
         }
 
         if primitive.name in builtins:
@@ -1505,39 +1532,31 @@ def main():
     print("\n")
 
     source = r"""
-    outside = 42;
-    
-    ::first_space {
-        inside_first = 69;
+    ::{
+        print(magic_time(), magic_date_time());
     }
-
-    ::second_space {
-        inside_second = outside;
-    }
-
-    outside = ::second_space#inside_second;
-
-    print(outside);
-    print(::first_space#inside_first);
-
     """
     graveyard = Graveyard()
     mode = E
 
     if mode == T:
-        graveyard.tokenize(source)
+        graveyard.entry(source)
+        graveyard.tokenize()
         print(graveyard.tokens)
     elif mode == P:
-        graveyard.tokenize(source)
+        graveyard.entry(source)
+        graveyard.tokenize()
         graveyard.parse()
-        # print(graveyard.primitives[2].body[0].value.identifier)
+        # print(graveyard.primitives[2])
         print("parsed successfully")
     elif mode == E:
-        graveyard.tokenize(source)
+        graveyard.entry(source)
+        graveyard.tokenize()
         graveyard.parse()
         graveyard.interpret()
     elif mode == M:
-        graveyard.tokenize(source)
+        graveyard.entry(source)
+        graveyard.tokenize()
         graveyard.parse()
         graveyard.interpret()
         print(graveyard.monolith)
