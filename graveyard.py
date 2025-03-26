@@ -101,7 +101,7 @@ TOKEN_TYPES = {
     TRUE: r"\$",
     FALSE: r"%",
     STRING: r'"(?:\\\"|[^"\\\n])*"',
-    FORMATTEDSTRING: r"'(?:\\'|[^'\\\n])*'",
+    FORMATTEDSTRING: r"'",
     LEFTBRACE: r"\{",
     RIGHTBRACE: r"\}",
     PARAMETER: r"&",
@@ -188,8 +188,8 @@ class ForStatementPrimitive:
         self.body = body
 
 class FormattedStringPrimitive:
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, parts):
+        self.parts = parts
 
 class ArrayPrimitive:
     def __init__(self, elements):
@@ -306,10 +306,16 @@ class Graveyard:
 
         while self.position < len(self.source):
             match = None
+
+            if self.source[self.position] == TOKEN_TYPES[FORMATTEDSTRING]:
+                self.tokenize_formatted_string(tokens)
+                continue
+
             for token_type, pattern in TOKEN_TYPES.items():
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE  
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
                 regex = re.compile(pattern, regex_flags)
                 match = regex.match(self.source, self.position)
+
                 if match:
                     if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
                         self.position = match.end()
@@ -318,11 +324,70 @@ class Graveyard:
                         tokens.append((token_type, match.group(0)))
                     self.position = match.end()
                     break
+            
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[self.position]}")
-        
+
         self.tokens = tokens[:]
         self.process_library_references()
+
+    def tokenize_formatted_string(self, tokens):
+        self.position += 1  # Skip opening quote (')
+        string_buffer = ""
+
+        while self.position < len(self.source):
+            char = self.source[self.position]
+
+            if char == "{":  # Start of an expression
+                if string_buffer:
+                    tokens.append((FORMATTEDSTRING, string_buffer))
+                    string_buffer = ""
+                tokens.append((LEFTBRACE, "{"))
+                self.position += 1
+                self.tokenize_expression(tokens)  # Tokenize inner expression
+                continue  # Resume formatted string capture after expression
+
+            elif char == "}":  # End of an expression
+                tokens.append((RIGHTBRACE, "}"))
+                self.position += 1
+
+            elif char == TOKEN_TYPES[FORMATTEDSTRING]:  # End of formatted string
+                if string_buffer:
+                    tokens.append((FORMATTEDSTRING, string_buffer))
+                self.position += 1
+                return
+
+            else:
+                string_buffer += char
+                self.position += 1
+
+        raise SyntaxError("Unterminated formatted string")
+    
+    def tokenize_expression(self, tokens):
+        """Temporarily switches to normal tokenization mode for expressions inside `{}`."""
+        while self.position < len(self.source):
+            char = self.source[self.position]
+
+            if char == "}":  # End of expression
+                return
+
+            match = None
+            for token_type, pattern in TOKEN_TYPES.items():
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                regex = re.compile(pattern, regex_flags)
+                match = regex.match(self.source, self.position)
+
+                if match:
+                    if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
+                        self.position = match.end()
+                        break
+                    elif token_type != WHITESPACE:
+                        tokens.append((token_type, match.group(0)))
+                    self.position = match.end()
+                    break
+
+            if not match:
+                raise SyntaxError(f"Unexpected character in formatted string expression: {self.source[self.position]}")
 
     def process_library_references(self):
         offset = 0
@@ -784,6 +849,19 @@ class Graveyard:
         key = self.parse_or()
         return HashtableLookupPrimitive(identifier, key)
 
+    def parse_formatted_string(self):
+        parts = []
+
+        while self.match(FORMATTEDSTRING) or self.match(LEFTBRACE):
+            if self.match(FORMATTEDSTRING):
+                parts.append(self.consume(FORMATTEDSTRING))
+            elif self.match(LEFTBRACE):
+                self.consume(LEFTBRACE)
+                parts.append(self.parse_or())
+                self.consume(RIGHTBRACE)
+
+        return FormattedStringPrimitive(parts)
+
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
             # return NumberPrimitive(self.consume(NUMBER))
@@ -797,7 +875,7 @@ class Graveyard:
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING))
         elif self.match(FORMATTEDSTRING):
-            return FormattedStringPrimitive(self.consume(FORMATTEDSTRING))        
+            return self.parse_formatted_string()       
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTBRACKET:
                 return self.parse_array_lookup()
@@ -1379,9 +1457,15 @@ class Graveyard:
         return operation(operand)
 
     def execute_formatted_string(self, primitive):
-        escaped_string = primitive.value[1:-1].replace("\\'", "'")
-        formatted_string = re.sub(r"\{(\w+)\}", lambda match: str(self.monolith[-1].get(match.group(1), self.monolith[0].get(match.group(1), match.group(0)))), escaped_string)
-        return formatted_string
+        evaluated_parts = []
+
+        for part in primitive.parts:
+            if type(part) == str:
+                evaluated_parts.append(part)
+            else:
+                evaluated_parts.append(str(self.execute(part)))
+
+        return "".join(evaluated_parts)
     
     def execute_array(self, primitive):
         return [self.execute(element) for element in primitive.elements]
@@ -1532,8 +1616,9 @@ def main():
 
     source = r"""
     ::{
-        @./standard;
-        sanity();
+        v = 42;
+        s = 'test {v + 1}';
+        print(s);
     }
     """
     graveyard = Graveyard()
