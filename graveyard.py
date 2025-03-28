@@ -116,8 +116,8 @@ TOKEN_TYPES = {
     COLON: r":",
     REFERENCE: r"#",
     RANGE: r"\.\.\.",
-    OPENGLOBAL: r"^\s*::\s*{",
-    CLOSEGLOBAL: r"\s*}\s*$"
+    OPENGLOBAL: r"::{",
+    CLOSEGLOBAL: r"}"
 }
 
 class IdentifierPrimitive():
@@ -288,39 +288,75 @@ class Graveyard:
         self.monolith = [{}]
 
     def entry(self, source):
-        self.source = source
-        global_namespace = re.match(TOKEN_TYPES[OPENGLOBAL], self.source)
-        if global_namespace:
-            self.position = global_namespace.end()
+        self.source = source.lstrip().rstrip()
+        entry_token = self.source[:3]
+        exit_token = self.source[-1:]
+        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[CLOSEGLOBAL]:
+            self.source = self.source[3:-1]
+            return
         else:
             raise SyntaxError("Global namespace not declared")
 
-        close_global_match = re.search(TOKEN_TYPES[CLOSEGLOBAL], self.source[self.position:])
-        if close_global_match:
-            self.source = self.source.rstrip().rstrip("}")
-        else:
-            raise SyntaxError("Global namespace is not terminated with '}'")
+    def pretokenize(self):
+        position = 0
+        cleaned_source = []
+        
+        while position < len(self.source):
+            match = None
+            for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
+                                        (MULTILINECOMMENT, TOKEN_TYPES[MULTILINECOMMENT])]:
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                regex = re.compile(pattern, regex_flags)
+                match = regex.match(self.source, position)
+                if match:
+                    position = match.end()
+                    break
+            
+            if not match:
+                cleaned_source.append(self.source[position])
+                position += 1
+        
+        self.source = ''.join(cleaned_source)
+
+        self.library_sources = {}
+        path_regex = re.compile(TOKEN_TYPES[PATH])
+
+        for match in path_regex.finditer(self.source):
+            full_token = match.group()
+            normalized_token = full_token.replace("\\", "/")
+
+            if normalized_token not in self.library_sources:
+                library_source = self.load_library_source(normalized_token[1:-1])
+                self.library_sources[normalized_token] = library_source
+
+    def load_library_source(self, path):
+        library_path = f"{path}.graveyard"
+        if not os.path.exists(library_path):
+            raise ReferenceError(f"Library not found: {library_path}")
+        with open(library_path, "r") as file:
+            return file.read()
+
+    def ingest(self):
+        for import_statement, library_code in self.library_sources.items():
+            self.source = self.source.replace(import_statement, library_code)
+        self.library_sources.clear()
 
     def tokenize(self):
         tokens = []
 
         while self.position < len(self.source):
             match = None
-
+            
             if self.source[self.position] == TOKEN_TYPES[FORMATTEDSTRING]:
                 self.tokenize_formatted_string(tokens)
                 continue
 
             for token_type, pattern in TOKEN_TYPES.items():
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
-                regex = re.compile(pattern, regex_flags)
+                regex = re.compile(pattern)
                 match = regex.match(self.source, self.position)
 
                 if match:
-                    if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
-                        self.position = match.end()
-                        break
-                    elif token_type != WHITESPACE:
+                    if token_type != WHITESPACE:
                         tokens.append((token_type, match.group(0)))
                     self.position = match.end()
                     break
@@ -328,30 +364,29 @@ class Graveyard:
             if not match:
                 raise SyntaxError(f"Unexpected character: {self.source[self.position]}")
 
-        self.tokens = tokens[:]
-        self.process_library_references()
+        self.tokens = tokens
 
     def tokenize_formatted_string(self, tokens):
-        self.position += 1  # Skip opening quote (')
+        self.position += 1
         string_buffer = ""
 
         while self.position < len(self.source):
             char = self.source[self.position]
 
-            if char == "{":  # Start of an expression
+            if char == "{":
                 if string_buffer:
                     tokens.append((FORMATTEDSTRING, string_buffer))
                     string_buffer = ""
                 tokens.append((LEFTBRACE, "{"))
                 self.position += 1
-                self.tokenize_expression(tokens)  # Tokenize inner expression
-                continue  # Resume formatted string capture after expression
+                self.tokenize_expression(tokens)
+                continue
 
-            elif char == "}":  # End of an expression
+            elif char == "}":
                 tokens.append((RIGHTBRACE, "}"))
                 self.position += 1
 
-            elif char == TOKEN_TYPES[FORMATTEDSTRING]:  # End of formatted string
+            elif char == TOKEN_TYPES[FORMATTEDSTRING]:
                 if string_buffer:
                     tokens.append((FORMATTEDSTRING, string_buffer))
                 self.position += 1
@@ -368,7 +403,7 @@ class Graveyard:
         while self.position < len(self.source):
             char = self.source[self.position]
 
-            if char == "}":  # End of expression
+            if char == "}":
                 return
 
             match = None
@@ -388,88 +423,6 @@ class Graveyard:
 
             if not match:
                 raise SyntaxError(f"Unexpected character in formatted string expression: {self.source[self.position]}")
-
-    def process_library_references(self):
-        offset = 0
-        for index, token in enumerate(self.tokens[:]):
-            if token[0] == PATH:
-                new_tokens = self.evaluate_library_reference(token[1])
-                insert_index = index + offset
-                self.tokens[insert_index:insert_index + 1] = new_tokens
-                offset += len(new_tokens) - 1
-
-    def tokenize_library(self, source):
-        tokens = []
-        position = 0
-        
-        while position < len(source):
-            match = None
-            for token_type, pattern in TOKEN_TYPES.items():
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE  
-                regex = re.compile(pattern, regex_flags)
-                match = regex.match(source, position)
-                if match:
-                    if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
-                        position = match.end()
-                        break
-                    elif token_type != WHITESPACE:
-                        tokens.append((token_type, match.group(0)))
-                    position = match.end()
-                    break
-            if not match:
-                raise SyntaxError(f"Unexpected character: {source[position]}")
-
-        return tokens
-
-    def evaluate_library_reference(self, path):
-        fixed_path = path.replace("\\", "/")
-        if "#" in fixed_path:
-            split = fixed_path.split("#", 1)
-            library_path, elements = split[0][1:], split[1][:-1]
-            element_names = elements.split(",")
-        else:
-            library_path, element_names = fixed_path[1:-1], None
-        base_path = os.path.dirname(library_path)
-        library_name = library_path.split("/")[-1]
-
-        expected_file_name = library_name + ".graveyard"
-        available_libraries = os.listdir(base_path)
-
-        if expected_file_name not in available_libraries:
-            raise ReferenceError(f"Cannot find library {library_name}")
-
-        with open(os.path.join(base_path, expected_file_name), 'r') as file:
-            library_source = file.read()
-
-        referenced_tokens = self.tokenize_library(library_source)
-
-        if element_names:
-            referenced_tokens = self.extract_specific_elements(referenced_tokens, element_names)
-
-        return referenced_tokens
-
-    def extract_specific_elements(self, tokens, element_names):
-        filtered_tokens = []
-        capture = False
-        brace_depth = 0
-
-        for token in tokens:
-            if token[0] == IDENTIFIER and token[1] in element_names:
-                capture = True
-                brace_depth = 0
-
-            if capture:
-                filtered_tokens.append(token)
-
-                if token[0] == LEFTBRACE:  
-                    brace_depth += 1
-                elif token[0] == RIGHTBRACE:
-                    brace_depth -= 1
-
-                if brace_depth == 0 and token[0] == RIGHTBRACE:
-                    capture = False
-
-        return filtered_tokens
 
     def parse(self):
         primitives = []
@@ -1616,9 +1569,10 @@ def main():
 
     source = r"""
     ::{
-        v = 42;
-        s = 'test {v + 1}';
-        print(s);
+        @./test;
+        print(test_function("test"));
+        value = 42;
+        print('formatted strings also work {value + magic_number()} normally');
     }
     """
     graveyard = Graveyard()
@@ -1626,21 +1580,28 @@ def main():
 
     if mode == T:
         graveyard.entry(source)
+        graveyard.pretokenize()
+        graveyard.ingest()
         graveyard.tokenize()
         print(graveyard.tokens)
     elif mode == P:
         graveyard.entry(source)
+        graveyard.pretokenize()
+        graveyard.ingest()
         graveyard.tokenize()
         graveyard.parse()
-        # print(graveyard.primitives[2])
-        print("parsed successfully")
+        print(graveyard.primitives[0])
     elif mode == E:
         graveyard.entry(source)
+        graveyard.pretokenize()
+        graveyard.ingest()
         graveyard.tokenize()
         graveyard.parse()
         graveyard.interpret()
     elif mode == M:
         graveyard.entry(source)
+        graveyard.pretokenize()
+        graveyard.ingest()
         graveyard.tokenize()
         graveyard.parse()
         graveyard.interpret()
