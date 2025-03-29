@@ -66,7 +66,8 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#([a-zA-Z_][a-zA-Z0-9_]*(?:,[a-zA-Z_][a-zA-Z0-9_]*)*))?;',
+    #PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#([a-zA-Z_][a-zA-Z0-9_]*(?:,[a-zA-Z_][a-zA-Z0-9_]*)*))?;',
+    PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -318,21 +319,21 @@ class Graveyard:
         
         self.source = ''.join(cleaned_source)
 
-        self.library_sources = {}
+        self.top_level_library_sources = {}
         path_regex = re.compile(TOKEN_TYPES[PATH])
 
         for match in path_regex.finditer(self.source):
             full_token = match.group()
             normalized_token = full_token.replace("\\", "/")
-
-            if normalized_token not in self.library_sources:
+                            
+            if normalized_token not in self.top_level_library_sources:
                 library_source = self.pretokenize_library(self.load_library_source(normalized_token[1:-1]))
-                self.library_sources[normalized_token] = library_source
+                self.top_level_library_sources[normalized_token] = library_source
 
     def pretokenize_library(self, library_source):
         position = 0
         cleaned_source = []
-        
+
         while position < len(library_source):
             match = None
             for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
@@ -343,12 +344,20 @@ class Graveyard:
                 if match:
                     position = match.end()
                     break
-            
+
             if not match:
                 cleaned_source.append(library_source[position])
                 position += 1
 
         pretokenized_library = ''.join(cleaned_source)
+
+        path_regex = re.compile(TOKEN_TYPES[PATH])
+        for match in path_regex.finditer(pretokenized_library):
+            full_token = match.group()
+            normalized_token = full_token.replace("\\", "/")
+            nested_library_source = self.pretokenize_library(self.load_library_source(normalized_token[1:-1]))
+            pretokenized_library = pretokenized_library.replace(full_token, nested_library_source)
+
         return pretokenized_library
 
     def load_library_source(self, path):
@@ -359,13 +368,12 @@ class Graveyard:
             return file.read()
 
     def ingest(self):
-        for import_statement, library_code in self.library_sources.items():
+        for import_statement, library_code in self.top_level_library_sources.items():
             self.source = self.source.replace(import_statement, library_code)
-        self.library_sources.clear()
+        self.top_level_library_sources.clear()
 
     def tokenize(self):
         tokens = []
-
         while self.position < len(self.source):
             match = None
             
@@ -1708,6 +1716,7 @@ def print_primitive(node, indent=0):
         print(f"{prefix}{node_type} literal: {node}")
 
 def main():
+    S = 899
     T = 900
     P = 901
     E = 902
@@ -1718,13 +1727,18 @@ def main():
     source = r"""
     ::{
         @./standard;
-        sanity();
+        lorem();
     }
     """
     graveyard = Graveyard()
-    mode = P
+    mode = E
 
-    if mode == T:
+    if mode == S:
+        graveyard.entry(source)
+        graveyard.pretokenize()
+        graveyard.ingest()
+        print(graveyard.source)
+    elif mode == T:
         graveyard.entry(source)
         graveyard.pretokenize()
         graveyard.ingest()
