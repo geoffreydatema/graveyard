@@ -326,8 +326,30 @@ class Graveyard:
             normalized_token = full_token.replace("\\", "/")
 
             if normalized_token not in self.library_sources:
-                library_source = self.load_library_source(normalized_token[1:-1])
+                library_source = self.pretokenize_library(self.load_library_source(normalized_token[1:-1]))
                 self.library_sources[normalized_token] = library_source
+
+    def pretokenize_library(self, library_source):
+        position = 0
+        cleaned_source = []
+        
+        while position < len(library_source):
+            match = None
+            for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
+                                        (MULTILINECOMMENT, TOKEN_TYPES[MULTILINECOMMENT])]:
+                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                regex = re.compile(pattern, regex_flags)
+                match = regex.match(library_source, position)
+                if match:
+                    position = match.end()
+                    break
+            
+            if not match:
+                cleaned_source.append(library_source[position])
+                position += 1
+
+        pretokenized_library = ''.join(cleaned_source)
+        return pretokenized_library
 
     def load_library_source(self, path):
         library_path = f"{path}.graveyard"
@@ -1569,10 +1591,8 @@ def main():
 
     source = r"""
     ::{
-        @./test;
-        print(test_function("test"));
-        value = 42;
-        print('formatted strings also work {value + magic_number()} normally');
+        @./standard;
+        sanity();
     }
     """
     graveyard = Graveyard()
