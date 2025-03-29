@@ -1581,6 +1581,132 @@ class Graveyard:
     def execute_break(self, primitive):
         raise BreakException()
 
+#-------------------------------------------------------------------------------
+#---- useful stuff for debugging ---
+
+def print_primitive_tree(primitives):
+    for primitive in primitives:
+        print_primitive(primitive)
+
+def print_primitive(node, indent=0):
+    if node is None:
+        return
+    prefix = " " * (indent * 4) + "|-- "
+    node_type = type(node).__name__
+    if isinstance(node, IdentifierPrimitive):
+        print(f"{prefix}{node_type} (name: {node.name})")
+    elif isinstance(node, BooleanPrimitive):
+        print(f"{prefix}{node_type} (value: {node.value})")
+    elif isinstance(node, NumberPrimitive):
+        print(f"{prefix}{node_type} (value: {node.value})")
+    elif isinstance(node, StringPrimitive):
+        print(f"{prefix}{node_type} (value: \"{node.value}\")")
+    elif isinstance(node, NullPrimitive):
+        print(f"{prefix}{node_type}")
+    elif isinstance(node, BinaryOperationPrimitive):
+        print(f"{prefix}{node_type} (op: {node.op})")
+        print_primitive(node.left, indent + 1)
+        print_primitive(node.right, indent + 1)
+    elif isinstance(node, UnaryOperationPrimitive):
+        print(f"{prefix}{node_type} (op: {node.op})")
+        print_primitive(node.right, indent + 1)
+    elif isinstance(node, AssignmentPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, FunctionDefinitionPrimitive):
+        print(f"{prefix}{node_type} (name: {node.name}, params: {', '.join(node.parameters)})")
+        for stmt in node.body:
+            print_primitive(stmt, indent + 1)
+        if node.return_value:
+            print(f"    |-- Return:")
+            print_primitive(node.return_value, indent + 2)
+    elif isinstance(node, FunctionCallPrimitive):
+        print(f"{prefix}{node_type} (name: {node.name})")
+        for arg in node.arguments:
+            print_primitive(arg, indent + 1)
+    elif isinstance(node, IfStatementPrimitive):
+        print(f"{prefix}{node_type}")
+        for condition, body in node.condition_blocks:
+            print(f"{' ' * (indent * 4 + 4)}|-- Condition:")
+            print_primitive(condition, indent + 2)
+            print(f"{' ' * (indent * 4 + 4)}|-- Body:")
+            for stmt in body:
+                print_primitive(stmt, indent + 2)
+        if node.else_body:
+            print(f"{prefix}    |-- Else:")
+            for stmt in node.else_body:
+                print_primitive(stmt, indent + 2)
+    elif isinstance(node, WhileStatementPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.condition, indent + 1)
+        for stmt in node.body:
+            print_primitive(stmt, indent + 1)
+    elif isinstance(node, ForStatementPrimitive):
+        print(f"{prefix}{node_type} (iterator: {node.iterator})")
+        print_primitive(node.limit, indent + 1)
+        for stmt in node.body:
+            print_primitive(stmt, indent + 1)
+    elif isinstance(node, FormattedStringPrimitive):
+        print(f"{prefix}{node_type}")
+        for part in node.parts:
+            print_primitive(part, indent + 1)
+    elif isinstance(node, ArrayPrimitive):
+        print(f"{prefix}{node_type}")
+        for element in node.elements:
+            print_primitive(element, indent + 1)
+    elif isinstance(node, ArrayLookupPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.index, indent + 1)
+    elif isinstance(node, ArrayAssignmentPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.index, indent + 1)
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, ArrayAppendPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, (AdditionAssignmentPrimitive, SubtractionAssignmentPrimitive, 
+                        MultiplicationAssignmentPrimitive, DivisionAssignmentPrimitive, 
+                        ExponentiationAssignmentPrimitive)):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, HashtablePrimitive):
+        print(f"{prefix}{node_type}")
+        for key, value in node.value.items():
+            print(f"{' ' * (indent * 4 + 4)}|-- Key: {key}")
+            print_primitive(value, indent + 2)
+    elif isinstance(node, HashtableLookupPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.key, indent + 1)
+    elif isinstance(node, HashtableAssignmentPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.identifier, indent + 1)
+        print_primitive(node.key, indent + 1)
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, RangePrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.start, indent + 1)
+        print_primitive(node.end, indent + 1)
+    elif isinstance(node, NamespaceDefinitionPrimitive):
+        print(f"{prefix}{node_type} (name: {node.name})")
+        for stmt in node.body:
+            print_primitive(stmt, indent + 1)
+    elif isinstance(node, NamespaceAccessPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.namespace, indent + 1)
+        print_primitive(node.identifier, indent + 1)
+    elif isinstance(node, ContinuePrimitive):
+        print(f"{prefix}{node_type}")
+    elif isinstance(node, BreakPrimitive):
+        print(f"{prefix}{node_type}")
+    else:
+        print(f"{prefix}{node_type} literal: {node}")
+
 def main():
     T = 900
     P = 901
@@ -1596,7 +1722,7 @@ def main():
     }
     """
     graveyard = Graveyard()
-    mode = E
+    mode = P
 
     if mode == T:
         graveyard.entry(source)
@@ -1610,7 +1736,8 @@ def main():
         graveyard.ingest()
         graveyard.tokenize()
         graveyard.parse()
-        print(graveyard.primitives[0])
+        if len(graveyard.primitives) > 0:
+            print_primitive_tree(graveyard.primitives)
     elif mode == E:
         graveyard.entry(source)
         graveyard.pretokenize()
