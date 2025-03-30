@@ -1726,8 +1726,8 @@ def main():
 
     source = r"""
     ::{
-        @./standard;
-        lorem();
+        @./standard/standard;
+        sanity();
     }
     """
     graveyard = Graveyard()

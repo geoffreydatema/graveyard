@@ -1,0 +1,106 @@
+debug&message&variable{print('DEBUG-------- {message} : {variable}');}
+
+sanity {
+    // Single-line comment test
+    /* Multi-line 
+    comment test */
+    number_test = 42;
+    float_test = 3.1415;
+    string_test = "hello, graveyard!";
+    formatted_test = 'this is a formatted string {number_test}';
+    bool_true = $;
+    bool_false = %;
+    null_test = |;
+    add_test = 5 + 3;
+    sub_test = 10 - 4;
+    mul_test = 6 * 7;
+    div_test = 20 / 5;
+    exp_test = 2 ** 3;
+    eq_test = (add_test == 8);
+    neq_test = (sub_test != 5);
+    gt_test = (mul_test > 40);
+    lt_test = (div_test < 10);
+    gte_test = (exp_test >= 8);
+    lte_test = (sub_test <= 6);
+    and_test = bool_true && bool_false;
+    or_test = bool_true || bool_false;
+    not_test = !bool_false;
+    add_test += 2;
+    sub_test -= 1;
+    mul_test *= 2;
+    div_test /= 2;
+    exp_test **= 2;
+    counter = 0;
+    counter++;
+    counter--;
+    test_array = ["one", 2, $, %, |];
+    test_array <- "new_value";
+    test_hashtable = {"key1": test_array[0], "key2": "value"};
+    value_from_hash = test_hashtable # "key1";
+    ? bool_true {
+    } , bool_false {
+    } : {
+    }
+    inc_counter = 0;
+    ~ inc_counter < 3 {
+        inc_counter++;
+    }
+    com_counter = 0;
+    ~ com_counter < inc_counter {
+        com_counter += 1;
+    }
+    ass_counter = 0;
+    ~ ass_counter < 3 {
+        ass_counter = ass_counter + 1;
+    }
+    i @ 0 ... 3 {}
+    item @ test_array {
+    }
+    ~ counter < 10 {
+        counter++;
+        ? counter == 5 {
+            ^; // Skip this iteration
+        }
+        ? counter == 7 {
+            `; // Exit loop
+        }
+    }
+    i @ 1 {
+        first = 41;
+        ? $ {
+            second = 3;
+            ? $ {
+                first++;
+                second--;
+                first += second;
+                first -= second;
+                first *= second;
+                first /= second;
+                first **= second;
+                first = first + i;
+                first = first - i;
+                first = first * i;
+                first = first / (i + 1);
+                first = first ** i;
+            }
+        }
+    }
+    some_function &param {
+        -> param * 2;
+    }
+    result = some_function(10);
+    retrieved_result = some_function(42.69);
+    ::first_space {
+        inside_first = 69;
+    }
+    ::second_space {
+        inside_second = result;
+        access_from_inside = ::first_space#inside_first;
+    }
+    access_from_outside = ::second_space#inside_second;
+    -> $;
+}
+
+lorem {
+    print("Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+}
