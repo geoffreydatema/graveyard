@@ -1215,6 +1215,10 @@ class Graveyard:
     def execute_magic_uid(self):
         return str(hex(random.randint(286331153, 4294967295)))[2:]
     
+    def execute_magic_string(self):
+        characters = "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+        return "".join(random.choice(characters) for i in range(16))
+    
     def execute_magic_time(self):
         return time.time()
 
@@ -1235,6 +1239,7 @@ class Graveyard:
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
             "magic_uid": lambda *args: self.execute_magic_uid(),
+            "magic_string": lambda *args: self.execute_magic_string(),
             "magic_time": lambda *args: self.execute_magic_time(),
             "magic_date_time": lambda *args: self.execute_magic_date_time(), 
         }
@@ -1726,8 +1731,9 @@ def main():
 
     source = r"""
     ::{
-        @./standard/standard;
-        sanity();
+        //@./standard/standard;
+        s = magic_string();
+        print(s);
     }
     """
     graveyard = Graveyard()

@@ -100,7 +100,3 @@ sanity {
     access_from_outside = ::second_space#inside_second;
     -> $;
 }
-
-lorem {
-    print("Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
-}
