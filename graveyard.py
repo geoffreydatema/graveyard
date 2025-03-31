@@ -66,7 +66,6 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    #PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#([a-zA-Z_][a-zA-Z0-9_]*(?:,[a-zA-Z_][a-zA-Z0-9_]*)*))?;',
     PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
@@ -411,9 +410,13 @@ class Graveyard:
             char = self.source[self.position]
 
             if char == "{":
-                if string_buffer:
+                # If no prior text, add an empty FORMATTEDSTRING token
+                if not string_buffer:
+                    tokens.append((FORMATTEDSTRING, ""))
+                else:
                     tokens.append((FORMATTEDSTRING, string_buffer))
                     string_buffer = ""
+
                 tokens.append((LEFTBRACE, "{"))
                 self.position += 1
                 self.tokenize_expression(tokens)
@@ -423,7 +426,7 @@ class Graveyard:
                 tokens.append((RIGHTBRACE, "}"))
                 self.position += 1
 
-            elif char == TOKEN_TYPES[FORMATTEDSTRING]:
+            elif char == TOKEN_TYPES[FORMATTEDSTRING]:  # Closing formatted string
                 if string_buffer:
                     tokens.append((FORMATTEDSTRING, string_buffer))
                 self.position += 1

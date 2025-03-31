@@ -55,6 +55,7 @@ sanity {
     }
     i @ 0 ... 3 {}
     item @ test_array {
+        x = '{item}';
     }
     ~ counter < 10 {
         counter++;
