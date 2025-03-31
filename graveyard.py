@@ -288,8 +288,15 @@ class Graveyard:
         self.primitives = []
         self.monolith = [{}]
 
-    def entry(self, source):
-        self.source = source.lstrip().rstrip()
+    def load(self, path):
+        if path.split(".")[-1] != "graveyard":
+            raise ValueError(f"{os.path.basename(path)} is not graveyard source code, please use .graveyard extension")
+        else:
+            with open(path, "r", encoding="utf-8") as file:
+                self.source = file.read()
+
+    def entry(self):
+        self.source = self.source.lstrip().rstrip()
         entry_token = self.source[:3]
         exit_token = self.source[-1:]
         if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[CLOSEGLOBAL]:
@@ -1729,29 +1736,25 @@ def main():
     D = 904
     print("\n")
 
-    source = r"""
-    ::{
-        //@./standard/standard;
-        s = magic_string();
-        print(s);
-    }
-    """
     graveyard = Graveyard()
     mode = E
 
     if mode == S:
-        graveyard.entry(source)
+        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         print(graveyard.source)
     elif mode == T:
-        graveyard.entry(source)
+        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
         print(graveyard.tokens)
     elif mode == P:
-        graveyard.entry(source)
+        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
@@ -1759,14 +1762,16 @@ def main():
         if len(graveyard.primitives) > 0:
             print_primitive_tree(graveyard.primitives)
     elif mode == E:
-        graveyard.entry(source)
+        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
         graveyard.parse()
         graveyard.interpret()
     elif mode == M:
-        graveyard.entry(source)
+        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
