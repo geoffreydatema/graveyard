@@ -1235,6 +1235,21 @@ class Graveyard:
     def execute_magic_date_time(self):
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    def execute_fread(self, args):
+        path = self.execute(args[0])
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as file:
+                data = file.read()
+            return data
+        else:
+            raise ValueError(f"{path} is not a valid file path")
+
+    def execute_fwrite(self, args):
+        data = self.execute(args[0])
+        path = self.execute(args[1])
+        with open(path, "w") as file:
+            file.write(data)
+
     def execute_function_call(self, primitive):
         builtins = {
             "b": lambda args: self.execute_cast_boolean(args),
@@ -1251,7 +1266,9 @@ class Graveyard:
             "magic_uid": lambda *args: self.execute_magic_uid(),
             "magic_string": lambda *args: self.execute_magic_string(),
             "magic_time": lambda *args: self.execute_magic_time(),
-            "magic_date_time": lambda *args: self.execute_magic_date_time(), 
+            "magic_date_time": lambda *args: self.execute_magic_date_time(),
+            "fread": lambda args: self.execute_fread(args),
+            "fwrite": lambda args: self.execute_fwrite(args)
         }
 
         if primitive.name in builtins:
