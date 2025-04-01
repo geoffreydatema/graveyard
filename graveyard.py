@@ -1120,6 +1120,9 @@ class Graveyard:
     
     def execute_cast_hashtable(self, args):
         return {self.execute(arg): None for arg in args}
+    
+    def execute_stoa(self, args):
+        return list(self.execute(args[0]))
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -1205,6 +1208,7 @@ class Graveyard:
             "s": lambda args: self.execute_cast_string(args),
             "a": lambda args: self.execute_cast_array(args),
             "h": lambda args: self.execute_cast_hashtable(args),
+            "stoa": lambda args: self.execute_stoa(args),
             "print": lambda args: self.execute_print(args),
             "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
