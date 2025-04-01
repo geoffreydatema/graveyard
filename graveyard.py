@@ -1167,6 +1167,11 @@ class Graveyard:
         values = [self.execute(arg) for arg in args]
         print(*values)
         return True
+
+    def execute_mod(self, args):
+        dividend = self.execute(args[0])
+        divisor = self.execute(args[1])
+        return dividend % divisor
     
     def execute_type(self, args):
         types = []
@@ -1240,6 +1245,7 @@ class Graveyard:
             "print": lambda args: self.execute_print(args),
             "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
+            "mod": lambda args: self.execute_mod(args),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
             "magic_uid": lambda *args: self.execute_magic_uid(),
