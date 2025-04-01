@@ -1179,6 +1179,11 @@ class Graveyard:
         divisor = self.execute(args[1])
         return dividend % divisor
     
+    def execute_floordiv(self, args):
+        dividend = self.execute(args[0])
+        divisor = self.execute(args[1])
+        return dividend // divisor
+    
     def execute_type(self, args):
         types = []
         for item in args:
@@ -1252,6 +1257,7 @@ class Graveyard:
             "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
             "mod": lambda args: self.execute_mod(args),
+            "floordiv": lambda args: self.execute_floordiv(args),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
             "magic_uid": lambda *args: self.execute_magic_uid(),
