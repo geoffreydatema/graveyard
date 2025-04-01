@@ -1116,58 +1116,10 @@ class Graveyard:
         return str(value)
     
     def execute_cast_array(self, args):
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            value = self.monolith[args[0].name]
-        else:
-            value = self.execute(args[0])
-        return [value]
+        return [self.execute(arg) for arg in args]
     
     def execute_cast_hashtable(self, args):
-        key = None
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            key = self.monolith[args[0].name]
-
-        elif type(args[0]) == ArrayPrimitive:
-            if type(args[0].elements[0]) == IdentifierPrimitive:
-                key = self.monolith[args[0].elements[0].name]
-            else:
-                key = self.execute(args[0].elements[0])
-
-            if len(args[0].elements) > 1:
-                if type(args[0].elements[1]) == IdentifierPrimitive:
-                    value = self.monolith[args[0].elements[1].name]
-                elif type(args[0].elements[1]) == ArrayPrimitive:
-                    if type(args[0].elements[1]) == IdentifierPrimitive:
-                        value = self.monolith[args[0].elements[1].name]
-                    else:
-                        value = self.execute(args[0].elements[1])
-                else:
-                    value = self.execute(args[0].elements[1])
-        else:
-            key = self.execute(args[0])
-            
-        if type(key) == float:
-                key = int(key)
-
-        if len(args) > 1:
-            if type(args[1]) == IdentifierPrimitive:
-                value = self.monolith[args[1].name]
-            elif type(args[1]) == ArrayPrimitive:
-                if type(args[1].elements[0]) == IdentifierPrimitive:
-                    value = self.monolith[args[1].elements[0].name]
-                else:
-                    value = self.execute(args[1].elements[0])
-            else:
-                value = self.execute(args[1])
-            
-            return {key: value}
-        
-        if len(args) == 1 and type(args[0]) == ArrayPrimitive and len(args[0].elements) > 1:
-            return {key: value}
-
-        return {key: None}
+        return {self.execute(arg): None for arg in args}
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
