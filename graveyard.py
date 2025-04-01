@@ -1171,39 +1171,21 @@ class Graveyard:
     def execute_type(self, args):
         types = []
         for item in args:
-            if isinstance(item, NullPrimitive):
+            value = self.execute(item)
+            if value is None:
                 types.append("null")
-            elif isinstance(item, BooleanPrimitive):
+            elif isinstance(value, bool):
                 types.append("boolean")
-            elif isinstance(item, NumberPrimitive):
-                types.append("integer" if isinstance(item.value, int) else "float")
-            elif isinstance(item, (StringPrimitive, FormattedStringPrimitive)):
+            elif isinstance(value, int):
+                types.append("integer")
+            elif isinstance(value, float):
+                types.append("float")
+            elif isinstance(value, str):
                 types.append("string")
-            elif isinstance(item, ArrayPrimitive):
+            elif isinstance(value, list):
                 types.append("array")
-            elif isinstance(item, HashtablePrimitive):
+            elif isinstance(value, dict):
                 types.append("hashtable")
-            elif isinstance(item, IdentifierPrimitive):
-                value = None
-                for scope in reversed(self.monolith):
-                    if item.name in scope:
-                        value = scope[item.name]
-                        break
-                
-                if value is None:
-                    types.append("null")
-                elif isinstance(value, bool):
-                    types.append("boolean")
-                elif isinstance(value, int):
-                    types.append("integer")
-                elif isinstance(value, float):
-                    types.append("float")
-                elif isinstance(value, str):
-                    types.append("string")
-                elif isinstance(value, list):
-                    types.append("array")
-                elif isinstance(value, dict):
-                    types.append("hashtable")
             
         if not types:
             return None
