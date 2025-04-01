@@ -1123,6 +1123,12 @@ class Graveyard:
     
     def execute_stoa(self, args):
         return list(self.execute(args[0]))
+    
+    def execute_reverse(self, args):
+        values = []
+        if isinstance(args, list):
+            values = self.execute(args[0])
+        return values[::-1]
 
     def execute_print(self, args):
         values = [self.execute(arg) for arg in args]
@@ -1209,6 +1215,7 @@ class Graveyard:
             "a": lambda args: self.execute_cast_array(args),
             "h": lambda args: self.execute_cast_hashtable(args),
             "stoa": lambda args: self.execute_stoa(args),
+            "reverse": lambda args: self.execute_reverse(args),
             "print": lambda args: self.execute_print(args),
             "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
