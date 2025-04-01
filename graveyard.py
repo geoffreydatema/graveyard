@@ -1171,46 +1171,43 @@ class Graveyard:
     def execute_type(self, args):
         types = []
         for item in args:
-            if type(item) == NullPrimitive:
+            if isinstance(item, NullPrimitive):
                 types.append("null")
-            elif type(item) == BooleanPrimitive:
+            elif isinstance(item, BooleanPrimitive):
                 types.append("boolean")
-            elif type(item) == NumberPrimitive:
-                if type(item.value) == int:
-                    types.append("integer")
-                elif type(item.value) == float:
-                    types.append("float")
-            elif type(item) == StringPrimitive or type(item) == FormattedStringPrimitive:
-                if type(item.value) == str:
-                    types.append("string")
-            elif type(item) == ArrayPrimitive:
-                if type(item.elements) == list:
-                    types.append("array")
-            elif type(item) == HashtablePrimitive:
-                if type(item.value) == dict:
-                    types.append("hashtable")
-            elif type(item) == IdentifierPrimitive:
-                if self.monolith[item.name] == None:
+            elif isinstance(item, NumberPrimitive):
+                types.append("integer" if isinstance(item.value, int) else "float")
+            elif isinstance(item, (StringPrimitive, FormattedStringPrimitive)):
+                types.append("string")
+            elif isinstance(item, ArrayPrimitive):
+                types.append("array")
+            elif isinstance(item, HashtablePrimitive):
+                types.append("hashtable")
+            elif isinstance(item, IdentifierPrimitive):
+                value = None
+                for scope in reversed(self.monolith):
+                    if item.name in scope:
+                        value = scope[item.name]
+                        break
+                
+                if value is None:
                     types.append("null")
-                elif type(self.monolith[item.name]) == bool:
+                elif isinstance(value, bool):
                     types.append("boolean")
-                elif type(self.monolith[item.name]) == int:
+                elif isinstance(value, int):
                     types.append("integer")
-                elif type(self.monolith[item.name]) == float:
+                elif isinstance(value, float):
                     types.append("float")
-                elif type(self.monolith[item.name]) == str:
+                elif isinstance(value, str):
                     types.append("string")
-                elif type(self.monolith[item.name]) == list:
+                elif isinstance(value, list):
                     types.append("array")
-                elif type(self.monolith[item.name]) == dict:
+                elif isinstance(value, dict):
                     types.append("hashtable")
-
-        if len(types) == 0:
+            
+        if not types:
             return None
-        elif len(types) == 1:
-            return types[0]
-        else:
-            return types
+        return types[0] if len(types) == 1 else types
     
     def execute_hello(self):
         print("hello world!")
