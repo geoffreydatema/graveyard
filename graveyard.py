@@ -1062,12 +1062,18 @@ class Graveyard:
         return key_audit
     
     def execute_hashtable_lookup(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        hashtable = None
+
+        # Search through the stack from the most recent scope to the global scope
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                hashtable = scope[primitive.identifier]
+                break
+
+        if hashtable is None:
             raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
 
-        hashtable = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
-
-        if type(hashtable) != dict:
+        if not isinstance(hashtable, dict):
             raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
 
         key = self.execute(primitive.key)
@@ -1471,53 +1477,84 @@ class Graveyard:
         return [self.execute(element) for element in primitive.elements]
     
     def execute_array_lookup(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        array = None
+        
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                array = scope[primitive.identifier]
+                break
+
+        if array is None:
             raise NameError(f"Array '{primitive.identifier}' is not defined")
 
-        array = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
-
-        if type(array) != list:
+        if not isinstance(array, list):
             raise TypeError(f"Variable {primitive.identifier} is not an array")
 
         index = self.execute(primitive.index)
 
-        if type(index) != int:
+        if not isinstance(index, int):
             raise TypeError("Array indices must be integers")
 
         return array[index]
     
     def execute_array_assignment(self, primitive):
-        if type(self.monolith[primitive.identifier]) != list:
+        array = None
+
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                array = scope[primitive.identifier]
+                break
+
+        if array is None:
+            raise NameError(f"Array '{primitive.identifier}' is not defined")
+
+        if not isinstance(array, list):
             raise TypeError(f"Variable {primitive.identifier} is not an array")
+
         index = self.execute(primitive.index)
         value = self.execute(primitive.value)
-        if type(index) != int:
+
+        if not isinstance(index, int):
             raise TypeError("Array indices must be integers")
-        self.monolith[primitive.identifier][index] = value
+
+        array[index] = value
 
     def execute_hashtable_assignment(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
+        hashtable = None
+
+        # Search through the stack from the most recent scope to the global scope
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                hashtable = scope[primitive.identifier]
+                break
+
+        if hashtable is None:
             raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
 
-        hashtable = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
-
-        if type(hashtable) != dict:
+        if not isinstance(hashtable, dict):
             raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
 
         key = self.execute(primitive.key)
 
-        if type(key) == int or type(key) == str:
+        if isinstance(key, (int, str)):
             value = self.execute(primitive.value)
-        elif type(key) == float:
+        elif isinstance(key, float):
             raise TypeError("Hashtable keys cannot be float, must be integer or string")
+        else:
+            raise TypeError(f"Invalid hashtable key type: {type(key).__name__}")
 
         hashtable[key] = value
 
     def execute_array_append(self, primitive):
-        if primitive.identifier not in self.monolith[-1] and primitive.identifier not in self.monolith[0]:
-            raise NameError(f"Array '{primitive.identifier}' is not defined")
+        array = None
 
-        array = self.monolith[-1].get(primitive.identifier, self.monolith[0].get(primitive.identifier))
+        for scope in reversed(self.monolith):
+            if primitive.identifier in scope:
+                array = scope[primitive.identifier]
+                break
+
+        if array is None:
+            raise NameError(f"Array '{primitive.identifier}' is not defined")
 
         if not isinstance(array, list):
             raise TypeError(f"'{primitive.identifier}' is not an array")
