@@ -37,6 +37,25 @@ sanity {
     test_array <- "new_value";
     test_hashtable = {"key1": test_array[0], "key2": "value"};
     value_from_hash = test_hashtable # "key1";
+    test_pos_neg {
+    p_i = 42;
+    n_i = -69;
+    p_f = 1.23;
+    n_f = -1.23;
+    sum_i = p_i + n_i;
+    diff_i = p_i - n_i;
+    prod_i = p_i * n_i;
+    quot_i = p_i / n_i;
+    sum_f = p_f + n_f;
+    diff_f = p_f - n_f;
+    prod_f = p_f * n_f;
+    quot_f = p_f / n_f;
+    neg_p_i = -p_i;
+    neg_n_i = -n_i;
+    neg_p_f = -p_f;
+    neg_n_f = -n_f;
+    }
+    test_pos_neg();
     ? bool_true {
     } , bool_false {
     } : {
@@ -99,5 +118,14 @@ sanity {
         access_from_inside = ::first_space#inside_first;
     }
     access_from_outside = ::second_space#inside_second;
+    ret_in_func {
+        array = [1,2,3,4,5];
+        num @ reverse(array) {
+            ? num == 2 {
+                -> $;
+            }
+        }
+    }
+    ret_in_func();
     -> $;
 }
