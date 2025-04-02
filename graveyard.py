@@ -61,12 +61,14 @@ PATH = 52
 NAMESPACE = 53
 OPENGLOBAL = 54
 CLOSEGLOBAL = 55
+TYPE = 56
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
     PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
+    TYPE: r"<[a-zA-Z_]\w*>",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
     RETURN: r"->",
@@ -264,6 +266,16 @@ class NamespaceAccessPrimitive:
     def __init__(self, namespace, identifier):
         self.namespace = namespace
         self.identifier = identifier
+
+class TypeDefinitionPrimitive:
+    def __init__(self, name, members):
+        self.name = name
+        self.members = members
+
+class TypeInstantiationPrimitive:
+    def __init__(self, instance_name, type_name):
+        self.instance_name = instance_name
+        self.type_name = type_name
 
 class ReturnPrimitive:
     def __init__(self, value):
@@ -493,6 +505,12 @@ class Graveyard:
         elif self.match(RETURN):
             statement = self.parse_return()
             self.consume(SEMICOLON)
+        elif self.match(TYPE):  # NEW: Check for TYPE token
+            statement = self.parse_type_definition()  # NEW: Parse type definition
+            self.consume(SEMICOLON)  # Consume the semicolon after the type definition
+        elif self.match(IDENTIFIER) and self.predict()[0] == ASSIGNMENT and self.predict(2)[0] == TYPE:  # NEW: Check for Type instantiation
+            statement = self.parse_type_instantiation()  # NEW: Parse type instantiation
+            self.consume(SEMICOLON)
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
@@ -537,8 +555,53 @@ class Graveyard:
                 self.consume(SEMICOLON)
         else:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
-        
+
         return statement
+
+    def parse_type_definition(self):
+        type_name = self.consume(TYPE)
+        self.consume(ASSIGNMENT)
+        self.consume(LEFTBRACE)
+
+        members = {}
+        while not self.match(RIGHTBRACE):
+            member_name = self.consume(IDENTIFIER)
+            self.consume(COLON)
+            
+            if self.match(LEFTBRACE) or self.match(PARAMETER):
+                method_def = self.parse_method_definition(member_name)
+                members[member_name] = method_def
+            else:
+                member_value = self.parse_or()
+                members[member_name] = member_value
+
+            if self.match(COMMA):
+                self.consume(COMMA)
+
+        self.consume(RIGHTBRACE)
+        return TypeDefinitionPrimitive(type_name, members)
+
+    def parse_method_definition(self, member_name):
+        parameters = None
+        if self.match(PARAMETER):
+            parameters = []
+            while self.match(PARAMETER):
+                self.consume(PARAMETER)
+                parameters.append(self.consume(IDENTIFIER))
+
+        self.consume(LEFTBRACE)
+        body = []
+        while not self.match(RIGHTBRACE):
+            body.append(self.parse_statement())
+        self.consume(RIGHTBRACE)
+
+        return member_name, FunctionDefinitionPrimitive(member_name, parameters, body)
+
+    def parse_type_instantiation(self):
+        instance_name = self.consume(IDENTIFIER)
+        self.consume(ASSIGNMENT)
+        type_name = self.consume(TYPE)
+        return TypeInstantiationPrimitive(instance_name, type_name)
 
     def parse_return(self):
         self.consume(RETURN)
@@ -990,7 +1053,9 @@ class Graveyard:
             RangePrimitive: lambda p: self.execute_range(p),
             NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_declaration(p),
             NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p),
-            ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value))
+            ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value)),
+            TypeDefinitionPrimitive: lambda p: self.execute_type_definition(p),
+            TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p)
         }
 
         primitive_type = type(primitive)
@@ -999,6 +1064,21 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_type_definition(self, primitive):
+        self.monolith[-1][primitive.name] = primitive.members
+
+    def execute_type_instantiation(self, primitive):
+        type_name = primitive.type_name
+        instance_name = primitive.instance_name
+
+        type_definition = self.get_variable(type_name)
+        if not isinstance(type_definition, dict):
+            raise TypeError(f"'{type_name}' is not a valid type")
+
+        instance = type_definition.copy()
+
+        self.monolith[-1][instance_name] = instance
 
     def execute_namespace_declaration(self, primitive):
         namespace_name = primitive.name
@@ -1677,9 +1757,9 @@ def print_primitive(node, indent=0):
         print(f"{prefix}{node_type}")
         print_primitive(node.identifier, indent + 1)
         print_primitive(node.value, indent + 1)
-    elif isinstance(node, (AdditionAssignmentPrimitive, SubtractionAssignmentPrimitive, 
-                        MultiplicationAssignmentPrimitive, DivisionAssignmentPrimitive, 
-                        ExponentiationAssignmentPrimitive)):
+    elif isinstance(node, (AdditionAssignmentPrimitive, SubtractionAssignmentPrimitive,
+                           MultiplicationAssignmentPrimitive, DivisionAssignmentPrimitive,
+                           ExponentiationAssignmentPrimitive)):
         print(f"{prefix}{node_type}")
         print_primitive(node.identifier, indent + 1)
         print_primitive(node.value, indent + 1)
@@ -1713,6 +1793,13 @@ def print_primitive(node, indent=0):
         print(f"{prefix}{node_type}")
     elif isinstance(node, BreakPrimitive):
         print(f"{prefix}{node_type}")
+    elif isinstance(node, TypeDefinitionPrimitive):
+        print(f"{prefix}{node_type} (name: {node.name})")
+        for member_name, member_value in node.members.items():
+            print(f"{' ' * (indent * 4 + 4)}|-- Member: {member_name}")
+            print_primitive(member_value, indent + 2)
+    elif isinstance(node, TypeInstantiationPrimitive):
+        print(f"{prefix}{node_type} (instance_name: {node.instance_name}, type_name: {node.type_name})")
     else:
         print(f"{prefix}literal or identifier: {node}")
 
@@ -1726,7 +1813,7 @@ def main():
     print("\n")
 
     graveyard = Graveyard()
-    mode = E
+    mode = M
 
     if mode == S:
         graveyard.load("C:\\Working\\graveyard\\working.graveyard")
