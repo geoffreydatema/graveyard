@@ -277,6 +277,11 @@ class TypeInstantiationPrimitive:
         self.instance_name = instance_name
         self.type_name = type_name
 
+class TypeLookupPrimitive:
+    def __init__(self, instance_name, member_name):
+        self.instance_name = instance_name
+        self.member_name = member_name
+
 class ReturnPrimitive:
     def __init__(self, value):
         self.value = value
@@ -595,13 +600,19 @@ class Graveyard:
             body.append(self.parse_statement())
         self.consume(RIGHTBRACE)
 
-        return member_name, FunctionDefinitionPrimitive(member_name, parameters, body)
+        return FunctionDefinitionPrimitive(member_name, parameters, body)
 
     def parse_type_instantiation(self):
         instance_name = self.consume(IDENTIFIER)
         self.consume(ASSIGNMENT)
         type_name = self.consume(TYPE)
         return TypeInstantiationPrimitive(instance_name, type_name)
+    
+    def parse_type_lookup(self):
+        instance_name = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        member_name = self.consume(IDENTIFIER)
+        return TypeLookupPrimitive(instance_name, member_name)
 
     def parse_return(self):
         self.consume(RETURN)
@@ -937,16 +948,21 @@ class Graveyard:
         elif self.match(IDENTIFIER):
             if self.predict()[0] == LEFTBRACKET:
                 return self.parse_array_lookup()
+            
+
             elif self.predict()[0] == REFERENCE:
-                return self.parse_hashtable_lookup()
+                if self.predict(2) is not None and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
+                    return self.parse_hashtable_lookup()
+                else:
+                    return self.parse_type_lookup()
+                
+
             elif self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
-        
         elif self.match(SUBTRACTION):
             self.consume(SUBTRACTION)
             return UnaryOperationPrimitive("-", self.parse_numbers_parentheses())
-            
         elif self.match(LEFTPARENTHESES):
             self.consume(LEFTPARENTHESES)
             expression = self.parse_or()
@@ -1055,7 +1071,8 @@ class Graveyard:
             NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p),
             ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value)),
             TypeDefinitionPrimitive: lambda p: self.execute_type_definition(p),
-            TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p)
+            TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p),
+            TypeLookupPrimitive: lambda p: self.execute_type_lookup(p)
         }
 
         primitive_type = type(primitive)
@@ -1065,8 +1082,25 @@ class Graveyard:
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
 
+    def execute_type_lookup(self, primitive):
+        instance_name = primitive.instance_name
+        member_name = primitive.member_name
+
+        instance = self.get_variable(f"<{instance_name}>")
+        if not isinstance(instance, dict):
+            raise TypeError(f"'{instance_name}' is not an instance")
+        if member_name not in instance:
+            raise NameError(f"'{member_name}' is not a member of '{instance_name}'")
+        return instance[member_name]
+
     def execute_type_definition(self, primitive):
-        self.monolith[-1][primitive.name] = primitive.members
+        evaluated_members = {}
+        for member_name, member_value in primitive.members.items():
+            if isinstance(member_value, FunctionDefinitionPrimitive):
+                evaluated_members[member_name] = member_value
+            else:
+                evaluated_members[member_name] = self.execute(member_value)
+        self.monolith[-1][primitive.name] = evaluated_members
 
     def execute_type_instantiation(self, primitive):
         type_name = primitive.type_name
@@ -1813,7 +1847,7 @@ def main():
     print("\n")
 
     graveyard = Graveyard()
-    mode = M
+    mode = E
 
     if mode == S:
         graveyard.load("C:\\Working\\graveyard\\working.graveyard")
