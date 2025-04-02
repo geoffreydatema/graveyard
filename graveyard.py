@@ -413,7 +413,6 @@ class Graveyard:
             char = self.source[self.position]
 
             if char == "{":
-                # If no prior text, add an empty FORMATTEDSTRING token
                 if not string_buffer:
                     tokens.append((FORMATTEDSTRING, ""))
                 else:
@@ -429,7 +428,7 @@ class Graveyard:
                 tokens.append((RIGHTBRACE, "}"))
                 self.position += 1
 
-            elif char == TOKEN_TYPES[FORMATTEDSTRING]:  # Closing formatted string
+            elif char == TOKEN_TYPES[FORMATTEDSTRING]:
                 if string_buffer:
                     tokens.append((FORMATTEDSTRING, string_buffer))
                 self.position += 1
@@ -605,7 +604,7 @@ class Graveyard:
         body = []
         
         while not self.match(RIGHTBRACE):
-            body.append(self.parse_statement())  # Treat return as a normal statement
+            body.append(self.parse_statement())
         
         self.consume(RIGHTBRACE)
         return FunctionDefinitionPrimitive(name, parameters, body)
@@ -881,7 +880,6 @@ class Graveyard:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         
-        #@!
         elif self.match(SUBTRACTION):
             self.consume(SUBTRACTION)
             return UnaryOperationPrimitive("-", self.parse_numbers_parentheses())
@@ -992,15 +990,12 @@ class Graveyard:
             RangePrimitive: lambda p: self.execute_range(p),
             NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_declaration(p),
             NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p),
-            ReturnPrimitive: lambda p: p
+            ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value))
         }
 
         primitive_type = type(primitive)
         if primitive_type in execute_map:
             result = execute_map[primitive_type](primitive)
-            # if isinstance(result, ReturnPrimitive): # don't think we need this here
-            #     return result
-
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
@@ -1008,26 +1003,21 @@ class Graveyard:
     def execute_namespace_declaration(self, primitive):
         namespace_name = primitive.name
 
-        # Find or create namespace in the global scope (bottom of the stack)
         global_scope = self.monolith[0]
         if namespace_name not in global_scope:
             global_scope[namespace_name] = {}
 
-        # Push the namespace scope onto the stack
         self.monolith.append(global_scope[namespace_name])
 
-        # Execute the body inside the new namespace scope
         for statement in primitive.body:
             self.execute(statement)
 
-        # Pop the namespace scope off the stack after execution
         self.monolith.pop()
 
     def execute_namespace_access(self, primitive):
         namespace_name = primitive.namespace
         identifier = primitive.identifier
 
-        # Look for the namespace in the global scope (bottom of the stack)
         global_scope = self.monolith[0]
         if namespace_name in global_scope and identifier in global_scope[namespace_name]:
             return global_scope[namespace_name][identifier]
@@ -1078,7 +1068,6 @@ class Graveyard:
     def execute_hashtable_lookup(self, primitive):
         hashtable = None
 
-        # Search through the stack from the most recent scope to the global scope
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
                 hashtable = scope[primitive.identifier]
@@ -1257,18 +1246,16 @@ class Graveyard:
             self.push_scope()
 
             try:
-                # Bind arguments to parameters
                 for parameter, argument in zip(function.parameters, primitive.arguments):
                     self.monolith[-1][parameter] = self.execute(argument)
 
                 for statement in function.body:
                     result = self.execute(statement)
 
-                    # If a return is encountered, return immediately
                     if isinstance(result, ReturnPrimitive):
-                        return self.execute(result.value)
+                        return self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value
 
-                return None  # Implicit return if no return statement was encountered
+                return None
 
             finally:
                 self.pop_scope()
@@ -1286,7 +1273,6 @@ class Graveyard:
 
         self.monolith[-1][primitive.identifier] = value
         return value
-
 
     def execute_addition_assignment(self, primitive):
         scope_to_update = None
@@ -1414,7 +1400,6 @@ class Graveyard:
     
     def execute_unary_operation(self, primitive):
         if primitive.op in {"++", "--"}:
-            # Search for the variable in the scopes
             scope_to_update = None
             for scope in reversed(self.monolith):
                 if primitive.right in scope:
@@ -1424,18 +1409,15 @@ class Graveyard:
             if scope_to_update is None:
                 raise NameError(f"Variable '{primitive.right}' is not defined")
 
-            # Retrieve the current value and update it
             operand = scope_to_update[primitive.right]
             if primitive.op == "++":
                 operand += 1
             elif primitive.op == "--":
                 operand -= 1
 
-            # Update the variable in the correct scope
             scope_to_update[primitive.right] = operand
             return operand
 
-        # Handle negation and other unary operations
         operand = self.execute(primitive.right)
 
         operations = {
@@ -1509,8 +1491,6 @@ class Graveyard:
 
     def execute_hashtable_assignment(self, primitive):
         hashtable = None
-
-        # Search through the stack from the most recent scope to the global scope
         for scope in reversed(self.monolith):
             if primitive.identifier in scope:
                 hashtable = scope[primitive.identifier]
@@ -1551,29 +1531,25 @@ class Graveyard:
         array.append(value)
 
     def execute_if_statement(self, primitive):
-        # Loop through the condition blocks (if/else if)
         for condition, body in primitive.condition_blocks:
-            if self.execute(condition):  # If the condition is True
+            if self.execute(condition):
                 self.push_scope()
                 try:
                     for statement in body:
                         result = self.execute(statement)
-                        # If we encounter a return statement, propagate it upwards
                         if isinstance(result, ReturnPrimitive):
-                            return result
+                            return ReturnPrimitive(self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value)
                 finally:
                     self.pop_scope()
-                return  # Exit after the first block is executed
+                return
 
-        # Execute the else block if no condition matched
         if primitive.else_body:
             self.push_scope()
             try:
                 for statement in primitive.else_body:
                     result = self.execute(statement)
-                    # If we encounter a return statement, propagate it upwards
                     if isinstance(result, ReturnPrimitive):
-                        return result
+                        return ReturnPrimitive(self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value)
             finally:
                 self.pop_scope()
 
@@ -1583,9 +1559,8 @@ class Graveyard:
             try:
                 for statement in primitive.body:
                     result = self.execute(statement)
-                    # If we encounter a return, propagate it upwards
                     if isinstance(result, ReturnPrimitive):
-                        return result
+                        return ReturnPrimitive(self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value)
             except ContinueException:
                 continue
             except BreakException:
@@ -1597,56 +1572,20 @@ class Graveyard:
         iterator_name = primitive.iterator
         limit = self.execute(primitive.limit)
 
-        # Handle iteration through a dictionary
-        if type(limit) == dict:
-            for key in limit.keys():
-                self.push_scope()
-                try:
-                    self.monolith[-1][iterator_name] = key
+        iterable = limit.keys() if isinstance(limit, dict) else limit if isinstance(limit, list) else range(limit) if isinstance(limit, int) else None
+        if iterable is None:
+            raise TypeError(f"Cannot iterate through {type(limit)} range")
 
-                    for statement in primitive.body:
-                        result = self.execute(statement)
-                        # If we encounter a return, propagate it upwards
-                        if isinstance(result, ReturnPrimitive):
-                            return result
-
-                finally:
-                    self.pop_scope()
-
-        # Handle iteration through a list
-        elif type(limit) == list:
-            for item in limit:
-                self.push_scope()
-                try:
-                    self.monolith[-1][iterator_name] = item
-
-                    for statement in primitive.body:
-                        result = self.execute(statement)
-                        # If we encounter a return, propagate it upwards
-                        if isinstance(result, ReturnPrimitive):
-                            return result
-
-                finally:
-                    self.pop_scope()
-
-        # Handle iteration through a range of integers
-        else:
-            if type(limit) != int:
-                raise TypeError(f"Cannot iterate through {type(limit)} range")
-
-            for i in range(limit):
-                self.push_scope()
-                try:
-                    self.monolith[-1][iterator_name] = i
-
-                    for statement in primitive.body:
-                        result = self.execute(statement)
-                        # If we encounter a return, propagate it upwards
-                        if isinstance(result, ReturnPrimitive):
-                            return result
-
-                finally:
-                    self.pop_scope()
+        for item in iterable:
+            self.push_scope()
+            try:
+                self.monolith[-1][iterator_name] = item
+                for statement in primitive.body:
+                    result = self.execute(statement)
+                    if isinstance(result, ReturnPrimitive):
+                        return ReturnPrimitive(self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value)
+            finally:
+                self.pop_scope()
 
     def execute_continue(self, primitive):
         raise ContinueException()
