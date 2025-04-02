@@ -862,14 +862,12 @@ class Graveyard:
 
     def parse_numbers_parentheses(self):
         if self.match(NUMBER):
-            # return NumberPrimitive(self.consume(NUMBER))
-            if self.match(NUMBER):
-                left = NumberPrimitive(self.consume(NUMBER))
-                if self.match(RANGE):
-                    self.consume(RANGE)
-                    right = self.parse_numbers_parentheses()
-                    return RangePrimitive(left, right)
-                return left
+            left = NumberPrimitive(self.consume(NUMBER))
+            if self.match(RANGE):
+                self.consume(RANGE)
+                right = self.parse_numbers_parentheses()
+                return RangePrimitive(left, right)
+            return left
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING))
         elif self.match(FORMATTEDSTRING):
@@ -882,6 +880,12 @@ class Graveyard:
             elif self.predict()[0] == LEFTPARENTHESES:
                 return self.parse_function_call()
             return IdentifierPrimitive(self.consume(IDENTIFIER))
+        
+        #@!
+        elif self.match(SUBTRACTION):
+            self.consume(SUBTRACTION)
+            return UnaryOperationPrimitive("-", self.parse_numbers_parentheses())
+            
         elif self.match(LEFTPARENTHESES):
             self.consume(LEFTPARENTHESES)
             expression = self.parse_or()
@@ -1409,7 +1413,7 @@ class Graveyard:
         return operation(left, right)
     
     def execute_unary_operation(self, primitive):
-        if primitive.op == "++" or primitive.op == "--":
+        if primitive.op in {"++", "--"}:
             # Search for the variable in the scopes
             scope_to_update = None
             for scope in reversed(self.monolith):
@@ -1431,11 +1435,12 @@ class Graveyard:
             scope_to_update[primitive.right] = operand
             return operand
 
-        # For the negation operator "!"
+        # Handle negation and other unary operations
         operand = self.execute(primitive.right)
 
         operations = {
             "!": lambda x: not x,
+            "-": lambda x: -x if isinstance(x, (int, float)) else TypeError(f"Cannot negate non-numeric type {type(x)}")
         }
 
         operation = operations.get(primitive.op)
@@ -1770,7 +1775,7 @@ def print_primitive(node, indent=0):
     elif isinstance(node, BreakPrimitive):
         print(f"{prefix}{node_type}")
     else:
-        print(f"{prefix}{node_type} literal: {node}")
+        print(f"{prefix}literal or identifier: {node}")
 
 def main():
     S = 899
