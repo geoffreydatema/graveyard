@@ -127,5 +127,27 @@ sanity {
         }
     }
     ret_in_func();
+    <animal> = {
+    name: |,
+    age: |,
+    walk: {
+    status = "walking";
+    -> status;
+    }
+    };
+    <swag> = {
+    money: 69,
+    hat_type: "backwards"
+    };
+    <cat> &<animal> &<swag> = {
+    name: "mike",
+    age: 9,
+    legs: 4
+    };
+    generic_animal = <animal>;
+    pet = <cat>;
+    x = pet#legs;
+    y = pet#walk();
+    pet#hat_type = "sideways";
     -> $;
 }
