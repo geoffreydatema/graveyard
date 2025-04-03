@@ -288,6 +288,12 @@ class MethodCallPrimitive:
         self.method_name = method_name
         self.arguments = arguments
 
+class TypeMemberAssignmentPrimitive:
+    def __init__(self, instance_name, member_name, value):
+        self.instance_name = instance_name
+        self.member_name = member_name
+        self.value = value
+
 class ReturnPrimitive:
     def __init__(self, value):
         self.value = value
@@ -516,11 +522,11 @@ class Graveyard:
         elif self.match(RETURN):
             statement = self.parse_return()
             self.consume(SEMICOLON)
-        elif self.match(TYPE):  # NEW: Check for TYPE token
-            statement = self.parse_type_definition()  # NEW: Parse type definition
-            self.consume(SEMICOLON)  # Consume the semicolon after the type definition
-        elif self.match(IDENTIFIER) and self.predict()[0] == ASSIGNMENT and self.predict(2)[0] == TYPE:  # NEW: Check for Type instantiation
-            statement = self.parse_type_instantiation()  # NEW: Parse type instantiation
+        elif self.match(TYPE):
+            statement = self.parse_type_definition()
+            self.consume(SEMICOLON)
+        elif self.match(IDENTIFIER) and self.predict()[0] == ASSIGNMENT and self.predict(2)[0] == TYPE:
+            statement = self.parse_type_instantiation()
             self.consume(SEMICOLON)
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
@@ -556,9 +562,15 @@ class Graveyard:
             elif self.predict()[0] == APPEND:
                 statement = self.parse_array_append()
                 self.consume(SEMICOLON)
-            elif self.predict()[0] == REFERENCE:
+
+            elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER:
+                statement = self.parse_type_member_assignment()
+                self.consume(SEMICOLON)
+
+            elif self.predict()[0] == REFERENCE and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
                 statement = self.parse_hashtable_assignment()
                 self.consume(SEMICOLON)
+            
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -568,6 +580,14 @@ class Graveyard:
             raise SyntaxError(f"Unexpected token: {self.peek()[1]}")
 
         return statement
+    
+    def parse_type_member_assignment(self):
+        instance_name = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        member_name = self.consume(IDENTIFIER)
+        self.consume(ASSIGNMENT)
+        value = self.parse_or()
+        return TypeMemberAssignmentPrimitive(instance_name, member_name, value)
 
     def parse_type_definition(self):
         type_name = self.consume(TYPE)
@@ -1093,7 +1113,8 @@ class Graveyard:
             TypeDefinitionPrimitive: lambda p: self.execute_type_definition(p),
             TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p),
             MemberLookupPrimitive: lambda p: self.execute_member_lookup(p),
-            MethodCallPrimitive: lambda p: self.execute_method_call(p)
+            MethodCallPrimitive: lambda p: self.execute_method_call(p),
+            TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p)
         }
 
         primitive_type = type(primitive)
@@ -1103,11 +1124,24 @@ class Graveyard:
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
 
+    def execute_type_member_assignment(self, primitive):
+        instance_name = primitive.instance_name
+        member_name = primitive.member_name
+        value = self.execute(primitive.value)
+
+        instance = self.get_variable(instance_name)
+        if not isinstance(instance, dict):
+            raise TypeError(f"'{instance_name}' is not an instance")
+        if member_name not in instance:
+            raise NameError(f"'{member_name}' is not a member of '{instance_name}'")
+
+        instance[member_name] = value
+
     def execute_member_lookup(self, primitive):
         instance_name = primitive.instance_name
         member_name = primitive.member_name
 
-        instance = self.get_variable(f"<{instance_name}>")
+        instance = self.get_variable(instance_name)
         if not isinstance(instance, dict):
             raise TypeError(f"'{instance_name}' is not an instance")
         if member_name not in instance:
@@ -1399,18 +1433,17 @@ class Graveyard:
             raise ValueError(f"Unknown function: {primitive.name}")
 
     def execute_method_call(self, primitive):
-        """Executes a method call."""
         instance_name = primitive.instance_name
         method_name = primitive.method_name
-        arguments = [self.execute(arg) for arg in primitive.arguments]  # Evaluate arguments
+        arguments = [self.execute(arg) for arg in primitive.arguments]
 
-        instance = self.get_variable(f"<{instance_name}>")  # Get the instance
+        instance = self.get_variable(instance_name)
         if not isinstance(instance, dict):
             raise TypeError(f"'{instance_name}' is not an instance")
         if method_name not in instance:
             raise NameError(f"'{method_name}' is not a member of '{instance_name}'")
 
-        method_def = instance[method_name]  # Get the FunctionDefinitionPrimitive
+        method_def = instance[method_name]
 
         if not isinstance(method_def, FunctionDefinitionPrimitive):
             raise TypeError(f"'{method_name}' is not a method")
