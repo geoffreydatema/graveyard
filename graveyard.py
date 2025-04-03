@@ -277,10 +277,16 @@ class TypeInstantiationPrimitive:
         self.instance_name = instance_name
         self.type_name = type_name
 
-class TypeLookupPrimitive:
+class MemberLookupPrimitive:
     def __init__(self, instance_name, member_name):
         self.instance_name = instance_name
         self.member_name = member_name
+
+class MethodCallPrimitive:
+    def __init__(self, instance_name, method_name, arguments):
+        self.instance_name = instance_name
+        self.method_name = method_name
+        self.arguments = arguments
 
 class ReturnPrimitive:
     def __init__(self, value):
@@ -587,7 +593,7 @@ class Graveyard:
         return TypeDefinitionPrimitive(type_name, members)
 
     def parse_method_definition(self, member_name):
-        parameters = None
+        parameters = []
         if self.match(PARAMETER):
             parameters = []
             while self.match(PARAMETER):
@@ -608,11 +614,25 @@ class Graveyard:
         type_name = self.consume(TYPE)
         return TypeInstantiationPrimitive(instance_name, type_name)
     
-    def parse_type_lookup(self):
+    def parse_member_lookup(self):
         instance_name = self.consume(IDENTIFIER)
         self.consume(REFERENCE)
         member_name = self.consume(IDENTIFIER)
-        return TypeLookupPrimitive(instance_name, member_name)
+        
+        if self.match(LEFTPARENTHESES):
+            self.consume(LEFTPARENTHESES)
+            arguments = []
+            if not self.match(RIGHTPARENTHESES):
+                while True:
+                    arguments.append(self.parse_or())
+                    if self.match(COMMA):
+                        self.consume(COMMA)
+                    else:
+                        break
+            self.consume(RIGHTPARENTHESES)
+            return MethodCallPrimitive(instance_name, member_name, arguments)
+        else:
+            return MemberLookupPrimitive(instance_name, member_name)
 
     def parse_return(self):
         self.consume(RETURN)
@@ -954,7 +974,7 @@ class Graveyard:
                 if self.predict(2) is not None and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
                     return self.parse_hashtable_lookup()
                 else:
-                    return self.parse_type_lookup()
+                    return self.parse_member_lookup()
                 
 
             elif self.predict()[0] == LEFTPARENTHESES:
@@ -1072,7 +1092,8 @@ class Graveyard:
             ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value)),
             TypeDefinitionPrimitive: lambda p: self.execute_type_definition(p),
             TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p),
-            TypeLookupPrimitive: lambda p: self.execute_type_lookup(p)
+            MemberLookupPrimitive: lambda p: self.execute_member_lookup(p),
+            MethodCallPrimitive: lambda p: self.execute_method_call(p)
         }
 
         primitive_type = type(primitive)
@@ -1082,7 +1103,7 @@ class Graveyard:
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
 
-    def execute_type_lookup(self, primitive):
+    def execute_member_lookup(self, primitive):
         instance_name = primitive.instance_name
         member_name = primitive.member_name
 
@@ -1376,6 +1397,41 @@ class Graveyard:
 
         else:
             raise ValueError(f"Unknown function: {primitive.name}")
+
+    def execute_method_call(self, primitive):
+        """Executes a method call."""
+        instance_name = primitive.instance_name
+        method_name = primitive.method_name
+        arguments = [self.execute(arg) for arg in primitive.arguments]  # Evaluate arguments
+
+        instance = self.get_variable(f"<{instance_name}>")  # Get the instance
+        if not isinstance(instance, dict):
+            raise TypeError(f"'{instance_name}' is not an instance")
+        if method_name not in instance:
+            raise NameError(f"'{method_name}' is not a member of '{instance_name}'")
+
+        method_def = instance[method_name]  # Get the FunctionDefinitionPrimitive
+
+        if not isinstance(method_def, FunctionDefinitionPrimitive):
+            raise TypeError(f"'{method_name}' is not a method")
+
+        if len(method_def.parameters) != len(arguments):
+            raise ValueError(f"Incorrect number of arguments for method '{method_name}'")
+
+        self.push_scope()
+        try:
+            self.monolith[-1]["this"] = instance
+            for parameter, argument in zip(method_def.parameters, arguments):
+                self.monolith[-1][parameter] = argument
+
+            result = None
+            for statement in method_def.body:
+                result = self.execute(statement)
+                if isinstance(result, ReturnPrimitive):
+                    return self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value
+            return result
+        finally:
+            self.pop_scope()
 
     def execute_assignment(self, primitive):
         value = self.execute(primitive.value)
