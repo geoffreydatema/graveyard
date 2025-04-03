@@ -268,9 +268,10 @@ class NamespaceAccessPrimitive:
         self.identifier = identifier
 
 class TypeDefinitionPrimitive:
-    def __init__(self, name, members):
+    def __init__(self, name, members, parent_type=None):
         self.name = name
         self.members = members
+        self.parent_type = parent_type
 
 class TypeInstantiationPrimitive:
     def __init__(self, instance_name, type_name):
@@ -562,15 +563,15 @@ class Graveyard:
             elif self.predict()[0] == APPEND:
                 statement = self.parse_array_append()
                 self.consume(SEMICOLON)
-
+            elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
+                statement = self.parse_method_call()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER:
                 statement = self.parse_type_member_assignment()
                 self.consume(SEMICOLON)
-
             elif self.predict()[0] == REFERENCE and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
                 statement = self.parse_hashtable_assignment()
                 self.consume(SEMICOLON)
-            
             elif self.predict()[0] == PARAMETER or self.predict()[0] == LEFTBRACE:
                 statement = self.parse_function_definition()
             else:
@@ -591,6 +592,13 @@ class Graveyard:
 
     def parse_type_definition(self):
         type_name = self.consume(TYPE)
+        parent_type = None
+        if self.match(PARAMETER):
+            parent_types = []  # Changed to a list
+            while self.match(PARAMETER):  # Loop to capture all parent types
+                self.consume(PARAMETER)
+                parent_types.append(self.consume(TYPE))
+            parent_type = "&".join(parent_types)
         self.consume(ASSIGNMENT)
         self.consume(LEFTBRACE)
 
@@ -610,7 +618,7 @@ class Graveyard:
                 self.consume(COMMA)
 
         self.consume(RIGHTBRACE)
-        return TypeDefinitionPrimitive(type_name, members)
+        return TypeDefinitionPrimitive(type_name, members, parent_type)
 
     def parse_method_definition(self, member_name):
         parameters = []
@@ -638,21 +646,25 @@ class Graveyard:
         instance_name = self.consume(IDENTIFIER)
         self.consume(REFERENCE)
         member_name = self.consume(IDENTIFIER)
+
+        return MemberLookupPrimitive(instance_name, member_name)
+    
+    def parse_method_call(self):
+        instance_name = self.consume(IDENTIFIER)
+        self.consume(REFERENCE)
+        method_name = self.consume(IDENTIFIER)
         
-        if self.match(LEFTPARENTHESES):
-            self.consume(LEFTPARENTHESES)
-            arguments = []
-            if not self.match(RIGHTPARENTHESES):
-                while True:
-                    arguments.append(self.parse_or())
-                    if self.match(COMMA):
-                        self.consume(COMMA)
-                    else:
-                        break
-            self.consume(RIGHTPARENTHESES)
-            return MethodCallPrimitive(instance_name, member_name, arguments)
-        else:
-            return MemberLookupPrimitive(instance_name, member_name)
+        self.consume(LEFTPARENTHESES)
+        arguments = []
+        if not self.match(RIGHTPARENTHESES):
+            while True:
+                arguments.append(self.parse_or())
+                if self.match(COMMA):
+                    self.consume(COMMA)
+                else:
+                    break
+        self.consume(RIGHTPARENTHESES)
+        return MethodCallPrimitive(instance_name, method_name, arguments)
 
     def parse_return(self):
         self.consume(RETURN)
@@ -974,7 +986,20 @@ class Graveyard:
         return FormattedStringPrimitive(parts)
 
     def parse_numbers_parentheses(self):
-        if self.match(NUMBER):
+        if self.match(IDENTIFIER):
+            if self.predict()[0] == LEFTBRACKET:
+                return self.parse_array_lookup()
+            elif self.predict()[0] == REFERENCE:
+                if self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING:
+                    return self.parse_hashtable_lookup()
+                elif self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
+                    return self.parse_method_call()
+                elif self.predict(2)[0] == IDENTIFIER:
+                    return self.parse_member_lookup()
+            elif self.predict()[0] == LEFTPARENTHESES:
+                return self.parse_function_call()
+            return IdentifierPrimitive(self.consume(IDENTIFIER))
+        elif self.match(NUMBER):
             left = NumberPrimitive(self.consume(NUMBER))
             if self.match(RANGE):
                 self.consume(RANGE)
@@ -985,21 +1010,6 @@ class Graveyard:
             return StringPrimitive(self.consume(STRING))
         elif self.match(FORMATTEDSTRING):
             return self.parse_formatted_string()       
-        elif self.match(IDENTIFIER):
-            if self.predict()[0] == LEFTBRACKET:
-                return self.parse_array_lookup()
-            
-
-            elif self.predict()[0] == REFERENCE:
-                if self.predict(2) is not None and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
-                    return self.parse_hashtable_lookup()
-                else:
-                    return self.parse_member_lookup()
-                
-
-            elif self.predict()[0] == LEFTPARENTHESES:
-                return self.parse_function_call()
-            return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(SUBTRACTION):
             self.consume(SUBTRACTION)
             return UnaryOperationPrimitive("-", self.parse_numbers_parentheses())
@@ -1128,13 +1138,13 @@ class Graveyard:
         instance_name = primitive.instance_name
         member_name = primitive.member_name
         value = self.execute(primitive.value)
-
         instance = self.get_variable(instance_name)
         if not isinstance(instance, dict):
             raise TypeError(f"'{instance_name}' is not an instance")
         if member_name not in instance:
             raise NameError(f"'{member_name}' is not a member of '{instance_name}'")
-
+        if isinstance(instance[member_name], FunctionDefinitionPrimitive):
+            raise TypeError(f"Cannot re-assign method '{member_name}'")
         instance[member_name] = value
 
     def execute_member_lookup(self, primitive):
@@ -1150,6 +1160,14 @@ class Graveyard:
 
     def execute_type_definition(self, primitive):
         evaluated_members = {}
+        if primitive.parent_type:
+            parent_types = primitive.parent_type.split("&")
+            for parent_type in parent_types:
+                parent_type = parent_type.strip()
+                parent_definition = self.get_variable(parent_type)
+                if not isinstance(parent_definition, dict):
+                    raise TypeError(f"'{parent_type}' is not a valid type")
+                evaluated_members.update(parent_definition.copy())
         for member_name, member_value in primitive.members.items():
             if isinstance(member_value, FunctionDefinitionPrimitive):
                 evaluated_members[member_name] = member_value
@@ -1917,12 +1935,24 @@ def print_primitive(node, indent=0):
     elif isinstance(node, BreakPrimitive):
         print(f"{prefix}{node_type}")
     elif isinstance(node, TypeDefinitionPrimitive):
-        print(f"{prefix}{node_type} (name: {node.name})")
+        print(f"{prefix}{node_type} (name: {node.name}, parent_type: {node.parent_type})")
         for member_name, member_value in node.members.items():
             print(f"{' ' * (indent * 4 + 4)}|-- Member: {member_name}")
             print_primitive(member_value, indent + 2)
     elif isinstance(node, TypeInstantiationPrimitive):
         print(f"{prefix}{node_type} (instance_name: {node.instance_name}, type_name: {node.type_name})")
+    elif isinstance(node, MemberLookupPrimitive):
+        print(f"{prefix}{node_type} (instance_name: {node.instance_name}, member_name: {node.member_name})")
+    elif isinstance(node, MethodCallPrimitive):
+        print(f"{prefix}{node_type} (instance_name: {node.instance_name}, method_name: {node.method_name})")
+        for arg in node.arguments:
+            print_primitive(arg, indent + 1)
+    elif isinstance(node, TypeMemberAssignmentPrimitive):
+        print(f"{prefix}{node_type} (instance_name: {node.instance_name}, member_name: {node.member_name})")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, ReturnPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
     else:
         print(f"{prefix}literal or identifier: {node}")
 
