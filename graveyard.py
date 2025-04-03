@@ -62,6 +62,7 @@ NAMESPACE = 53
 OPENGLOBAL = 54
 CLOSEGLOBAL = 55
 TYPE = 56
+PRINT = 57
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -92,6 +93,7 @@ TOKEN_TYPES = {
     INEQUALITY: r"!=",
     GREATERTHANEQUAL: r">=",
     LESSTHANEQUAL: r"<=",
+    PRINT: r">>",
     GREATERTHAN: r">",
     APPEND: r"<-",
     LESSTHAN: r"<",
@@ -298,6 +300,10 @@ class TypeMemberAssignmentPrimitive:
 class ReturnPrimitive:
     def __init__(self, value):
         self.value = value
+
+class PrintPrimitive:
+    def __init__(self, arguments):
+        self.arguments = arguments
 
 class ContinuePrimitive:
     pass
@@ -517,6 +523,9 @@ class Graveyard:
             self.consume(SEMICOLON)
         elif self.match(IF):
             statement = self.parse_if_statement()
+        elif self.match(PRINT):
+            statement = self.parse_print_operator()
+            self.consume(SEMICOLON)
         elif self.match(NAMESPACE):
             if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == LEFTBRACE:
                 return self.parse_namespace_declaration()
@@ -582,6 +591,17 @@ class Graveyard:
 
         return statement
     
+    def parse_print_operator(self):
+        self.consume(PRINT)
+        arguments = []
+        while True:
+            arguments.append(self.parse_or())
+            if self.match(COMMA):
+                self.consume(COMMA)
+            else:
+                break
+        return PrintPrimitive(arguments)
+
     def parse_type_member_assignment(self):
         instance_name = self.consume(IDENTIFIER)
         self.consume(REFERENCE)
@@ -1124,7 +1144,8 @@ class Graveyard:
             TypeInstantiationPrimitive: lambda p: self.execute_type_instantiation(p),
             MemberLookupPrimitive: lambda p: self.execute_member_lookup(p),
             MethodCallPrimitive: lambda p: self.execute_method_call(p),
-            TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p)
+            TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p),
+            PrintPrimitive: lambda p: self.execute_print_operator(p)
         }
 
         primitive_type = type(primitive)
@@ -1133,6 +1154,11 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_print_operator(self, primitive):
+        arguments = [self.execute(arg) for arg in primitive.arguments]
+        print(*arguments)
+        return True
 
     def execute_type_member_assignment(self, primitive):
         instance_name = primitive.instance_name
@@ -1953,6 +1979,10 @@ def print_primitive(node, indent=0):
     elif isinstance(node, ReturnPrimitive):
         print(f"{prefix}{node_type}")
         print_primitive(node.value, indent + 1)
+    elif isinstance(node, PrintPrimitive):
+        print(f"{prefix}{node_type}")
+        for arg in node.arguments:
+            print_primitive(arg, indent + 1)
     else:
         print(f"{prefix}literal or identifier: {node}")
 
