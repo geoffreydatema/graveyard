@@ -348,6 +348,15 @@ class Graveyard:
             return
         else:
             raise SyntaxError("Global namespace not declared")
+        
+    def library_entry(self, source):
+        source = source.lstrip().rstrip()
+        entry_token = source[:3]
+        exit_token = source[-1:]
+        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[CLOSEGLOBAL]:
+            return source[3:-1]
+        else:
+            raise SyntaxError("Global namespace not declared in library")
 
     def pretokenize(self):
         position = 0
@@ -384,7 +393,7 @@ class Graveyard:
     def pretokenize_library(self, library_source):
         position = 0
         cleaned_source = []
-
+        library_source = self.library_entry(library_source)
         while position < len(library_source):
             match = None
             for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
