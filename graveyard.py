@@ -123,7 +123,8 @@ TOKEN_TYPES = {
     REFERENCE: r"#",
     RANGE: r"\.\.\.",
     OPENGLOBAL: r"::{",
-    CLOSEGLOBAL: r"}"
+    CLOSEGLOBAL: r"}",
+    PERIOD: r"\."
 }
 
 class IdentifierPrimitive():
@@ -593,7 +594,7 @@ class Graveyard:
             elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
                 statement = self.parse_method_call()
                 self.consume(SEMICOLON)
-            elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER:
+            elif self.predict()[0] == PERIOD and self.predict(2)[0] == IDENTIFIER:
                 statement = self.parse_type_member_assignment()
                 self.consume(SEMICOLON)
             elif self.predict()[0] == REFERENCE and (self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING):
@@ -630,7 +631,7 @@ class Graveyard:
 
     def parse_type_member_assignment(self):
         instance_name = self.consume(IDENTIFIER)
-        self.consume(REFERENCE)
+        self.consume(PERIOD)
         member_name = self.consume(IDENTIFIER)
         self.consume(ASSIGNMENT)
         value = self.parse_or()
@@ -690,14 +691,14 @@ class Graveyard:
     
     def parse_member_lookup(self):
         instance_name = self.consume(IDENTIFIER)
-        self.consume(REFERENCE)
+        self.consume(PERIOD)
         member_name = self.consume(IDENTIFIER)
 
         return MemberLookupPrimitive(instance_name, member_name)
     
     def parse_method_call(self):
         instance_name = self.consume(IDENTIFIER)
-        self.consume(REFERENCE)
+        self.consume(PERIOD)
         method_name = self.consume(IDENTIFIER)
         
         self.consume(LEFTPARENTHESES)
@@ -1036,9 +1037,10 @@ class Graveyard:
             if self.predict()[0] == LEFTBRACKET:
                 return self.parse_array_lookup()
             elif self.predict()[0] == REFERENCE:
-                if self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING:
+                if self.predict(2)[0] == NUMBER or self.predict(2)[0] == STRING or self.predict(2)[0] == IDENTIFIER:
                     return self.parse_hashtable_lookup()
-                elif self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
+            elif self.predict()[0] == PERIOD:
+                if self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
                     return self.parse_method_call()
                 elif self.predict(2)[0] == IDENTIFIER:
                     return self.parse_member_lookup()
