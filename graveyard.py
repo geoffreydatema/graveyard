@@ -63,6 +63,7 @@ OPENGLOBAL = 54
 CLOSEGLOBAL = 55
 TYPE = 56
 PRINT = 57
+SCAN = 58
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -96,6 +97,7 @@ TOKEN_TYPES = {
     PRINT: r">>",
     GREATERTHAN: r">",
     APPEND: r"<-",
+    SCAN: r"<<",
     LESSTHAN: r"<",
     NOT: r"!",
     AND: r"&&",
@@ -304,6 +306,10 @@ class ReturnPrimitive:
 class PrintPrimitive:
     def __init__(self, arguments):
         self.arguments = arguments
+
+class ScanPrimitive:
+    def __init__(self, prompt):
+        self.prompt = prompt
 
 class ContinuePrimitive:
     pass
@@ -542,6 +548,9 @@ class Graveyard:
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
                 self.consume(SEMICOLON)
+            elif self.predict()[0] == SCAN:
+                statement = self.parse_scan_assignment()
+                self.consume(SEMICOLON)
             elif self.predict()[0] == INCREMENT:
                 statement = self.parse_increment()
                 self.consume(SEMICOLON)
@@ -591,6 +600,14 @@ class Graveyard:
 
         return statement
     
+    def parse_scan_assignment(self):
+        variable_name = self.consume(IDENTIFIER)
+        self.consume(SCAN)
+        prompt = None
+        if not self.match(SEMICOLON):
+            prompt = self.parse_or()
+        return AssignmentPrimitive(variable_name, ScanPrimitive(prompt))
+
     def parse_print_operator(self):
         self.consume(PRINT)
         arguments = []
@@ -1145,7 +1162,8 @@ class Graveyard:
             MemberLookupPrimitive: lambda p: self.execute_member_lookup(p),
             MethodCallPrimitive: lambda p: self.execute_method_call(p),
             TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p),
-            PrintPrimitive: lambda p: self.execute_print_operator(p)
+            PrintPrimitive: lambda p: self.execute_print_operator(p),
+            ScanPrimitive: lambda p: self.execute_scan_operator(p)
         }
 
         primitive_type = type(primitive)
@@ -1154,6 +1172,13 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_scan_operator(self, primitive):
+        if primitive.prompt:
+            prompt = self.execute(primitive.prompt)
+            return input(str(prompt))
+        else:
+            return input()
 
     def execute_print_operator(self, primitive):
         arguments = [self.execute(arg) for arg in primitive.arguments]
@@ -1350,6 +1375,14 @@ class Graveyard:
         values = [self.execute(arg) for arg in args]
         print(*values)
         return True
+    
+    def execute_scan(self, *args):
+        args = args[0]
+        if args:
+            prompt = " ".join(str(self.execute(arg)) for arg in args)
+            return input(prompt)
+        else:
+            return input()
 
     def execute_mod(self, args):
         dividend = self.execute(args[0])
@@ -1433,6 +1466,7 @@ class Graveyard:
             "stoa": lambda args: self.execute_stoa(args),
             "reverse": lambda args: self.execute_reverse(args),
             "print": lambda args: self.execute_print(args),
+            "scan": lambda *args: self.execute_scan(*args),
             "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
             "mod": lambda args: self.execute_mod(args),
@@ -1983,6 +2017,9 @@ def print_primitive(node, indent=0):
         print(f"{prefix}{node_type}")
         for arg in node.arguments:
             print_primitive(arg, indent + 1)
+    elif isinstance(node, ScanPrimitive):
+        print(f"{prefix}{node_type} (prompt: )")
+        print_primitive(node.prompt, indent + 1)
     else:
         print(f"{prefix}literal or identifier: {node}")
 
