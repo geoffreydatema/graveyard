@@ -13,6 +13,7 @@
         bool_false = %;
         null_test = |;
         add_test = 5 + 3;
+        !add_test == 8;
         sub_test = 10 - 4;
         mul_test = 6 * 7;
         div_test = 20 / 5;

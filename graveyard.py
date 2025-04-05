@@ -312,6 +312,10 @@ class ScanPrimitive:
     def __init__(self, prompt):
         self.prompt = prompt
 
+class AssertPrimitive:
+    def __init__(self, condition):
+        self.condition = condition
+
 class ContinuePrimitive:
     pass
 
@@ -527,6 +531,9 @@ class Graveyard:
     def parse_statement(self):
         if self.match(WHILE):
             statement = self.parse_while_statement()
+        elif self.match(NOT):
+            statement = self.parse_assert_statement()
+            self.consume(SEMICOLON)
         elif self.match(IDENTIFIER) and self.predict()[0] == FOR:
             statement = self.parse_for_statement()
         elif self.match(CONTINUE):
@@ -610,6 +617,11 @@ class Graveyard:
 
         return statement
     
+    def parse_assert_statement(self):
+        self.consume(NOT)
+        condition = self.parse_or()
+        return AssertPrimitive(condition)
+
     def parse_scan_assignment(self):
         variable_name = self.consume(IDENTIFIER)
         self.consume(SCAN)
@@ -1174,7 +1186,8 @@ class Graveyard:
             MethodCallPrimitive: lambda p: self.execute_method_call(p),
             TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p),
             PrintPrimitive: lambda p: self.execute_print_operator(p),
-            ScanPrimitive: lambda p: self.execute_scan_operator(p)
+            ScanPrimitive: lambda p: self.execute_scan_operator(p),
+            AssertPrimitive: lambda p: self.execute_assert(p)
         }
 
         primitive_type = type(primitive)
@@ -1183,6 +1196,11 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_assert(self, primitive):
+        condition = self.execute(primitive.condition)
+        if not condition:
+            raise AssertionError(f"Assertion failed: {self.execute(primitive.condition.left)} {primitive.condition.op} {self.execute(primitive.condition.right)}")
 
     def execute_scan_operator(self, primitive):
         if primitive.prompt:
