@@ -76,6 +76,12 @@
         ~ ass_counter < 3 {
             ass_counter = ass_counter + 1;
         }
+        s_e = "test";
+        ?s_e == "test" {
+            ?s_e != "not test" {
+                
+            }
+        }
         i @ 0 ... 3 {}
         item @ test_array {
             x = '{item}';

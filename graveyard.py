@@ -1702,7 +1702,9 @@ class Graveyard:
 
         if type(left) == str or type(right) == str:
             operations = {
-                "+": lambda x, y: str(x) + str(y)
+                "+": lambda x, y: str(x) + str(y),
+                "==": lambda x, y: x == y,
+                "!=": lambda x, y: x != y
             }
         else:
             operations = {
@@ -2087,7 +2089,7 @@ def main():
     print("\n")
 
     graveyard = Graveyard()
-    mode = P
+    mode = E
 
     if mode == S:
         graveyard.load("C:\\Working\\graveyard\\working.graveyard")
