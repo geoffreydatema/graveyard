@@ -64,6 +64,7 @@ CLOSEGLOBAL = 55
 TYPE = 56
 PRINT = 57
 SCAN = 58
+RAISE = 59
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -99,6 +100,7 @@ TOKEN_TYPES = {
     APPEND: r"<-",
     SCAN: r"<<",
     LESSTHAN: r"<",
+    RAISE: r"!>>",
     NOT: r"!",
     AND: r"&&",
     OR: r"\|\|",
@@ -315,6 +317,10 @@ class ScanPrimitive:
 class AssertPrimitive:
     def __init__(self, condition):
         self.condition = condition
+
+class RaiseErrorPrimitive:
+    def __init__(self, message):
+        self.message = message
 
 class ContinuePrimitive:
     pass
@@ -534,6 +540,9 @@ class Graveyard:
         elif self.match(NOT):
             statement = self.parse_assert_statement()
             self.consume(SEMICOLON)
+        elif self.match(RAISE):
+            statement = self.parse_raise_error_statement()
+            self.consume(SEMICOLON)
         elif self.match(IDENTIFIER) and self.predict()[0] == FOR:
             statement = self.parse_for_statement()
         elif self.match(CONTINUE):
@@ -617,6 +626,11 @@ class Graveyard:
 
         return statement
     
+    def parse_raise_error_statement(self):
+        self.consume(RAISE)
+        message = self.parse_or()
+        return RaiseErrorPrimitive(message)
+
     def parse_assert_statement(self):
         self.consume(NOT)
         condition = self.parse_or()
@@ -1187,7 +1201,8 @@ class Graveyard:
             TypeMemberAssignmentPrimitive: lambda p: self.execute_type_member_assignment(p),
             PrintPrimitive: lambda p: self.execute_print_operator(p),
             ScanPrimitive: lambda p: self.execute_scan_operator(p),
-            AssertPrimitive: lambda p: self.execute_assert(p)
+            AssertPrimitive: lambda p: self.execute_assert(p),
+            RaiseErrorPrimitive: lambda p: self.execute_raise_error(p)
         }
 
         primitive_type = type(primitive)
@@ -1196,6 +1211,10 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+    
+    def execute_raise_error(self, primitive):
+        message = self.execute(primitive.message)
+        raise RuntimeError(str(message))
 
     def execute_assert(self, primitive):
         condition = self.execute(primitive.condition)
@@ -2049,6 +2068,12 @@ def print_primitive(node, indent=0):
     elif isinstance(node, ScanPrimitive):
         print(f"{prefix}{node_type} (prompt: )")
         print_primitive(node.prompt, indent + 1)
+    elif isinstance(node, AssertPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.condition, indent + 1)
+    elif isinstance(node, RaiseErrorPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.message, indent + 1)
     else:
         print(f"{prefix}literal or identifier: {node}")
 
@@ -2062,7 +2087,7 @@ def main():
     print("\n")
 
     graveyard = Graveyard()
-    mode = E
+    mode = P
 
     if mode == S:
         graveyard.load("C:\\Working\\graveyard\\working.graveyard")
