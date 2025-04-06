@@ -70,7 +70,8 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
+    # PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
+    PATH: r'@[a-zA-Z]:[\\/][a-zA-Z0-9_.\\/-]+;|@\.?[\\/][a-zA-Z0-9_.\\/-]+;',
     TYPE: r"<[a-zA-Z_]\w*>",
     IDENTIFIER: r"[a-zA-Z_]\w*",
     SEMICOLON: r";",
@@ -108,7 +109,7 @@ TOKEN_TYPES = {
     COMMA: r",",
     TRUE: r"\$",
     FALSE: r"%",
-    STRING: r'"(?:\\\"|[^"\\\n])*"',
+    STRING: r'"(?:\\\"|\\|[^"\\\n])*"',
     FORMATTEDSTRING: r"'",
     LEFTBRACE: r"\{",
     RIGHTBRACE: r"\}",
@@ -396,10 +397,9 @@ class Graveyard:
         for match in path_regex.finditer(self.source):
             full_token = match.group()
             normalized_token = full_token.replace("\\", "/")
-                            
             if normalized_token not in self.top_level_library_sources:
                 library_source = self.pretokenize_library(self.load_library_source(normalized_token[1:-1]))
-                self.top_level_library_sources[normalized_token] = library_source
+                self.top_level_library_sources[full_token] = library_source
 
     def pretokenize_library(self, library_source):
         position = 0
@@ -428,7 +428,7 @@ class Graveyard:
             normalized_token = full_token.replace("\\", "/")
             nested_library_source = self.pretokenize_library(self.load_library_source(normalized_token[1:-1]))
             pretokenized_library = pretokenized_library.replace(full_token, nested_library_source)
-
+        
         return pretokenized_library
 
     def load_library_source(self, path):
