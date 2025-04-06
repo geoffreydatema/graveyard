@@ -159,6 +159,16 @@
         x = pet.legs;
         y = pet.walk();
         pet.hat_type = "sideways";
+        nestedarray = [1,2,3,[1,[7,8,9],"hello wife", "you are in a nested array"], {"f": "value from nested hashtable", "s": [42, 69]}];
+        a_n_a_a = nestedarray[3][1][2];
+        a_n_a_h = nestedarray[4]#"s"[1];
+        nestedhashtable = {
+            "first": 42,
+            "123": ["nested array", "of", "stuff", [8,9,0], {1: "inside1", "2": "inside2"}],
+            "third": {"one": "nested", "two": {1: "inside1", "2": "inside2"}}
+        };
+        a_n_h_a = nestedhashtable#"123"[4]#1;
+        a_n_h_h = nestedhashtable#"third"#"two"#"2";
         -> $;
     }
 }

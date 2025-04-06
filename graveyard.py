@@ -70,7 +70,6 @@ TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
     MULTILINECOMMENT: r"/\*.*?\*/",
-    # PATH: r'@(/[a-zA-Z0-9_/\\]+|\./[a-zA-Z0-9_/\\]+|[a-zA-Z]:[\\a-zA-Z0-9_/\\]+|\.\\[a-zA-Z0-9_/\\]+)(?:#\s*([a-zA-Z_][a-zA-Z0-9_]*\s*(?:,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*)*)\s*)?;',
     PATH: r'@[a-zA-Z]:[\\/][a-zA-Z0-9_.\\/-]+;|@\.?[\\/][a-zA-Z0-9_.\\/-]+;',
     TYPE: r"<[a-zA-Z_]\w*>",
     IDENTIFIER: r"[a-zA-Z_]\w*",
@@ -1009,12 +1008,33 @@ class Graveyard:
     def parse_array_lookup(self):
         identifier = self.consume(IDENTIFIER)
 
-        while self.match(LEFTBRACKET):
-            self.consume(LEFTBRACKET)
-            index = self.parse_or()
-            self.consume(RIGHTBRACKET)
-            identifier = ArrayLookupPrimitive(identifier, index)
+        while self.match(LEFTBRACKET) or self.match(REFERENCE):
+            if self.match(LEFTBRACKET):
+                self.consume(LEFTBRACKET)
+                index = self.parse_or()
+                self.consume(RIGHTBRACKET)
+                identifier = ArrayLookupPrimitive(identifier, index)
+            elif self.match(REFERENCE):
+                self.consume(REFERENCE)
+                key = self.parse_or()
+                identifier = HashtableLookupPrimitive(identifier, key)
         
+        return identifier
+    
+    def parse_hashtable_lookup(self):
+        identifier = self.consume(IDENTIFIER)
+
+        while self.match(LEFTBRACKET) or self.match(REFERENCE):
+            if self.match(LEFTBRACKET):
+                self.consume(LEFTBRACKET)
+                index = self.parse_or()
+                self.consume(RIGHTBRACKET)
+                identifier = ArrayLookupPrimitive(identifier, index)
+            elif self.match(REFERENCE):
+                self.consume(REFERENCE)
+                key = self.parse_or()
+                identifier = HashtableLookupPrimitive(identifier, key)
+                
         return identifier
     
     def parse_array_append(self):
@@ -1038,12 +1058,6 @@ class Graveyard:
 
         self.consume(RIGHTBRACE)
         return HashtablePrimitive(hashtable)
-    
-    def parse_hashtable_lookup(self):
-        identifier = self.consume(IDENTIFIER)
-        self.consume(REFERENCE)
-        key = self.parse_or()
-        return HashtableLookupPrimitive(identifier, key)
 
     def parse_formatted_string(self):
         parts = []
@@ -1350,27 +1364,6 @@ class Graveyard:
                 raise TypeError("Hashtable keys cannot be float, must be integer or string")
 
         return key_audit
-    
-    def execute_hashtable_lookup(self, primitive):
-        hashtable = None
-
-        for scope in reversed(self.monolith):
-            if primitive.identifier in scope:
-                hashtable = scope[primitive.identifier]
-                break
-
-        if hashtable is None:
-            raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
-
-        if not isinstance(hashtable, dict):
-            raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
-
-        key = self.execute(primitive.key)
-
-        if key not in hashtable:
-            raise KeyError(f"Key {key} not found in hashtable")
-
-        return hashtable[key]
     
     def execute_cast_boolean(self, args):
         value = None
@@ -1780,10 +1773,13 @@ class Graveyard:
     def execute_array_lookup(self, primitive):
         array = None
         
-        for scope in reversed(self.monolith):
-            if primitive.identifier in scope:
-                array = scope[primitive.identifier]
-                break
+        if isinstance(primitive.identifier, (ArrayLookupPrimitive, HashtableLookupPrimitive)):
+            array = self.execute(primitive.identifier)
+        else:
+            for scope in reversed(self.monolith):
+                if primitive.identifier in scope:
+                    array = scope[primitive.identifier]
+                    break
 
         if array is None:
             raise NameError(f"Array '{primitive.identifier}' is not defined")
@@ -1798,6 +1794,31 @@ class Graveyard:
 
         return array[index]
     
+    
+    def execute_hashtable_lookup(self, primitive):
+        hashtable = None
+
+        if isinstance(primitive.identifier, (ArrayLookupPrimitive, HashtableLookupPrimitive)):
+            hashtable = self.execute(primitive.identifier)
+        else:
+            for scope in reversed(self.monolith):
+                if primitive.identifier in scope:
+                    hashtable = scope[primitive.identifier]
+                    break
+
+        if hashtable is None:
+            raise NameError(f"Hashtable '{primitive.identifier}' is not defined")
+
+        if not isinstance(hashtable, dict):
+            raise TypeError(f"Variable {primitive.identifier} is not a hashtable")
+
+        key = self.execute(primitive.key)
+
+        if key not in hashtable:
+            raise KeyError(f"Key {key} not found in hashtable")
+
+        return hashtable[key]
+
     def execute_array_assignment(self, primitive):
         array = None
 
