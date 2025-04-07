@@ -60,11 +60,10 @@ PERIOD = 51
 PATH = 52
 NAMESPACE = 53
 OPENGLOBAL = 54
-CLOSEGLOBAL = 55
-TYPE = 56
-PRINT = 57
-SCAN = 58
-RAISE = 59
+TYPE = 55
+PRINT = 56
+SCAN = 57
+RAISE = 58
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -110,8 +109,8 @@ TOKEN_TYPES = {
     FALSE: r"%",
     STRING: r'"(?:\\\"|\\|[^"\\\n])*"',
     FORMATTEDSTRING: r"'",
-    LEFTBRACE: r"\{",
-    RIGHTBRACE: r"\}",
+    LEFTBRACE: r"{",
+    RIGHTBRACE: r"}",
     PARAMETER: r"&",
     IF: r"\?",
     WHILE: r"~",
@@ -125,7 +124,6 @@ TOKEN_TYPES = {
     REFERENCE: r"#",
     RANGE: r"\.\.\.",
     OPENGLOBAL: r"::{",
-    CLOSEGLOBAL: r"}",
     PERIOD: r"\."
 }
 
@@ -354,7 +352,7 @@ class Graveyard:
         self.source = self.source.lstrip().rstrip()
         entry_token = self.source[:3]
         exit_token = self.source[-1:]
-        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[CLOSEGLOBAL]:
+        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[RIGHTBRACE]:
             self.source = self.source[3:-1]
             return
         else:
@@ -364,7 +362,7 @@ class Graveyard:
         source = source.lstrip().rstrip()
         entry_token = source[:3]
         exit_token = source[-1:]
-        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[CLOSEGLOBAL]:
+        if entry_token == TOKEN_TYPES[OPENGLOBAL] and exit_token == TOKEN_TYPES[RIGHTBRACE]:
             return source[3:-1]
         else:
             raise SyntaxError("Global namespace not declared in library")
