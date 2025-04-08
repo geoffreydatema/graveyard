@@ -372,6 +372,15 @@ class TypeOfPrimitive:
     def __init__(self, value):
         self.value = value
 
+class FileReadPrimitive:
+    def __init__(self, path):
+        self.path = path
+
+class FileWritePrimitive:
+    def __init__(self, string, path):
+        self.string = string
+        self.path = path
+
 class ContinuePrimitive:
     pass
 
@@ -619,9 +628,15 @@ class Graveyard:
         elif self.match(IDENTIFIER) and self.predict()[0] == ASSIGNMENT and self.predict(2)[0] == TYPE:
             statement = self.parse_type_instantiation()
             self.consume(SEMICOLON)
+        elif (self.match(IDENTIFIER) or self.match(STRING)) and self.predict()[0] == FILEWRITE:
+            statement = self.parse_filewrite()
+            self.consume(SEMICOLON)
         elif self.match(IDENTIFIER):
             if self.predict()[0] == ASSIGNMENT:
                 statement = self.parse_assignment()
+                self.consume(SEMICOLON)
+            elif self.predict()[0] == FILEREAD:
+                statement = self.parse_fileread_assignment()
                 self.consume(SEMICOLON)
             elif self.predict()[0] == SCAN:
                 statement = self.parse_scan_assignment()
@@ -675,6 +690,12 @@ class Graveyard:
 
         return statement
     
+    def parse_filewrite(self):
+        string = self.parse_or()
+        self.consume(FILEWRITE)
+        path = self.parse_or()
+        return FileWritePrimitive(string, path)
+
     def parse_typeof(self):
         self.consume(TYPEOF)
         value = self.parse_or()
@@ -719,6 +740,12 @@ class Graveyard:
         self.consume(NOT)
         condition = self.parse_or()
         return AssertPrimitive(condition)
+
+    def parse_fileread_assignment(self):
+        variable_name = self.consume(IDENTIFIER)
+        self.consume(FILEREAD)
+        path = self.parse_or()
+        return AssignmentPrimitive(variable_name, FileReadPrimitive(path))
 
     def parse_scan_assignment(self):
         variable_name = self.consume(IDENTIFIER)
@@ -1322,7 +1349,9 @@ class Graveyard:
             CastStrPrimitive: lambda p: self.execute_caststr(p),
             CastArrayPrimitive: lambda p: self.execute_castarray(p),
             CastHashPrimitive: lambda p: self.execute_casthash(p),
-            TypeOfPrimitive: lambda p: self.execute_typeof(p)
+            TypeOfPrimitive: lambda p: self.execute_typeof(p),
+            FileReadPrimitive: lambda p: self.execute_fileread(p),
+            FileWritePrimitive: lambda p: self.execute_filewrite(p)
         }
 
         primitive_type = type(primitive)
@@ -1331,6 +1360,21 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_filewrite(self, primitive):
+        string = self.execute(primitive.string)
+        path = self.execute(primitive.path)
+        with open(path, "w") as file:
+            file.write(string)
+
+    def execute_fileread(self, primitive):
+        path = self.execute(primitive.path)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as file:
+                data = file.read()
+            return data
+        else:
+            raise ValueError(f"{path} is not a valid file path")
 
     def execute_raise_error(self, primitive):
         message = self.execute(primitive.message)
@@ -1556,27 +1600,10 @@ class Graveyard:
     def execute_magic_date_time(self):
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def execute_fread(self, args):
-        path = self.execute(args[0])
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as file:
-                data = file.read()
-            return data
-        else:
-            raise ValueError(f"{path} is not a valid file path")
-
-    def execute_fwrite(self, args):
-        data = self.execute(args[0])
-        path = self.execute(args[1])
-        with open(path, "w") as file:
-            file.write(data)
-
     def execute_function_call(self, primitive):
         builtins = {
             "stoa": lambda args: self.execute_stoa(args),
             "reverse": lambda args: self.execute_reverse(args),
-            "print": lambda args: self.execute_print(args),
-            "scan": lambda *args: self.execute_scan(*args),
             "hello": lambda *args: self.execute_hello(),
             "floordiv": lambda args: self.execute_floordiv(args),
             "magic_number": lambda *args: self.execute_magic_number(),
@@ -1584,9 +1611,7 @@ class Graveyard:
             "magic_uid": lambda *args: self.execute_magic_uid(),
             "magic_string": lambda *args: self.execute_magic_string(),
             "magic_time": lambda *args: self.execute_magic_time(),
-            "magic_date_time": lambda *args: self.execute_magic_date_time(),
-            "fread": lambda args: self.execute_fread(args),
-            "fwrite": lambda args: self.execute_fwrite(args),
+            "magic_date_time": lambda *args: self.execute_magic_date_time()
         }
 
         if primitive.name in builtins:
