@@ -64,6 +64,18 @@ TYPE = 55
 PRINT = 56
 SCAN = 57
 RAISE = 58
+CASTBOOL = 59
+CASTINT = 60
+CASTFLOAT = 61
+CASTSTR = 62
+CASTARRAY = 63
+CASTHASH = 64
+TYPEOF = 65
+MOD = 66
+FILEREAD = 67
+FILEWRITE = 68
+TIME = 69
+EXEC = 70
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
@@ -87,6 +99,7 @@ TOKEN_TYPES = {
     EXPONENTIATION: r"\*\*",
     MULTIPLICATIONASSIGNMENT: r"\*=",
     MULTIPLICATION: r"\*",
+    MOD: r"\/%",
     DIVISIONASSIGNMENT: r"/=",
     DIVISION: r"\/",
     LEFTPARENTHESES: r"\(",
@@ -95,6 +108,12 @@ TOKEN_TYPES = {
     GREATERTHANEQUAL: r">=",
     LESSTHANEQUAL: r"<=",
     PRINT: r">>",
+    CASTBOOL: r">b",
+    CASTINT: r">i",
+    CASTFLOAT: r">f",
+    CASTSTR: r">s",
+    CASTARRAY: r">a",
+    CASTHASH: r">h",
     GREATERTHAN: r">",
     APPEND: r"<-",
     SCAN: r"<<",
@@ -116,10 +135,15 @@ TOKEN_TYPES = {
     WHILE: r"~",
     CONTINUE: r"\^",
     BREAK: r"`",
+    TYPEOF: r"@@",
     FOR: r"@",
     LEFTBRACKET: r"\[",
     RIGHTBRACKET: r"\]",
     NAMESPACE: r"::",
+    FILEREAD: r":<<",
+    FILEWRITE: r":>>",
+    TIME: r":@",
+    EXEC: r":=",
     COLON: r":",
     REFERENCE: r"#",
     RANGE: r"\.\.\.",
@@ -319,6 +343,34 @@ class AssertPrimitive:
 class RaiseErrorPrimitive:
     def __init__(self, message):
         self.message = message
+
+class CastBoolPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class CastIntPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class CastFloatPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class CastStrPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class CastArrayPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class CastHashPrimitive:
+    def __init__(self, value):
+        self.value = value
+
+class TypeOfPrimitive:
+    def __init__(self, value):
+        self.value = value
 
 class ContinuePrimitive:
     pass
@@ -623,6 +675,41 @@ class Graveyard:
 
         return statement
     
+    def parse_typeof(self):
+        self.consume(TYPEOF)
+        value = self.parse_or()
+        return TypeOfPrimitive(value)
+
+    def parse_castbool(self):
+        self.consume(CASTBOOL)
+        value = self.parse_or()
+        return CastBoolPrimitive(value)
+
+    def parse_castint(self):
+        self.consume(CASTINT)
+        value = self.parse_or()
+        return CastIntPrimitive(value)
+    
+    def parse_castfloat(self):
+        self.consume(CASTFLOAT)
+        value = self.parse_or()
+        return CastFloatPrimitive(value)
+
+    def parse_caststr(self):
+        self.consume(CASTSTR)
+        value = self.parse_or()
+        return CastStrPrimitive(value)
+    
+    def parse_castarray(self):
+        self.consume(CASTARRAY)
+        value = self.parse_or()
+        return CastArrayPrimitive(value)
+    
+    def parse_casthash(self):
+        self.consume(CASTHASH)
+        value = self.parse_or()
+        return CastHashPrimitive(value)
+
     def parse_raise_error_statement(self):
         self.consume(RAISE)
         message = self.parse_or()
@@ -961,7 +1048,7 @@ class Graveyard:
     def parse_multiplication_division(self):
         left = self.parse_exponentiation()
 
-        while self.match(MULTIPLICATION, DIVISION):
+        while self.match(MULTIPLICATION, DIVISION, MOD):
             op = self.consume(self.tokens[self.current][0])
             right = self.parse_exponentiation()
             left = BinaryOperationPrimitive(left, op, right)
@@ -1120,6 +1207,20 @@ class Graveyard:
         elif self.match(NAMESPACE):
             if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == REFERENCE:
                 return self.parse_namespace_access()
+        elif self.match(CASTBOOL):
+            return self.parse_castbool()
+        elif self.match(CASTINT):
+            return self.parse_castint()
+        elif self.match(CASTFLOAT):
+            return self.parse_castfloat()
+        elif self.match(CASTSTR):
+            return self.parse_caststr()
+        elif self.match(CASTARRAY):
+            return self.parse_castarray()
+        elif self.match(CASTHASH):
+            return self.parse_casthash()
+        elif self.match(TYPEOF):
+            return self.parse_typeof()
         else:
             raise SyntaxError(f"Expected number, variable, or parenthases got {self.peek()[1]}")
 
@@ -1214,7 +1315,14 @@ class Graveyard:
             PrintPrimitive: lambda p: self.execute_print_operator(p),
             ScanPrimitive: lambda p: self.execute_scan_operator(p),
             AssertPrimitive: lambda p: self.execute_assert(p),
-            RaiseErrorPrimitive: lambda p: self.execute_raise_error(p)
+            RaiseErrorPrimitive: lambda p: self.execute_raise_error(p),
+            CastBoolPrimitive: lambda p: self.execute_castbool(p),
+            CastIntPrimitive: lambda p: self.execute_castint(p),
+            CastFloatPrimitive: lambda p: self.execute_castfloat(p),
+            CastStrPrimitive: lambda p: self.execute_caststr(p),
+            CastArrayPrimitive: lambda p: self.execute_castarray(p),
+            CastHashPrimitive: lambda p: self.execute_casthash(p),
+            TypeOfPrimitive: lambda p: self.execute_typeof(p)
         }
 
         primitive_type = type(primitive)
@@ -1223,7 +1331,7 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
-    
+
     def execute_raise_error(self, primitive):
         message = self.execute(primitive.message)
         raise RuntimeError(str(message))
@@ -1363,43 +1471,23 @@ class Graveyard:
 
         return key_audit
     
-    def execute_cast_boolean(self, args):
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            value = self.monolith[args[0].name]
-        else:
-            value = self.execute(args[0])
-        return bool(value)
-
-    def execute_cast_integer(self, args):
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            value = self.monolith[args[0].name]
-        else:
-            value = self.execute(args[0])
-        return int(value)
+    def execute_castbool(self, primitive):
+        return bool(self.execute(primitive.value))
     
-    def execute_cast_float(self, args):
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            value = self.monolith[args[0].name]
-        else:
-            value = self.execute(args[0])
-        return float(value)
+    def execute_castint(self, primitive):
+        return int(self.execute(primitive.value))
     
-    def execute_cast_string(self, args):
-        value = None
-        if type(args[0]) == IdentifierPrimitive:
-            value = self.monolith[args[0].name]
-        else:
-            value = self.execute(args[0])
-        return str(value)
+    def execute_castfloat(self, primitive):
+        return float(self.execute(primitive.value))
     
-    def execute_cast_array(self, args):
-        return [self.execute(arg) for arg in args]
+    def execute_caststr(self, primitive):
+        return str(self.execute(primitive.value))
     
-    def execute_cast_hashtable(self, args):
-        return {self.execute(arg): None for arg in args}
+    def execute_castarray(self, primitive):
+        return [self.execute(primitive.value)]
+    
+    def execute_casthash(self, primitive):
+        return {self.execute(primitive.value): None}
     
     def execute_stoa(self, args):
         return list(self.execute(args[0]))
@@ -1422,40 +1510,29 @@ class Graveyard:
             return input(prompt)
         else:
             return input()
-
-    def execute_mod(self, args):
-        dividend = self.execute(args[0])
-        divisor = self.execute(args[1])
-        return dividend % divisor
     
     def execute_floordiv(self, args):
         dividend = self.execute(args[0])
         divisor = self.execute(args[1])
         return dividend // divisor
     
-    def execute_type(self, args):
-        types = []
-        for item in args:
-            value = self.execute(item)
-            if value is None:
-                types.append("null")
-            elif isinstance(value, bool):
-                types.append("boolean")
-            elif isinstance(value, int):
-                types.append("integer")
-            elif isinstance(value, float):
-                types.append("float")
-            elif isinstance(value, str):
-                types.append("string")
-            elif isinstance(value, list):
-                types.append("array")
-            elif isinstance(value, dict):
-                types.append("hashtable")
-            
-        if not types:
-            return None
-        return types[0] if len(types) == 1 else types
-    
+    def execute_typeof(self, primitive):
+        value = self.execute(primitive.value)
+        if value is None:
+            return "null"
+        elif isinstance(value, bool):
+            return "boolean"
+        elif isinstance(value, int):
+            return "integer"
+        elif isinstance(value, float):
+            return "float"
+        elif isinstance(value, str):
+            return "string"
+        elif isinstance(value, list):
+            return "array"
+        elif isinstance(value, dict):
+            return "hashtable"
+
     def execute_hello(self):
         print("hello world!")
         return True
@@ -1496,19 +1573,11 @@ class Graveyard:
 
     def execute_function_call(self, primitive):
         builtins = {
-            "b": lambda args: self.execute_cast_boolean(args),
-            "i": lambda args: self.execute_cast_integer(args),
-            "f": lambda args: self.execute_cast_float(args),
-            "s": lambda args: self.execute_cast_string(args),
-            "a": lambda args: self.execute_cast_array(args),
-            "h": lambda args: self.execute_cast_hashtable(args),
             "stoa": lambda args: self.execute_stoa(args),
             "reverse": lambda args: self.execute_reverse(args),
             "print": lambda args: self.execute_print(args),
             "scan": lambda *args: self.execute_scan(*args),
-            "type": lambda args: self.execute_type(args),
             "hello": lambda *args: self.execute_hello(),
-            "mod": lambda args: self.execute_mod(args),
             "floordiv": lambda args: self.execute_floordiv(args),
             "magic_number": lambda *args: self.execute_magic_number(),
             "magic_weight": lambda *args: self.execute_magic_weight(),
@@ -1711,7 +1780,8 @@ class Graveyard:
                 ">": lambda x, y: x > y,
                 "<": lambda x, y: x < y,
                 "&&": lambda x, y: x and y,
-                "||": lambda x, y: x or y
+                "||": lambda x, y: x or y,
+                "/%": lambda x, y: x % y
             }
         operation = operations.get(primitive.op)
 
