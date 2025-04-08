@@ -393,6 +393,9 @@ class ContinueException(Exception):
 class BreakException(Exception):
     pass
 
+class TimePrimitive:
+    pass
+
 class Graveyard:
     def __init__(self):
         self.source = ""
@@ -1184,6 +1187,10 @@ class Graveyard:
 
         return FormattedStringPrimitive(parts)
 
+    def parse_time(self):
+        self.consume(TIME)
+        return TimePrimitive()
+
     def parse_numbers_parentheses(self):
         if self.match(IDENTIFIER):
             if self.predict()[0] == LEFTBRACKET:
@@ -1248,6 +1255,8 @@ class Graveyard:
             return self.parse_casthash()
         elif self.match(TYPEOF):
             return self.parse_typeof()
+        elif self.match(TIME):
+            return self.parse_time()
         else:
             raise SyntaxError(f"Expected number, variable, or parenthases got {self.peek()[1]}")
 
@@ -1351,7 +1360,8 @@ class Graveyard:
             CastHashPrimitive: lambda p: self.execute_casthash(p),
             TypeOfPrimitive: lambda p: self.execute_typeof(p),
             FileReadPrimitive: lambda p: self.execute_fileread(p),
-            FileWritePrimitive: lambda p: self.execute_filewrite(p)
+            FileWritePrimitive: lambda p: self.execute_filewrite(p),
+            TimePrimitive: lambda p: self.execute_time(p)
         }
 
         primitive_type = type(primitive)
@@ -1360,6 +1370,9 @@ class Graveyard:
             return result
 
         raise ValueError(f"Unknown primitive type: {primitive_type}")
+
+    def execute_time(self, primitive):
+        return time.time()
 
     def execute_filewrite(self, primitive):
         string = self.execute(primitive.string)
@@ -1610,7 +1623,6 @@ class Graveyard:
             "magic_weight": lambda *args: self.execute_magic_weight(),
             "magic_uid": lambda *args: self.execute_magic_uid(),
             "magic_string": lambda *args: self.execute_magic_string(),
-            "magic_time": lambda *args: self.execute_magic_time(),
             "magic_date_time": lambda *args: self.execute_magic_date_time()
         }
 
