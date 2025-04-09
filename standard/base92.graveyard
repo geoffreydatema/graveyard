@@ -4,7 +4,7 @@
         base92_string = "";
         ? decimal >= 0 {
             ~ $ {
-                base92_string = '{BASE92[mod(decimal, 92)]}{base92_string}';
+                base92_string = '{BASE92[decimal /% 92]}{base92_string}';
                 decimal = floordiv(decimal, 92);
                 ? decimal <= 0 {
                     `;

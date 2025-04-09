@@ -82,7 +82,7 @@
                 
             }
         }
-        i @ 0 ... 3 {}
+        i @ 3 {}
         item @ test_array {
             x = '{item}';
         }
@@ -130,7 +130,7 @@
         access_from_outside = ::second_space#inside_second;
         ret_in_func {
             array = [1,2,3,4,5];
-            num @ reverse(array) {
+            num @ array {
                 ? num == 2 {
                     -> $;
                 }
@@ -169,6 +169,68 @@
         };
         a_n_h_a = nestedhashtable#"123"[4]#1;
         a_n_h_h = nestedhashtable#"third"#"two"#"2";
+        c_b = >b 1.23;
+        c_i = >i :@;
+        c_f = >f 42;
+        c_s = >s c_f;
+        c_a = >a @@ c_s;
+        c_h = >h c_i;
         -> $;
     }
+
+    /*
+    def execute_print(self, args):
+        values = [self.execute(arg) for arg in args]
+        print(*values)
+        return True
+    
+    def execute_scan(self, *args):
+        args = args[0]
+        if args:
+            prompt = " ".join(str(self.execute(arg)) for arg in args)
+            return input(prompt)
+        else:
+            return input()
+    def execute_hello(self):
+        print("hello world!")
+        return True
+
+    def execute_magic_number(self):
+        return random.randint(10000000, 99999999)
+
+    def execute_magic_weight(self):
+        return round(random.random(), 8)
+    
+    def execute_magic_uid(self):
+        return str(hex(random.randint(286331153, 4294967295)))[2:]
+    
+    def execute_magic_string(self):
+        characters = "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+        return "".join(random.choice(characters) for i in range(16))
+
+    def execute_stoa(self, args):
+        return list(self.execute(args[0]))
+    
+    def execute_reverse(self, args):
+        values = []
+        if isinstance(args, list):
+            values = self.execute(args[0])
+        return values[::-1]
+
+    def execute_range(self, primitive):
+        start = self.execute(primitive.start)
+        end = self.execute(primitive.end)
+
+        if type(start) != int:
+            start = int(start)
+        if type(end) != int:
+            end = int(end)
+
+        if start < end:
+            return list(range(start, end + 1))
+        elif start > end:
+            return list(range(start, end - 1, -1))
+        elif start == end:
+            return [start]
+    */   
 }

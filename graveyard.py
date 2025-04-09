@@ -1496,22 +1496,6 @@ class Graveyard:
     def execute_function_definition(self, primitive):
         self.monolith[0][primitive.name] = primitive
 
-    def execute_range(self, primitive):
-        start = self.execute(primitive.start)
-        end = self.execute(primitive.end)
-
-        if type(start) != int:
-            start = int(start)
-        if type(end) != int:
-            end = int(end)
-
-        if start < end:
-            return list(range(start, end + 1))
-        elif start > end:
-            return list(range(start, end - 1, -1))
-        elif start == end:
-            return [start]
-
     def execute_string(self, primitive):
         return primitive.value[1:-1].replace('\\"', '"')
 
@@ -1546,33 +1530,6 @@ class Graveyard:
     def execute_casthash(self, primitive):
         return {self.execute(primitive.value): None}
     
-    def execute_stoa(self, args):
-        return list(self.execute(args[0]))
-    
-    def execute_reverse(self, args):
-        values = []
-        if isinstance(args, list):
-            values = self.execute(args[0])
-        return values[::-1]
-
-    def execute_print(self, args):
-        values = [self.execute(arg) for arg in args]
-        print(*values)
-        return True
-    
-    def execute_scan(self, *args):
-        args = args[0]
-        if args:
-            prompt = " ".join(str(self.execute(arg)) for arg in args)
-            return input(prompt)
-        else:
-            return input()
-    
-    def execute_floordiv(self, args):
-        dividend = self.execute(args[0])
-        divisor = self.execute(args[1])
-        return dividend // divisor
-    
     def execute_typeof(self, primitive):
         value = self.execute(primitive.value)
         if value is None:
@@ -1590,46 +1547,8 @@ class Graveyard:
         elif isinstance(value, dict):
             return "hashtable"
 
-    def execute_hello(self):
-        print("hello world!")
-        return True
-
-    def execute_magic_number(self):
-        return random.randint(10000000, 99999999)
-
-    def execute_magic_weight(self):
-        return round(random.random(), 8)
-    
-    def execute_magic_uid(self):
-        return str(hex(random.randint(286331153, 4294967295)))[2:]
-    
-    def execute_magic_string(self):
-        characters = "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-        return "".join(random.choice(characters) for i in range(16))
-    
-    def execute_magic_time(self):
-        return time.time()
-
-    def execute_magic_date_time(self):
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     def execute_function_call(self, primitive):
-        builtins = {
-            "stoa": lambda args: self.execute_stoa(args),
-            "reverse": lambda args: self.execute_reverse(args),
-            "hello": lambda *args: self.execute_hello(),
-            "floordiv": lambda args: self.execute_floordiv(args),
-            "magic_number": lambda *args: self.execute_magic_number(),
-            "magic_weight": lambda *args: self.execute_magic_weight(),
-            "magic_uid": lambda *args: self.execute_magic_uid(),
-            "magic_string": lambda *args: self.execute_magic_string(),
-            "magic_date_time": lambda *args: self.execute_magic_date_time()
-        }
-
-        if primitive.name in builtins:
-            return builtins[primitive.name](primitive.arguments)
-
-        elif primitive.name in self.monolith[0]:
+        if primitive.name in self.monolith[0]:
             function = self.monolith[0][primitive.name]
 
             if len(function.parameters) != len(primitive.arguments):
@@ -2202,6 +2121,43 @@ def print_primitive(node, indent=0):
     elif isinstance(node, RaiseErrorPrimitive):
         print(f"{prefix}{node_type}")
         print_primitive(node.message, indent + 1)
+    elif isinstance(node, PrintPrimitive):
+        print(f"{prefix}{node_type}")
+        for arg in node.arguments:
+            print_primitive(arg, indent + 1)
+    elif isinstance(node, ScanPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.prompt, indent + 1)
+    elif isinstance(node, CastBoolPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, CastIntPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, CastFloatPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, CastStrPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, CastArrayPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, CastHashPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, TypeOfPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.value, indent + 1)
+    elif isinstance(node, FileReadPrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.path, indent + 1)
+    elif isinstance(node, FileWritePrimitive):
+        print(f"{prefix}{node_type}")
+        print_primitive(node.string, indent + 1)
+        print_primitive(node.path, indent + 1)
+    elif isinstance(node, TimePrimitive):
+        print(f"{prefix}{node_type}")
     else:
         print(f"{prefix}literal or identifier: {node}")
 
