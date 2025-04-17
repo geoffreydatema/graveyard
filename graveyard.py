@@ -46,7 +46,6 @@ FOR = 37
 FORMATTEDSTRING = 38
 LEFTBRACKET = 39
 RIGHTBRACKET = 40
-APPEND = 41
 ADDITIONASSIGNMENT = 42
 SUBTRACTIONASSIGNMENT = 43
 MULTIPLICATIONASSIGNMENT = 44
@@ -115,7 +114,6 @@ TOKEN_TYPES = {
     CASTARRAY: r">a",
     CASTHASH: r">h",
     GREATERTHAN: r">",
-    APPEND: r"<-",
     SCAN: r"<<",
     LESSTHAN: r"<",
     RAISE: r"!>>",
@@ -212,9 +210,11 @@ class WhileStatementPrimitive:
         self.body = body
 
 class ForStatementPrimitive:
-    def __init__(self, iterator, limit, body):
+    def __init__(self, iterator, start, stop, step, body):
         self.iterator = iterator
-        self.limit = limit
+        self.start = start
+        self.stop = stop
+        self.step = step
         self.body = body
 
 class FormattedStringPrimitive:
@@ -236,11 +236,6 @@ class ArrayAssignmentPrimitive:
         self.index = index
         self.value = value
         
-class ArrayAppendPrimitive:
-    def __init__(self, identifier, value):
-        self.identifier = identifier
-        self.value = value
-
 class AdditionAssignmentPrimitive:
     def __init__(self, identifier, value):
         self.identifier = identifier
@@ -671,9 +666,6 @@ class Graveyard:
             elif self.predict()[0] == LEFTBRACKET:
                 statement = self.parse_array_assignment()
                 self.consume(SEMICOLON)
-            elif self.predict()[0] == APPEND:
-                statement = self.parse_array_append()
-                self.consume(SEMICOLON)
             elif self.predict()[0] == REFERENCE and self.predict(2)[0] == IDENTIFIER and self.predict(3)[0] == LEFTPARENTHESES:
                 statement = self.parse_method_call()
                 self.consume(SEMICOLON)
@@ -1013,19 +1005,31 @@ class Graveyard:
 
         self.consume(RIGHTBRACE)
         return WhileStatementPrimitive(condition, body)
-    
+
     def parse_for_statement(self):
         iterator = self.consume(IDENTIFIER)
         self.consume(FOR)
-        limit = self.parse_or()
+
+        start = self.parse_or()
+
+        stop = None
+        if self.match(COMMA):
+            self.consume(COMMA)
+            stop = self.parse_or()
+
+        step = None
+        if self.match(COMMA):
+            self.consume(COMMA)
+            step = self.parse_or()
+
         self.consume(LEFTBRACE)
-        
+
         body = []
         while not self.match(RIGHTBRACE):
             body.append(self.parse_statement())
 
         self.consume(RIGHTBRACE)
-        return ForStatementPrimitive(iterator, limit, body)
+        return ForStatementPrimitive(iterator, start, stop, step, body)
 
     def parse_or(self):
         left = self.parse_and()
@@ -1151,12 +1155,6 @@ class Graveyard:
                 identifier = HashtableLookupPrimitive(identifier, key)
                 
         return identifier
-    
-    def parse_array_append(self):
-        identifier = self.consume(IDENTIFIER)
-        self.consume(APPEND)
-        value = self.parse_or()
-        return ArrayAppendPrimitive(identifier, value)
 
     def parse_hashtable(self):
         self.consume(LEFTBRACE)
@@ -1325,7 +1323,6 @@ class Graveyard:
             ArrayPrimitive: lambda p: self.execute_array(p),
             ArrayLookupPrimitive: lambda p: self.execute_array_lookup(p),
             ArrayAssignmentPrimitive: lambda p: self.execute_array_assignment(p),
-            ArrayAppendPrimitive: lambda p: self.execute_array_append(p),
             NullPrimitive: lambda p: p.value,
             BooleanPrimitive: lambda p: p.value,
             IdentifierPrimitive: lambda p: self.execute_identifier(p),
@@ -1716,7 +1713,11 @@ class Graveyard:
         left = self.execute(primitive.left)
         right = self.execute(primitive.right)
 
-        if type(left) == str or type(right) == str:
+        if type(left) == list or type(right) == list:
+            operations = {
+                "+": lambda x, y: x + y
+            }
+        elif type(left) == str or type(right) == str:
             operations = {
                 "+": lambda x, y: str(x) + str(y),
                 "==": lambda x, y: x == y,
@@ -1889,23 +1890,6 @@ class Graveyard:
 
         hashtable[key] = value
 
-    def execute_array_append(self, primitive):
-        array = None
-
-        for scope in reversed(self.monolith):
-            if primitive.identifier in scope:
-                array = scope[primitive.identifier]
-                break
-
-        if array is None:
-            raise NameError(f"Array '{primitive.identifier}' is not defined")
-
-        if not isinstance(array, list):
-            raise TypeError(f"'{primitive.identifier}' is not an array")
-
-        value = self.execute(primitive.value)
-        array.append(value)
-
     def execute_if_statement(self, primitive):
         for condition, body in primitive.condition_blocks:
             if self.execute(condition):
@@ -1946,11 +1930,15 @@ class Graveyard:
 
     def execute_for_statement(self, primitive):
         iterator_name = primitive.iterator
-        limit = self.execute(primitive.limit)
 
-        iterable = limit.keys() if isinstance(limit, dict) else limit if isinstance(limit, list) else range(limit) if isinstance(limit, int) else None
+        start = self.execute(primitive.start)
+        stop = self.execute(primitive.stop) if primitive.stop else None
+        step = self.execute(primitive.step) if primitive.step else None
+
+        iterable = start if isinstance(start, str) else start.keys() if isinstance(start, dict) else start if isinstance(start, list) else range(start, stop, step) if step != None else range(start, stop) if isinstance(start, int) else None
+
         if iterable is None:
-            raise TypeError(f"Cannot iterate through {type(limit)} range")
+            raise TypeError(f"Cannot iterate through {type(iterable)} range")
 
         for item in iterable:
             self.push_scope()
@@ -1960,6 +1948,10 @@ class Graveyard:
                     result = self.execute(statement)
                     if isinstance(result, ReturnPrimitive):
                         return ReturnPrimitive(self.execute(result.value) if isinstance(result.value, IdentifierPrimitive) else result.value)
+            except ContinueException:
+                continue
+            except BreakException:
+                break
             finally:
                 self.pop_scope()
 
@@ -2029,7 +2021,6 @@ def print_primitive(node, indent=0):
             print_primitive(stmt, indent + 1)
     elif isinstance(node, ForStatementPrimitive):
         print(f"{prefix}{node_type} (iterator: {node.iterator})")
-        print_primitive(node.limit, indent + 1)
         for stmt in node.body:
             print_primitive(stmt, indent + 1)
     elif isinstance(node, FormattedStringPrimitive):
@@ -2048,10 +2039,6 @@ def print_primitive(node, indent=0):
         print(f"{prefix}{node_type}")
         print_primitive(node.identifier, indent + 1)
         print_primitive(node.index, indent + 1)
-        print_primitive(node.value, indent + 1)
-    elif isinstance(node, ArrayAppendPrimitive):
-        print(f"{prefix}{node_type}")
-        print_primitive(node.identifier, indent + 1)
         print_primitive(node.value, indent + 1)
     elif isinstance(node, (AdditionAssignmentPrimitive, SubtractionAssignmentPrimitive,
                            MultiplicationAssignmentPrimitive, DivisionAssignmentPrimitive,
@@ -2174,20 +2161,20 @@ def main():
     mode = E
 
     if mode == S:
-        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.load(".\\working.graveyard")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         print(graveyard.source)
     elif mode == T:
-        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.load(".\\working.graveyard")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
         print(graveyard.tokens)
     elif mode == P:
-        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.load(".\\working.graveyard")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
@@ -2196,7 +2183,7 @@ def main():
         if len(graveyard.primitives) > 0:
             print_primitive_tree(graveyard.primitives)
     elif mode == E:
-        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.load(".\\working.graveyard")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
@@ -2204,7 +2191,7 @@ def main():
         graveyard.parse()
         graveyard.interpret()
     elif mode == M:
-        graveyard.load("C:\\Working\\graveyard\\working.graveyard")
+        graveyard.load(".\\working.graveyard")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
