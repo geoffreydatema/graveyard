@@ -1,0 +1,178 @@
+::{
+    sanity {
+        // Single-line comment test
+        /* Multi-line 
+        comment test */
+        number_test = 42;
+        float_test = 3.1415;
+        string_test = "hello, graveyard!";
+        formatted_test = 'this is a formatted string {number_test}';
+        bool_true = $;
+        bool_false = %;
+        null_test = |;
+        add_test = 5 + 3;
+        !add_test == 8;
+        sub_test = 10 - 4;
+        mul_test = 6 * 7;
+        div_test = 20 / 5;
+        exp_test = 2 ** 3;
+        eq_test = (add_test == 8);
+        neq_test = (sub_test != 5);
+        gt_test = (mul_test > 40);
+        lt_test = (div_test < 10);
+        gte_test = (exp_test >= 8);
+        lte_test = (sub_test <= 6);
+        and_test = bool_true && bool_false;
+        or_test = bool_true || bool_false;
+        not_test = !bool_false;
+        add_test += 2;
+        sub_test -= 1;
+        mul_test *= 2;
+        div_test /= 2;
+        exp_test **= 2;
+        counter = 0;
+        counter++;
+        counter--;
+        test_array = ["one", 2, $, %, |];
+        test_hashtable = {"key1": test_array[0], "key2": "value"};
+        value_from_hash = test_hashtable # "key1";
+        e_key = "key" + 1;
+        f_value = test_hashtable#e_key;
+        test_pos_neg {
+        p_i = 42;
+        n_i = -69;
+        p_f = 1.23;
+        n_f = -1.23;
+        sum_i = p_i + n_i;
+        diff_i = p_i - n_i;
+        prod_i = p_i * n_i;
+        quot_i = p_i / n_i;
+        sum_f = p_f + n_f;
+        diff_f = p_f - n_f;
+        prod_f = p_f * n_f;
+        quot_f = p_f / n_f;
+        neg_p_i = -p_i;
+        neg_n_i = -n_i;
+        neg_p_f = -p_f;
+        neg_n_f = -n_f;
+        }
+        test_pos_neg();
+        ? bool_true {
+        } , bool_false {
+        } : {
+        }
+        inc_counter = 0;
+        ~ inc_counter < 3 {
+            inc_counter++;
+        }
+        com_counter = 0;
+        ~ com_counter < inc_counter {
+            com_counter += 1;
+        }
+        ass_counter = 0;
+        ~ ass_counter < 3 {
+            ass_counter = ass_counter + 1;
+        }
+        s_e = "test";
+        ?s_e == "test" {
+            ?s_e != "not test" {
+                
+            }
+        }
+        i @ 6,0,-2 {}
+        i @ s_e {}
+        item @ test_array {
+            x = '{item}';
+        }
+        ~ counter < 10 {
+            counter++;
+            ? counter == 5 {
+                ^; // Skip this iteration
+            }
+            ? counter == 7 {
+                `; // Exit loop
+            }
+        }
+        i @ 0,1 {
+            first = 41;
+            ? $ {
+                second = 3;
+                ? $ {
+                    first++;
+                    second--;
+                    first += second;
+                    first -= second;
+                    first *= second;
+                    first /= second;
+                    first **= second;
+                    first = first + i;
+                    first = first - i;
+                    first = first * i;
+                    first = first / (i + 1);
+                    first = first ** i;
+                }
+            }
+        }
+        some_function &param {
+            -> param * 2;
+        }
+        result = some_function(10);
+        retrieved_result = some_function(42.69);
+        ::first_space {
+            inside_first = 69;
+        }
+        ::second_space {
+            inside_second = result;
+            access_from_inside = ::first_space#inside_first;
+        }
+        access_from_outside = ::second_space#inside_second;
+        ret_in_func {
+            array = [1,2,3,4,5];
+            num @ array {
+                ? num == 2 {
+                    -> $;
+                }
+            }
+        }
+        ret_in_func();
+        <animal> = {
+        name: |,
+        age: |,
+        walk: {
+        status = "walking";
+        -> status;
+        }
+        };
+        <swag> = {
+        money: 69,
+        hat_type: "backwards"
+        };
+        <cat> &<animal> &<swag> = {
+        name: "mike",
+        age: 9,
+        legs: 4
+        };
+        generic_animal = <animal>;
+        pet = <cat>;
+        x = pet.legs;
+        y = pet.walk();
+        pet.hat_type = "sideways";
+        nestedarray = [1,2,3,[1,[7,8,9],"hello wife", "you are in a nested array"], {"f": "value from nested hashtable", "s": [42, 69]}];
+        a_n_a_a = nestedarray[3][1][2];
+        a_n_a_h = nestedarray[4]#"s"[1];
+        nestedhashtable = {
+            "first": 42,
+            "123": ["nested array", "of", "stuff", [8,9,0], {1: "inside1", "2": "inside2"}],
+            "third": {"one": "nested", "two": {1: "inside1", "2": "inside2"}}
+        };
+        a_n_h_a = nestedhashtable#"123"[4]#1;
+        a_n_h_h = nestedhashtable#"third"#"two"#"2";
+        c_b = >b 1.23;
+        c_i = >i :@;
+        c_f = >f 42;
+        c_s = >s c_f;
+        c_a = >a @@ c_s;
+        c_h = >h c_i;
+        -> $;
+    }
+}
