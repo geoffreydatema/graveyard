@@ -10,13 +10,8 @@
     pop&a{x=[];l=len(a)-1;i@0,len(a){?i==l{->x;}x+=[a[i]];}}
     remove&a&x{r=[];i@0,len(a){?i==x{^;}r+=[a[i]];}->r;}
     insert&a&v&x{l=len(a);?x>l-1{!>>"insert(): cannot insert beyond the size of the array";}r=[];i@0,l{?i==x{r+=[v];}r+=[a[i]];}->r;}
-
-    last &d {
-        ? (@@d == "string") {
-            a = stoa(d);
-            -> a[len(a)-1];
-        }
-    }
+    last&d{?(@@d=="string"){a=stoa(d);->a[len(a)-1];}}
+    join&a{s="";i@a{s+=>si;}->s;}
 
     rdig {
         ->last(>s:@);
@@ -31,21 +26,21 @@
     }
 
     fastrint&min&max{
-        t = :@;
-        s = stoa(>s t);
+        t = >s :@ + "00";
+        array = stoa(t);
         indicies = [];
-        indicies = append(indicies, s[13]);
-        indicies = append(indicies, s[14]);
-        indicies = append(indicies, s[15]);
 
-        //pad time with preset random digits to guarentee length to be absolutely sure we don't index outside the range
-        //join the good random digits to a string and cast to int
-        //scale up the int to a maximum size
-        //that might be good enough as a fast pseudo random
-        //if it's not random enough, can look at using the integers to look up random number components in a static array
-        
+        integer = |;
+        ? len(array) > 15 {
+            indicies = append(indicies, array[13]);
+            indicies = append(indicies, array[14]);
+            indicies = append(indicies, array[15]);
+            integer = (>i join(indicies)) * 18446744073709551615;
+        } : {
+            !>>"fastrint(): could not generate random integer due to an internal error";
+        }
 
-        ->indicies;
+        ->(integer /% ((max - min) + 1)) + min;
 
     }
 
