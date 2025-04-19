@@ -12,48 +12,11 @@
     insert&a&v&x{l=len(a);?x>l-1{!>>"insert(): cannot insert beyond the size of the array";}r=[];i@0,l{?i==x{r+=[v];}r+=[a[i]];}->r;}
     last&d{?(@@d=="string"){a=stoa(d);->a[len(a)-1];}}
     join&a{s="";i@a{s+=>si;}->s;}
-
-    rdig {
-        ->last(>s:@);
-    }
-
-    rint&min&max{
-        s = "";
-        i @ 0,len(>s max) {
-            s += rdig();
-        }
-        -> ((>i s) /% ((max - min) + 1)) + min;
-    }
-
-    fastrint&min&max{
-        t = >s :@ + "00";
-        array = stoa(t);
-        indicies = [];
-
-        integer = |;
-        ? len(array) > 15 {
-            indicies = append(indicies, array[13]);
-            indicies = append(indicies, array[14]);
-            indicies = append(indicies, array[15]);
-            integer = (>i join(indicies)) * 18446744073709551615;
-        } : {
-            !>>"fastrint(): could not generate random integer due to an internal error";
-        }
-
-        ->(integer /% ((max - min) + 1)) + min;
-
-    }
-
-    rfloat {
-        s = "0.";
-        i @ 0,8 {
-            s += rdig();
-        }
-        -> >f s;
-    }
-
-
-    // rstr {}
+    rdig{->last(>s:@);}
+    rdigseq&l{s="";i@0,l{s+=rdig();}->s;}
+    rfloat{s="";i@0,8{s+=rdig();}->>f("0."+s);}
+    rint&l&u{f=rfloat();r=u-l+1;s=f*r;->>i(s + l);}
+    rstr&l{chars = ["!","#","$","%","&","'","(",")","*","+",",","-",".","/","0","1","2","3","4","5","6","7","8","9",":",";","<","=",">","?","@","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","[","]","^","_","`","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","{","|","}","~"];s="";i@0,l{s+=chars[rint(0,91)];}->s;}
 
     /*
     def execute_magic_number(self):
