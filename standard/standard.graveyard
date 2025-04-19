@@ -1,4 +1,5 @@
 ::{
+    @./standard/math;
     debug&m&v{print('DEBUG: {m} : {v}');}
     print&data{>>data;->$;}
     scan&prompt{x<<prompt;->x;}
@@ -16,46 +17,11 @@
     rdigseq&l{s="";i@0,l{s+=rdig();}->s;}
     rfloat{s="";i@0,8{s+=rdig();}->>f("0."+s);}
     rint&l&u{f=rfloat();r=u-l+1;s=f*r;->>i(s + l);}
-    rstr&l{chars = ["!","#","$","%","&","'","(",")","*","+",",","-",".","/","0","1","2","3","4","5","6","7","8","9",":",";","<","=",">","?","@","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","[","]","^","_","`","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","{","|","}","~"];s="";i@0,l{s+=chars[rint(0,91)];}->s;}
-
-    /*
-    def execute_magic_number(self):
-        return random.randint(10000000, 99999999)
-
-    def execute_magic_weight(self):
-        return round(random.random(), 8)
-    
-    def execute_magic_uid(self):
-        return str(hex(random.randint(286331153, 4294967295)))[2:]
-    
-    def execute_magic_string(self):
-        characters = "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-        return "".join(random.choice(characters) for i in range(16))
-
-    def execute_stoa(self, args):
-        return list(self.execute(args[0]))
-    
-    def execute_reverse(self, args):
-        values = []
-        if isinstance(args, list):
-            values = self.execute(args[0])
-        return values[::-1]
-
-    def execute_range(self, primitive):
-        start = self.execute(primitive.start)
-        end = self.execute(primitive.end)
-
-        if type(start) != int:
-            start = int(start)
-        if type(end) != int:
-            end = int(end)
-
-        if start < end:
-            return list(range(start, end + 1))
-        elif start > end:
-            return list(range(start, end - 1, -1))
-        elif start == end:
-            return [start]
-    */
-
+    rstr&l{x = ["!","#","$","%","&","'","(",")","*","+",",","-",".","/","0","1","2","3","4","5","6","7","8","9",":",";","<","=",">","?","@","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","[","]","^","_","`","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","{","|","}","~"];s="";i@0,l{s+=x[rint(0,91)];}->s;}
+    magicnumber{->rint(00000000,99999999);}
+    reverse&d{n=[];i@len(d),0,-1{x=i-1;n=append(n,d[x]);}->n;}
+    hex&v{c=["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"];s="";?v>=0{~${s='{c[>i(v/%16)]}{s}';v=floordiv(v,16);?v<=0{`;}}->s;}:{->%;}}
+    fromhex&v{h={"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,"a":10,"b":11,"c":12,"d":13,"e":14,"f":15};d=0;p=0;c@reverse(stoa(v)){d+=(h#c)*(16**p);p+=1;}->d;}
+    magicuid{->>shex(rint(268435456,4294967295));}
+    range&l&u{?((@@l)!="integer")||((@@u)!="integer"){!>>"range(): upper and lower bounds of range must be integers";}x=[];?l<u{i@l,u+1{x=append(x,i);}},l>u{i@l,u-1,-1{x=append(x,i);}},l==u{x=[l];}->x;}
 }
