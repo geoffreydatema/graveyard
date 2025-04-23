@@ -1,26 +1,4 @@
 ::{
-    floordiv &x &y {
-        ? y == 0 {
-            !>> "Division by zero in floor()";
-            -> %;
-        }
-        remainder = x /% y;
-        result = (x - remainder) / y;
-        -> result;
-    }
-    power &x &y {
-        ? y == 0 {
-            -> 1;
-        }
-        ? y < 0 {
-            -> 1 / power(x, -y);
-        }
-        result = 1;
-        counter = 0;
-        ~ counter < y {
-            result = result * x;
-            counter++;
-        }
-        -> result;
-    }
+    floordiv&x&y{?y==0{!>>"Division by zero in floor()";->%;}->(x-(x/%y))/y;}
+    power&x&y{?y==0{->1;}?y<0{->1/power(x,-y);}r=1;c=0;~c<y{r*=x;c++;}->r;}
 }
