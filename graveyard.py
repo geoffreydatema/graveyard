@@ -1,14 +1,11 @@
 import re
-import random
 import os
 import time
-from datetime import datetime
 
-#@! reoder these to match TOKEN_TYPES once we add them all
-WHITESPACE = 0
-IDENTIFIER = 1
-SEMICOLON = 2
-NUMBER = 3
+IDENTIFIER = 0
+TYPE = 1
+NUMBER = 2
+SEMICOLON = 3
 ASSIGNMENT = 4
 ADDITION = 5
 SUBTRACTION = 6
@@ -31,21 +28,22 @@ TRUE = 22
 FALSE = 23
 NULL = 24
 SINGLELINECOMMENT = 25
-MULTILINECOMMENT = 26
-STRING = 27
-LEFTBRACE = 28
-RIGHTBRACE = 29
-PARAMETER = 30
-RETURN = 31
-IF = 32
-COLON = 33
-WHILE = 34
-CONTINUE = 35
-BREAK = 36
-FOR = 37
-FORMATTEDSTRING = 38
-LEFTBRACKET = 39
-RIGHTBRACKET = 40
+OPENMULTILINECOMMENT = 26
+CLOSEMULTILINECOMMENT = 27
+STRING = 28
+LEFTBRACE = 29
+RIGHTBRACE = 30
+PARAMETER = 31
+RETURN = 32
+QUESTIONMARK = 33
+COLON = 34
+WHILE = 35
+CONTINUE = 36
+BREAK = 37
+AT = 38
+FORMATTEDSTRING = 39
+LEFTBRACKET = 40
+RIGHTBRACKET = 41
 ADDITIONASSIGNMENT = 42
 SUBTRACTIONASSIGNMENT = 43
 MULTIPLICATIONASSIGNMENT = 44
@@ -54,32 +52,33 @@ EXPONENTIATIONASSIGNMENT = 46
 INCREMENT = 47
 DECREMENT = 48
 REFERENCE = 49
-RANGE = 50
-PERIOD = 51
-PATH = 52
-NAMESPACE = 53
-OPENGLOBAL = 54
-TYPE = 55
-PRINT = 56
-SCAN = 57
-RAISE = 58
-CASTBOOL = 59
-CASTINT = 60
-CASTFLOAT = 61
-CASTSTR = 62
-CASTARRAY = 63
-CASTHASH = 64
-TYPEOF = 65
-MOD = 66
-FILEREAD = 67
-FILEWRITE = 68
-TIME = 69
-EXEC = 70
+PERIOD = 50
+NAMESPACE = 51
+OPENGLOBAL = 52
+PRINT = 53
+SCAN = 54
+RAISE = 55
+CASTBOOLEAN = 56
+CASTINTEGER = 57
+CASTFLOAT = 58
+CASTSTRING = 59
+CASTARRAY = 60
+CASTHASHTABLE = 61
+TYPEOF = 62
+MODULO = 63
+FILEREAD = 64
+FILEWRITE = 65
+TIME = 66
+EXECUTE = 67
+CATCONSTANT = 68
+
+WHITESPACE = 100
+PATH = 101
 
 TOKEN_TYPES = {
     WHITESPACE: r"\s+",
     SINGLELINECOMMENT: r"//.*?$",
-    MULTILINECOMMENT: r"/\*.*?\*/",
+    OPENMULTILINECOMMENT: r"/\*.*?\*/",
     PATH: r'@[a-zA-Z]:[\\/][a-zA-Z0-9_.\\/-]+;|@\.?[\\/][a-zA-Z0-9_.\\/-]+;',
     TYPE: r"<[a-zA-Z_]\w*>",
     IDENTIFIER: r"[a-zA-Z_]\w*",
@@ -98,7 +97,7 @@ TOKEN_TYPES = {
     EXPONENTIATION: r"\*\*",
     MULTIPLICATIONASSIGNMENT: r"\*=",
     MULTIPLICATION: r"\*",
-    MOD: r"\/%",
+    MODULO: r"\/%",
     DIVISIONASSIGNMENT: r"/=",
     DIVISION: r"\/",
     LEFTPARENTHESES: r"\(",
@@ -107,12 +106,12 @@ TOKEN_TYPES = {
     GREATERTHANEQUAL: r">=",
     LESSTHANEQUAL: r"<=",
     PRINT: r">>",
-    CASTBOOL: r">b",
-    CASTINT: r">i",
+    CASTBOOLEAN: r">b",
+    CASTINTEGER: r">i",
     CASTFLOAT: r">f",
-    CASTSTR: r">s",
+    CASTSTRING: r">s",
     CASTARRAY: r">a",
-    CASTHASH: r">h",
+    CASTHASHTABLE: r">h",
     GREATERTHAN: r">",
     SCAN: r"<<",
     LESSTHAN: r"<",
@@ -129,22 +128,21 @@ TOKEN_TYPES = {
     LEFTBRACE: r"{",
     RIGHTBRACE: r"}",
     PARAMETER: r"&",
-    IF: r"\?",
+    QUESTIONMARK: r"\?",
     WHILE: r"~",
     CONTINUE: r"\^",
     BREAK: r"`",
     TYPEOF: r"@@",
-    FOR: r"@",
+    AT: r"@",
     LEFTBRACKET: r"\[",
     RIGHTBRACKET: r"\]",
     NAMESPACE: r"::",
     FILEREAD: r":<<",
     FILEWRITE: r":>>",
     TIME: r":@",
-    EXEC: r":=",
+    EXECUTE: r":=",
     COLON: r":",
     REFERENCE: r"#",
-    RANGE: r"\.\.\.",
     OPENGLOBAL: r"::{",
     PERIOD: r"\."
 }
@@ -275,11 +273,6 @@ class HashtableAssignmentPrimitive:
         self.identifier = identifier
         self.key = key
         self.value = value
-
-class RangePrimitive:
-    def __init__(self, start, end):
-        self.start = start
-        self.end = end
 
 class NamespaceDefinitionPrimitive:
     def __init__(self, name, body):
@@ -433,8 +426,8 @@ class Graveyard:
         while position < len(self.source):
             match = None
             for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
-                                        (MULTILINECOMMENT, TOKEN_TYPES[MULTILINECOMMENT])]:
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                                        (OPENMULTILINECOMMENT, TOKEN_TYPES[OPENMULTILINECOMMENT])]:
+                regex_flags = re.DOTALL if token_type == OPENMULTILINECOMMENT else re.MULTILINE
                 regex = re.compile(pattern, regex_flags)
                 match = regex.match(self.source, position)
                 if match:
@@ -464,8 +457,8 @@ class Graveyard:
         while position < len(library_source):
             match = None
             for token_type, pattern in [(SINGLELINECOMMENT, TOKEN_TYPES[SINGLELINECOMMENT]),
-                                        (MULTILINECOMMENT, TOKEN_TYPES[MULTILINECOMMENT])]:
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                                        (OPENMULTILINECOMMENT, TOKEN_TYPES[OPENMULTILINECOMMENT])]:
+                regex_flags = re.DOTALL if token_type == OPENMULTILINECOMMENT else re.MULTILINE
                 regex = re.compile(pattern, regex_flags)
                 match = regex.match(library_source, position)
                 if match:
@@ -568,12 +561,12 @@ class Graveyard:
 
             match = None
             for token_type, pattern in TOKEN_TYPES.items():
-                regex_flags = re.DOTALL if token_type == MULTILINECOMMENT else re.MULTILINE
+                regex_flags = re.DOTALL if token_type == OPENMULTILINECOMMENT else re.MULTILINE
                 regex = re.compile(pattern, regex_flags)
                 match = regex.match(self.source, self.position)
 
                 if match:
-                    if token_type in {SINGLELINECOMMENT, MULTILINECOMMENT}:
+                    if token_type in {SINGLELINECOMMENT, OPENMULTILINECOMMENT}:
                         self.position = match.end()
                         break
                     elif token_type != WHITESPACE:
@@ -599,7 +592,7 @@ class Graveyard:
         elif self.match(RAISE):
             statement = self.parse_raise_error_statement()
             self.consume(SEMICOLON)
-        elif self.match(IDENTIFIER) and self.predict()[0] == FOR:
+        elif self.match(IDENTIFIER) and self.predict()[0] == AT:
             statement = self.parse_for_statement()
         elif self.match(CONTINUE):
             self.consume(CONTINUE)
@@ -609,7 +602,7 @@ class Graveyard:
             self.consume(BREAK)
             statement = BreakPrimitive()
             self.consume(SEMICOLON)
-        elif self.match(IF):
+        elif self.match(QUESTIONMARK):
             statement = self.parse_if_statement()
         elif self.match(PRINT):
             statement = self.parse_print_operator()
@@ -697,12 +690,12 @@ class Graveyard:
         return TypeOfPrimitive(value)
 
     def parse_castbool(self):
-        self.consume(CASTBOOL)
+        self.consume(CASTBOOLEAN)
         value = self.parse_or()
         return CastBoolPrimitive(value)
 
     def parse_castint(self):
-        self.consume(CASTINT)
+        self.consume(CASTINTEGER)
         value = self.parse_or()
         return CastIntPrimitive(value)
     
@@ -712,7 +705,7 @@ class Graveyard:
         return CastFloatPrimitive(value)
 
     def parse_caststr(self):
-        self.consume(CASTSTR)
+        self.consume(CASTSTRING)
         value = self.parse_or()
         return CastStrPrimitive(value)
     
@@ -722,7 +715,7 @@ class Graveyard:
         return CastArrayPrimitive(value)
     
     def parse_casthash(self):
-        self.consume(CASTHASH)
+        self.consume(CASTHASHTABLE)
         value = self.parse_or()
         return CastHashPrimitive(value)
 
@@ -963,7 +956,7 @@ class Graveyard:
         return FunctionCallPrimitive(name, args)
 
     def parse_if_statement(self):
-        self.consume(IF)
+        self.consume(QUESTIONMARK)
         condition_blocks = []
         condition = self.parse_or()
         self.consume(LEFTBRACE)
@@ -1008,7 +1001,7 @@ class Graveyard:
 
     def parse_for_statement(self):
         iterator = self.consume(IDENTIFIER)
-        self.consume(FOR)
+        self.consume(AT)
 
         start = self.parse_or()
 
@@ -1082,7 +1075,7 @@ class Graveyard:
     def parse_multiplication_division(self):
         left = self.parse_exponentiation()
 
-        while self.match(MULTIPLICATION, DIVISION, MOD):
+        while self.match(MULTIPLICATION, DIVISION, MODULO):
             op = self.consume(self.tokens[self.current][0])
             right = self.parse_exponentiation()
             left = BinaryOperationPrimitive(left, op, right)
@@ -1206,10 +1199,6 @@ class Graveyard:
             return IdentifierPrimitive(self.consume(IDENTIFIER))
         elif self.match(NUMBER):
             left = NumberPrimitive(self.consume(NUMBER))
-            if self.match(RANGE):
-                self.consume(RANGE)
-                right = self.parse_numbers_parentheses()
-                return RangePrimitive(left, right)
             return left
         elif self.match(STRING):
             return StringPrimitive(self.consume(STRING))
@@ -1239,17 +1228,17 @@ class Graveyard:
         elif self.match(NAMESPACE):
             if self.predict()[0] == IDENTIFIER and self.predict(2)[0] == REFERENCE:
                 return self.parse_namespace_access()
-        elif self.match(CASTBOOL):
+        elif self.match(CASTBOOLEAN):
             return self.parse_castbool()
-        elif self.match(CASTINT):
+        elif self.match(CASTINTEGER):
             return self.parse_castint()
         elif self.match(CASTFLOAT):
             return self.parse_castfloat()
-        elif self.match(CASTSTR):
+        elif self.match(CASTSTRING):
             return self.parse_caststr()
         elif self.match(CASTARRAY):
             return self.parse_castarray()
-        elif self.match(CASTHASH):
+        elif self.match(CASTHASHTABLE):
             return self.parse_casthash()
         elif self.match(TYPEOF):
             return self.parse_typeof()
@@ -1336,7 +1325,6 @@ class Graveyard:
             HashtablePrimitive: lambda p: self.execute_hashtable(p),
             HashtableLookupPrimitive: lambda p: self.execute_hashtable_lookup(p),
             HashtableAssignmentPrimitive: lambda p: self.execute_hashtable_assignment(p),
-            RangePrimitive: lambda p: self.execute_range(p),
             NamespaceDefinitionPrimitive: lambda p: self.execute_namespace_declaration(p),
             NamespaceAccessPrimitive: lambda p: self.execute_namespace_access(p),
             ReturnPrimitive: lambda p: ReturnPrimitive(self.execute(p.value)),
@@ -2060,10 +2048,6 @@ def print_primitive(node, indent=0):
         print_primitive(node.identifier, indent + 1)
         print_primitive(node.key, indent + 1)
         print_primitive(node.value, indent + 1)
-    elif isinstance(node, RangePrimitive):
-        print(f"{prefix}{node_type}")
-        print_primitive(node.start, indent + 1)
-        print_primitive(node.end, indent + 1)
     elif isinstance(node, NamespaceDefinitionPrimitive):
         print(f"{prefix}{node_type} (name: {node.name})")
         for stmt in node.body:
