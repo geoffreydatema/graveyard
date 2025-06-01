@@ -394,8 +394,8 @@ class Graveyard:
         self.monolith = [{}]
 
     def load(self, path):
-        if path.split(".")[-1] != "graveyard":
-            raise ValueError(f"{os.path.basename(path)} is not graveyard source code, please use .graveyard extension")
+        if path.split(".")[-1] != "gy":
+            raise ValueError(f"{os.path.basename(path)} is not graveyard source code, please use .gy extension")
         else:
             with open(path, "r", encoding="utf-8") as file:
                 self.source = file.read()
@@ -2145,20 +2145,20 @@ def main():
     mode = E
 
     if mode == S:
-        graveyard.load(".\\working.graveyard")
+        graveyard.load(".\\working.gy")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         print(graveyard.source)
     elif mode == T:
-        graveyard.load(".\\working.graveyard")
+        graveyard.load(".\\working.gy")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
         graveyard.tokenize()
         print(graveyard.tokens)
     elif mode == P:
-        graveyard.load(".\\working.graveyard")
+        graveyard.load(".\\working.gy")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
@@ -2167,7 +2167,7 @@ def main():
         if len(graveyard.primitives) > 0:
             print_primitive_tree(graveyard.primitives)
     elif mode == E:
-        graveyard.load(".\\working.graveyard")
+        graveyard.load(".\\working.gy")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
@@ -2175,7 +2175,7 @@ def main():
         graveyard.parse()
         graveyard.interpret()
     elif mode == M:
-        graveyard.load(".\\working.graveyard")
+        graveyard.load(".\\working.gy")
         graveyard.entry()
         graveyard.pretokenize()
         graveyard.ingest()
