@@ -61,6 +61,38 @@ int entry(char **source_ptr) {
     return 0;
 }
 
+void uncomment(char **source_ptr) {
+    char *src = *source_ptr;
+    size_t len = strlen(src);
+    char *clean = malloc(len + 1);
+    if (!clean) {
+        perror("Memory allocation failed in uncomment");
+        return;
+    }
+
+    char *dst = clean;
+    for (size_t i = 0; i < len;) {
+        if (src[i] == '/' && src[i + 1] == '/') {
+            // Skip until newline
+            i += 2;
+            while (src[i] && src[i] != '\n') i++;
+        } else if (src[i] == '/' && src[i + 1] == '*') {
+            // Skip until closing */
+            i += 2;
+            while (src[i] && !(src[i] == '*' && src[i + 1] == '/')) i++;
+            if (src[i]) i += 2; // skip the closing */
+        } else {
+            *dst++ = src[i++];
+        }
+    }
+
+    *dst = '\0';
+
+    // Replace original
+    free(*source_ptr);
+    *source_ptr = clean;
+}
+
 void preprocess(char **source_ptr) {
     printf("Preprocessing...\n");
 
@@ -73,6 +105,8 @@ void preprocess(char **source_ptr) {
     if (*source_ptr != original) {
         free(original);
     }
+
+    uncomment(source_ptr);
 
     printf("Trimmed source:\n%s\n", *source_ptr);
 }
