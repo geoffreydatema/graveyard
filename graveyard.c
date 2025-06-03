@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 // Function to read an entire file into a string
 char *read_file(FILE *file, long *out_length) {
@@ -15,7 +16,7 @@ char *read_file(FILE *file, long *out_length) {
     }
 
     size_t read = fread(buffer, 1, length, file);
-    buffer[read] = '\0'; // Null-terminate
+    buffer[read] = '\0';
 
     if (out_length) {
         *out_length = length;
@@ -24,10 +25,56 @@ char *read_file(FILE *file, long *out_length) {
     return buffer;
 }
 
-// Stubbed interpreter stages
-void preprocess(const char *source_code) {
-    printf("Preprocessing source...\n");
-    // TODO: Implement preprocessing logic
+int entry(char **source_ptr) {
+    char *source = *source_ptr;
+
+    // Find the starting token
+    char *start = strstr(source, "::{");
+    if (!start) {
+        fprintf(stderr, "Missing '::{' to open global scope.\n");
+        return 1;
+    }
+
+    // Move start to the content after "::{"
+    start += 3;
+
+    // Find the last '}' in the whole file
+    char *last_brace = strrchr(start, '}');
+    if (!last_brace) {
+        fprintf(stderr, "Missing closing '}' for global scope.\n");
+        return 1;
+    }
+
+    // Calculate length of content inside the global scope
+    size_t new_len = last_brace - start;
+
+    char *trimmed = malloc(new_len + 1);
+    if (!trimmed) {
+        perror("Memory allocation failed");
+        return 1;
+    }
+
+    strncpy(trimmed, start, new_len);
+    trimmed[new_len] = '\0';
+
+    *source_ptr = trimmed;
+    return 0;
+}
+
+void preprocess(char **source_ptr) {
+    printf("Preprocessing...\n");
+
+    char *original = *source_ptr;
+    if (entry(source_ptr) != 0) {
+        fprintf(stderr, "Failed to find global scope.\n");
+        return;
+    }
+
+    if (*source_ptr != original) {
+        free(original);
+    }
+
+    printf("Trimmed source:\n%s\n", *source_ptr);
 }
 
 void tokenize(const char *source_code) {
@@ -94,7 +141,7 @@ int main(int argc, char *argv[]) {
     // Dispatch mode
     if (strcmp(mode, "--preprocess") == 0 || strcmp(mode, "-pre") == 0) {
         printf("Loaded source file (%ld bytes)\n", source_length);
-        preprocess(source_code);
+        preprocess(&source_code);
     } else if (strcmp(mode, "--tokenize") == 0 || strcmp(mode, "-t") == 0) {
         tokenize(source_code);
     } else if (strcmp(mode, "--parse") == 0 || strcmp(mode, "-p") == 0) {
