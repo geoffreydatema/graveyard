@@ -25,90 +25,81 @@ char *read_file(FILE *file, long *out_length) {
     return buffer;
 }
 
-int entry(char **source_ptr) {
-    char *source = *source_ptr;
-
-    // Find the starting token
-    char *start = strstr(source, "::{");
+char *entry(char *source_code) {
+    char *start = strstr(source_code, "::{");
     if (!start) {
         fprintf(stderr, "Missing '::{' to open global scope.\n");
-        return 1;
+        return NULL;
     }
 
-    // Move start to the content after "::{"
     start += 3;
 
-    // Find the last '}' in the whole file
-    char *last_brace = strrchr(start, '}');
-    if (!last_brace) {
+    char *end = strrchr(start, '}');
+    if (!end) {
         fprintf(stderr, "Missing closing '}' for global scope.\n");
-        return 1;
+        return NULL;
     }
 
-    // Calculate length of content inside the global scope
-    size_t new_len = last_brace - start;
-
-    char *trimmed = malloc(new_len + 1);
-    if (!trimmed) {
+    size_t cropped_length = end - start;
+    char *cropped_source_code = malloc(cropped_length + 1);
+    if (!cropped_source_code) {
         perror("Memory allocation failed");
-        return 1;
+        return NULL;
     }
 
-    strncpy(trimmed, start, new_len);
-    trimmed[new_len] = '\0';
+    strncpy(cropped_source_code, start, cropped_length);
+    cropped_source_code[cropped_length] = '\0';
 
-    *source_ptr = trimmed;
-    return 0;
+    return cropped_source_code;
 }
 
-void uncomment(char **source_ptr) {
-    char *src = *source_ptr;
+char *uncomment(const char *src) {
     size_t len = strlen(src);
     char *clean = malloc(len + 1);
     if (!clean) {
         perror("Memory allocation failed in uncomment");
-        return;
+        return NULL;
     }
 
     char *dst = clean;
     for (size_t i = 0; i < len;) {
         if (src[i] == '/' && src[i + 1] == '/') {
-            // Skip until newline
             i += 2;
             while (src[i] && src[i] != '\n') i++;
         } else if (src[i] == '/' && src[i + 1] == '*') {
-            // Skip until closing */
             i += 2;
             while (src[i] && !(src[i] == '*' && src[i + 1] == '/')) i++;
-            if (src[i]) i += 2; // skip the closing */
+            if (src[i]) i += 2;
         } else {
             *dst++ = src[i++];
         }
     }
 
     *dst = '\0';
-
-    // Replace original
-    free(*source_ptr);
-    *source_ptr = clean;
+    return clean;
 }
 
-void preprocess(char **source_ptr) {
+char *preprocess(char *source_code) {
     printf("Preprocessing...\n");
 
-    char *original = *source_ptr;
-    if (entry(source_ptr) != 0) {
+    char *cropped = entry(source_code);
+    if (!cropped) {
         fprintf(stderr, "Failed to find global scope.\n");
-        return;
+        return NULL;
+    }
+    printf("Cropped source:\n%s\n", cropped);
+
+    char *uncommented = uncomment(cropped);
+    free(cropped); // Free 'cropped' regardless of 'uncomment' success
+
+    if (!uncommented) {
+        // uncomment() should have printed an error via perror
+        fprintf(stderr, "Failed to uncomment source.\n");
+        return NULL; // Return NULL if uncommenting failed
     }
 
-    if (*source_ptr != original) {
-        free(original);
-    }
-
-    uncomment(source_ptr);
-
-    printf("Trimmed source:\n%s\n", *source_ptr);
+    printf("Uncommented source:\n%s\n", uncommented);
+    return uncommented;
 }
 
 void tokenize(const char *source_code) {
@@ -175,7 +166,13 @@ int main(int argc, char *argv[]) {
     // Dispatch mode
     if (strcmp(mode, "--preprocess") == 0 || strcmp(mode, "-pre") == 0) {
         printf("Loaded source file (%ld bytes)\n", source_length);
-        preprocess(&source_code);
+        char *preprocessed_source = preprocess(source_code);
+        if (!preprocessed_source) {
+            fprintf(stderr, "Preprocessing failed.\n");
+            free(source_code);
+            return 1;
+        }
+        free(preprocessed_source);
     } else if (strcmp(mode, "--tokenize") == 0 || strcmp(mode, "-t") == 0) {
         tokenize(source_code);
     } else if (strcmp(mode, "--parse") == 0 || strcmp(mode, "-p") == 0) {
