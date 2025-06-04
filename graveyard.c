@@ -1,24 +1,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <ctype.h>
 
 char *load(FILE *file, long *out_length) {
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    rewind(file);
+    if (out_length) {
+        *out_length = 0;
+    }
 
-    char *buffer = malloc(length + 1);
-    if (!buffer) {
-        fprintf(stderr, "Memory allocation failed\n");
+    if (!file) {
+        fprintf(stderr, "load: Received NULL file pointer\n");
         return NULL;
     }
 
-    size_t read = fread(buffer, 1, length, file);
-    buffer[read] = '\0';
+    if (fseek(file, 0, SEEK_END) != 0) {
+        perror("load: fseek to SEEK_END failed");
+        return NULL;
+    }
+
+    long length = ftell(file);
+    if (length == -1L) {
+        perror("load: ftell failed after seeking to end");
+        return NULL;
+    }
+
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        perror("load: fseek to SEEK_SET failed");
+        return NULL;
+    }
+
+    if (length < 0) {
+        fprintf(stderr, "load: ftell returned negative file size unexpectedly.\n");
+        return NULL;
+    }
+    if ((unsigned long)length >= SIZE_MAX) {
+        fprintf(stderr, "load: File size (%ld bytes) is too large to allocate memory for.\n", length);
+        return NULL;
+    }
+
+    char *buffer = malloc((size_t)length + 1);
+    if (!buffer) {
+        fprintf(stderr, "load: Memory allocation failed for %ld bytes\n", length + 1);
+        return NULL;
+    }
+
+    size_t items_read = 0;
+    if (length > 0) {
+        items_read = fread(buffer, 1, (size_t)length, file);
+
+        if (items_read < (size_t)length) {
+            if (ferror(file)) {
+                perror("load: fread encountered an error");
+                free(buffer);
+                return NULL;
+            }
+        }
+    }
+
+    buffer[items_read] = '\0';
 
     if (out_length) {
-        *out_length = length;
+        *out_length = (long)items_read;
     }
 
     return buffer;
@@ -97,57 +140,58 @@ char *unwhitespace(const char *source_code) {
     return clean;
 }
 
-char *preprocess(char *source_code) {
+char *preprocess(const char *source_code) {
     printf("Preprocessing...\n");
 
     char *cropped = entry(source_code);
     if (!cropped) {
-        fprintf(stderr, "Failed to find global scope.\n");
+        fprintf(stderr, "Graveyard preprocessor failed to find global scope\n");
         return NULL;
     }
-    printf("Cropped source:\n%s\n", cropped);
+    // printf("Cropped source:\n%s\n", cropped);
 
     char *uncommented = uncomment(cropped);
     free(cropped);
     if (!uncommented) {
-        fprintf(stderr, "Failed to uncomment source.\n");
+        fprintf(stderr, "Graveyard preprocessor failed to remove comments from source.\n");
         return NULL;
     }
-    printf("Uncommented source:\n%s\n", uncommented);
+    // printf("Uncommented source:\n%s\n", uncommented);
 
     char *unwhitespaced = unwhitespace(uncommented);
     free(uncommented);
     if (!unwhitespaced) {
-        fprintf(stderr, "Failed to uncomment source.\n");
+        fprintf(stderr, "Graveyard preprocessor failed to remove whitespace from source\n");
         return NULL;
     }
-    printf("Unwhitespaced source:\n%s\n", unwhitespaced);
+    // printf("Unwhitespaced source:\n%s\n", unwhitespaced);
 
     return unwhitespaced;
 }
 
 void tokenize(const char *source_code) {
-    printf("Tokenizing source...\n");
-    // TODO: Implement tokenizing logic
+    printf("Tokenizing source...\n\n");
+    
+    printf("%s", source_code);
 }
 
 void parse(const char *source_code) {
-    printf("Parsing source...\n");
+    printf("Parsing source...\n\n");
     // TODO: Implement parsing logic
 }
 
 void execute(const char *source_code) {
-    printf("Executing source...\n");
+    printf("Executing source...\n\n");
     // TODO: Implement execution logic
 }
 
 void compile_only(const char *source_code) {
-    printf("Compiling source...\n");
+    printf("Compiling source...\n\n");
     // TODO: Implement compilation logic
 }
 
 void monolith_debug(const char *source_code) {
-    printf("Running monolithic debug mode...\n");
+    printf("Running monolithic debug mode...\n\n");
     // TODO: Implement monolith debug mode
 }
 
@@ -196,8 +240,17 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         free(preprocessed_source);
+
     } else if (strcmp(mode, "--tokenize") == 0 || strcmp(mode, "-t") == 0) {
-        tokenize(source_code);
+        char *preprocessed_source = preprocess(source_code);
+        if (!preprocessed_source) {
+            fprintf(stderr, "Preprocessing failed.\n");
+            free(source_code);
+            return 1;
+        }
+        tokenize(preprocessed_source);
+        free(preprocessed_source);
+
     } else if (strcmp(mode, "--parse") == 0 || strcmp(mode, "-p") == 0) {
         parse(source_code);
     } else if (strcmp(mode, "--execute") == 0 || strcmp(mode, "-e") == 0) {
