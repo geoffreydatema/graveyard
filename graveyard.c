@@ -4,6 +4,21 @@
 #include <stddef.h>
 #include <ctype.h>
 
+#define MAX_LEXEME_LEN 64
+
+typedef enum {
+    TOKEN_IDENTIFIER,
+    TOKEN_ASSIGNMENT,
+    TOKEN_NUMBER,
+    TOKEN_SEMICOLON,
+    TOKEN_UNKNOWN
+} TokenType;
+
+typedef struct {
+    TokenType type;
+    char lexeme[MAX_LEXEME_LEN];
+} Token;
+
 char *load(FILE *file, long *out_length) {
     if (out_length) {
         *out_length = 0;
@@ -169,10 +184,127 @@ char *preprocess(const char *source_code) {
     return unwhitespaced;
 }
 
-void tokenize(const char *source_code) {
-    printf("Tokenizing source...\n\n");
-    
-    printf("%s", source_code);
+TokenType identify_single_char_token(char c) {
+    switch (c) {
+        case '=': return TOKEN_ASSIGNMENT;
+        case ';': return TOKEN_SEMICOLON;
+        default: return TOKEN_UNKNOWN;
+    }
+}
+
+Token *tokenize(const char *source_code, size_t *out_token_count) {
+    size_t capacity = 16;
+    size_t count = 0;
+    Token *tokens = malloc(capacity * sizeof(Token));
+
+    if (!tokens) {
+        perror("tokenize: malloc failed for initial tokens array");
+        if (out_token_count) *out_token_count = 0;
+        return NULL;
+    }
+    printf("Allocated tokens array with initial capacity: %zu\n", capacity);
+
+    size_t i = 0;
+    while (source_code[i] != '\0') {
+
+        if (isspace((unsigned char)source_code[i])) {
+            i++;
+            continue;
+        }
+
+        char c = source_code[i];
+
+        if (count == capacity) {
+            size_t new_capacity = capacity * 2;
+            Token *new_tokens = realloc(tokens, new_capacity * sizeof(Token));
+            if (!new_tokens) {
+                perror("tokenize: realloc failed to grow tokens array");
+                free(tokens);
+                if (out_token_count) *out_token_count = 0;
+                return NULL;
+            }
+            tokens = new_tokens;
+            capacity = new_capacity;
+            printf("Reallocated tokens array, new capacity: %zu\n", capacity);
+        }
+
+        if (isalpha((unsigned char)c) || c == '_') {
+            // Parse identifier
+            size_t start = i;
+            size_t len = 0;
+            while ((isalnum((unsigned char)source_code[i]) || source_code[i] == '_') && len < MAX_LEXEME_LEN - 1) {
+                i++;
+                len++;
+            }
+
+            if (len == MAX_LEXEME_LEN - 1 && (isalnum((unsigned char)source_code[i]) || source_code[i] == '_')) {
+                fprintf(stderr, "Tokenizer error: Identifier too long starting at: %.10s...\n", source_code + start);
+                free(tokens);
+                if (out_token_count) *out_token_count = 0;
+                return NULL;
+            }
+
+            tokens[count].type = TOKEN_IDENTIFIER;
+            strncpy(tokens[count].lexeme, source_code + start, len);
+            tokens[count].lexeme[len] = '\0';
+            count++;
+        } else if (isdigit((unsigned char)c)) {
+            // Parse number literal
+            size_t start = i;
+            size_t len = 0;
+
+            while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) {
+                i++;
+                len++;
+            }
+
+            if (len == MAX_LEXEME_LEN - 1 && isdigit((unsigned char)source_code[i])) {
+                fprintf(stderr, "Tokenizer error: Number literal too long starting at: %.10s...\n", source_code + start);
+                free(tokens);
+                if (out_token_count) *out_token_count = 0;
+                return NULL;
+            }
+
+            tokens[count].type = TOKEN_NUMBER;
+            strncpy(tokens[count].lexeme, source_code + start, len);
+            tokens[count].lexeme[len] = '\0';
+            count++;
+        } else {
+            // Single-character tokens (or unknown)
+            TokenType ttype = identify_single_char_token(c);
+            if (ttype == TOKEN_UNKNOWN) {
+                fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
+                free(tokens);
+                if (out_token_count) *out_token_count = 0;
+                return NULL;
+            }
+
+            tokens[count].type = ttype;
+            tokens[count].lexeme[0] = c;
+            tokens[count].lexeme[1] = '\0';
+            count++;
+            i++;
+        }
+    }
+
+    if (count == 0) {
+        free(tokens);
+        if (out_token_count) *out_token_count = 0;
+        return NULL;
+    }
+
+    // Attempt to shrink the array to the actual size if smaller than capacity
+    if (count < capacity) {
+        Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
+        if (shrunk_tokens == NULL) {
+            perror("tokenize: realloc failed to shrink tokens array (continuing with larger array)");
+        } else {
+            tokens = shrunk_tokens;
+        }
+    }
+
+    if (out_token_count) *out_token_count = count;
+    return tokens;
 }
 
 void parse(const char *source_code) {
@@ -248,8 +380,23 @@ int main(int argc, char *argv[]) {
             free(source_code);
             return 1;
         }
-        tokenize(preprocessed_source);
+
+        size_t token_count = 0;
+        Token *tokens = tokenize(preprocessed_source, &token_count);
         free(preprocessed_source);
+
+        if (!tokens) {
+            fprintf(stderr, "Tokenization failed.\n");
+            free(source_code);
+            return 1;
+        }
+
+        // For demonstration: print tokens
+        for (size_t i = 0; i < token_count; i++) {
+            printf("Token %zu: Type=%d, Lexeme='%s'\n", i, tokens[i].type, tokens[i].lexeme);
+        }
+
+        free(tokens);
 
     } else if (strcmp(mode, "--parse") == 0 || strcmp(mode, "-p") == 0) {
         parse(source_code);
