@@ -3,8 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 
-// Function to read an entire file into a string
-char *read_file(FILE *file, long *out_length) {
+char *load(FILE *file, long *out_length) {
     fseek(file, 0, SEEK_END);
     long length = ftell(file);
     rewind(file);
@@ -25,7 +24,7 @@ char *read_file(FILE *file, long *out_length) {
     return buffer;
 }
 
-char *entry(char *source_code) {
+char *entry(const char *source_code) {
     char *start = strstr(source_code, "::{");
     if (!start) {
         fprintf(stderr, "Missing '::{' to open global scope.\n");
@@ -53,8 +52,8 @@ char *entry(char *source_code) {
     return cropped_source_code;
 }
 
-char *uncomment(const char *src) {
-    size_t len = strlen(src);
+char *uncomment(const char *source_code) {
+    size_t len = strlen(source_code);
     char *clean = malloc(len + 1);
     if (!clean) {
         perror("Memory allocation failed in uncomment");
@@ -63,15 +62,34 @@ char *uncomment(const char *src) {
 
     char *dst = clean;
     for (size_t i = 0; i < len;) {
-        if (src[i] == '/' && src[i + 1] == '/') {
+        if (source_code[i] == '/' && source_code[i + 1] == '/') {
             i += 2;
-            while (src[i] && src[i] != '\n') i++;
-        } else if (src[i] == '/' && src[i + 1] == '*') {
+            while (source_code[i] && source_code[i] != '\n') i++;
+        } else if (source_code[i] == '/' && source_code[i + 1] == '*') {
             i += 2;
-            while (src[i] && !(src[i] == '*' && src[i + 1] == '/')) i++;
-            if (src[i]) i += 2;
+            while (source_code[i] && !(source_code[i] == '*' && source_code[i + 1] == '/')) i++;
+            if (source_code[i]) i += 2;
         } else {
-            *dst++ = src[i++];
+            *dst++ = source_code[i++];
+        }
+    }
+
+    *dst = '\0';
+    return clean;
+}
+
+char *unwhitespace(const char *source_code) {
+    size_t len = strlen(source_code);
+    char *clean = malloc(len + 1);
+    if (!clean) {
+        perror("Memory allocation failed in unwhitespace");
+        return NULL;
+    }
+
+    char *dst = clean;
+    for (size_t i = 0; i < len; i++) {
+        if (!isspace((unsigned char)source_code[i])) {
+            *dst++ = source_code[i];
         }
     }
 
@@ -90,16 +108,22 @@ char *preprocess(char *source_code) {
     printf("Cropped source:\n%s\n", cropped);
 
     char *uncommented = uncomment(cropped);
-    free(cropped); // Free 'cropped' regardless of 'uncomment' success
-
+    free(cropped);
     if (!uncommented) {
-        // uncomment() should have printed an error via perror
         fprintf(stderr, "Failed to uncomment source.\n");
-        return NULL; // Return NULL if uncommenting failed
+        return NULL;
     }
-
     printf("Uncommented source:\n%s\n", uncommented);
-    return uncommented;
+
+    char *unwhitespaced = unwhitespace(uncommented);
+    free(uncommented);
+    if (!unwhitespaced) {
+        fprintf(stderr, "Failed to uncomment source.\n");
+        return NULL;
+    }
+    printf("Unwhitespaced source:\n%s\n", unwhitespaced);
+
+    return unwhitespaced;
 }
 
 void tokenize(const char *source_code) {
@@ -143,7 +167,6 @@ int main(int argc, char *argv[]) {
     char *mode = argv[1];
     char *filename = argv[2];
 
-    // Check that file has .gy extension
     const char *ext = strrchr(filename, '.');
     if (!ext || strcmp(ext, ".gy") != 0) {
         fprintf(stderr, "Error: %s is not Graveyard source code, please use the .gy extension\n", filename);
@@ -157,7 +180,7 @@ int main(int argc, char *argv[]) {
     }
 
     long source_length = 0;
-    char *source_code = read_file(file, &source_length);
+    char *source_code = load(file, &source_length);
     fclose(file);
     if (!source_code) {
         return 1;
