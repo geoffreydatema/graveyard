@@ -7,11 +7,76 @@
 #define MAX_LEXEME_LEN 64
 
 typedef enum {
-    TOKEN_IDENTIFIER,
-    TOKEN_ASSIGNMENT,
-    TOKEN_NUMBER,
-    TOKEN_SEMICOLON,
-    TOKEN_UNKNOWN
+    IDENTIFIER,
+    TYPE, //@!
+    NUMBER, //@! float
+    SEMICOLON,
+    ASSIGNMENT,
+    ADDITION,
+    SUBTRACTION,
+    MULTIPLICATION,
+    DIVISION,
+    LEFTPARENTHESES,
+    RIGHTPARENTHESES,
+    EXPONENTIATION, //@!
+    EQUALITY, //@!
+    INEQUALITY, //@!
+    GREATERTHAN,
+    LESSTHAN,
+    GREATERTHANEQUAL, //@!
+    LESSTHANEQUAL, //@!
+    NOT,
+    AND, //@!
+    OR, //@!
+    COMMA,
+    TRUEVALUE,
+    FALSEVALUE,
+    NULLVALUE,
+    STRING, //@!
+    LEFTBRACE,
+    RIGHTBRACE,
+    PARAMETER,
+    RETURN, //@!
+    QUESTIONMARK,
+    COLON,
+    WHILE,
+    CONTINUE,
+    BREAK,
+    AT,
+    FORMATTEDSTRING, //@!
+    LEFTBRACKET,
+    RIGHTBRACKET,
+    ADDITIONASSIGNMENT, //@!
+    SUBTRACTIONASSIGNMENT, //@!
+    MULTIPLICATIONASSIGNMENT, //@!
+    DIVISIONASSIGNMENT, //@!
+    EXPONENTIATIONASSIGNMENT, //@!
+    INCREMENT, //@!
+    DECREMENT, //@!
+    REFERENCE,
+    PERIOD,
+    NAMESPACE, //@!
+    PRINT, //@!
+    SCAN, //@!
+    RAISE, //@!
+    CASTBOOLEAN, //@!
+    CASTINTEGER, //@!
+    CASTFLOAT, //@!
+    CASTSTRING, //@!
+    CASTARRAY, //@!
+    CASTHASHTABLE, //@!
+    TYPEOF, //@!
+    MODULO, //@!
+    FILEREAD, //@!
+    FILEWRITE, //@!
+    TIME, //@!
+    EXECUTE, //@!
+    CATCONSTANT, //@!
+    // OPEN OPERATOR
+    // OPEN OPERATOR
+    // OPEN OPERATOR
+    // OPEN OPERATOR
+    UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -186,9 +251,35 @@ char *preprocess(const char *source_code) {
 
 TokenType identify_single_char_token(char c) {
     switch (c) {
-        case '=': return TOKEN_ASSIGNMENT;
-        case ';': return TOKEN_SEMICOLON;
-        default: return TOKEN_UNKNOWN;
+        case '=': return ASSIGNMENT;
+        case ';': return SEMICOLON;
+        case '+': return ADDITION;
+        case '-': return SUBTRACTION;
+        case '*': return MULTIPLICATION;
+        case '/': return DIVISION;
+        case '(': return LEFTPARENTHESES;
+        case ')': return RIGHTPARENTHESES;
+        case '>': return GREATERTHAN;
+        case '<': return LESSTHAN;
+        case '!': return NOT;
+        case ',': return COMMA;
+        case '$': return TRUEVALUE;
+        case '%': return FALSEVALUE;
+        case '|': return NULLVALUE;
+        case '{': return LEFTBRACE;
+        case '}': return RIGHTBRACE;
+        case '&': return PARAMETER;
+        case '?': return QUESTIONMARK;
+        case ':': return COLON;
+        case '~': return WHILE;
+        case '^': return CONTINUE;
+        case '`': return BREAK;
+        case '@': return AT;
+        case '[': return LEFTBRACKET;
+        case ']': return RIGHTBRACKET;
+        case '#': return REFERENCE;
+        case '.': return PERIOD;
+        default: return UNKNOWN;
     }
 }
 
@@ -244,7 +335,7 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
                 return NULL;
             }
 
-            tokens[count].type = TOKEN_IDENTIFIER;
+            tokens[count].type = IDENTIFIER;
             strncpy(tokens[count].lexeme, source_code + start, len);
             tokens[count].lexeme[len] = '\0';
             count++;
@@ -265,14 +356,14 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
                 return NULL;
             }
 
-            tokens[count].type = TOKEN_NUMBER;
+            tokens[count].type = NUMBER;
             strncpy(tokens[count].lexeme, source_code + start, len);
             tokens[count].lexeme[len] = '\0';
             count++;
         } else {
             // Single-character tokens (or unknown)
             TokenType ttype = identify_single_char_token(c);
-            if (ttype == TOKEN_UNKNOWN) {
+            if (ttype == UNKNOWN) {
                 fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
@@ -371,6 +462,7 @@ int main(int argc, char *argv[]) {
             free(source_code);
             return 1;
         }
+        printf("%s", preprocessed_source);
         free(preprocessed_source);
 
     } else if (strcmp(mode, "--tokenize") == 0 || strcmp(mode, "-t") == 0) {
