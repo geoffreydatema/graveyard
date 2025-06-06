@@ -51,7 +51,7 @@ typedef enum {
     SUBTRACTIONASSIGNMENT,
     MULTIPLICATIONASSIGNMENT,
     DIVISIONASSIGNMENT,
-    EXPONENTIATIONASSIGNMENT, //@!
+    EXPONENTIATIONASSIGNMENT,
     INCREMENT,
     DECREMENT,
     REFERENCE,
@@ -59,7 +59,7 @@ typedef enum {
     NAMESPACE,
     PRINT,
     SCAN,
-    RAISE, //@!
+    RAISE,
     CASTBOOLEAN,
     CASTINTEGER,
     CASTFLOAT,
@@ -68,8 +68,8 @@ typedef enum {
     CASTHASHTABLE,
     TYPEOF,
     MODULO,
-    FILEREAD, //@!
-    FILEWRITE, //@!
+    FILEREAD,
+    FILEWRITE,
     TIME,
     EXECUTE,
     CATCONSTANT,
@@ -316,6 +316,14 @@ TokenType identify_two_char_token(char first, char second) {
     return UNKNOWN;
 }
 
+TokenType identify_three_char_token(char first, char second, char third) {
+    if (first == '*' && second == '*' && third == '=') return EXPONENTIATIONASSIGNMENT;
+    if (first == '!' && second == '>' && third == '>') return RAISE;
+    if (first == ':' && second == '<' && third == '<') return FILEREAD;
+    if (first == ':' && second == '>' && third == '>') return FILEWRITE;
+    return UNKNOWN;
+}
+
 Token *tokenize(const char *source_code, size_t *out_token_count) {
     size_t capacity = 16;
     size_t count = 0;
@@ -408,6 +416,21 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             count++;
         } else {
             TokenType ttype = UNKNOWN;
+
+            // Look ahead for three-character tokens
+            if (source_code[i + 2] != '\0') {
+                ttype = identify_three_char_token(source_code[i], source_code[i + 1], source_code[i + 2]);
+                if (ttype != UNKNOWN) {
+                    tokens[count].type = ttype;
+                    tokens[count].lexeme[0] = source_code[i];
+                    tokens[count].lexeme[1] = source_code[i + 1];
+                    tokens[count].lexeme[2] = source_code[i + 2];
+                    tokens[count].lexeme[3] = '\0';
+                    count++;
+                    i += 3;
+                    continue;
+                }
+            }
 
             // Look ahead for two-character tokens
             if (source_code[i + 1] != '\0') {
