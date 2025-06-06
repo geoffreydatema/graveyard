@@ -9,7 +9,7 @@
 
 typedef enum {
     IDENTIFIER,
-    TYPE, //@!
+    TYPE,
     NUMBER,
     SEMICOLON,
     ASSIGNMENT,
@@ -421,18 +421,14 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             tokens[count].lexeme[len] = '\0';
             count++;
         } else if (c == '"') {
-            size_t start = i + 1; // Start of the string's content
+            size_t start = i + 1;
             size_t len = 0;
-            i++; // Move past the opening "
+            i++;
 
-            // Scan for the end of the string
             while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
                 if (len >= MAX_LEXEME_LEN - 1) {
-                    // Error case 1: String is too long. This is the highest priority error.
-                    // We've run out of buffer space but still haven't found the closing quote.
                     fprintf(stderr, "Tokenizer error: String literal too long starting at: %.10s...\n", source_code + start - 1);
 
-                    // To prevent cascading errors, it's good practice to consume the rest of the invalid literal.
                     while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
                         i++;
                     }
@@ -445,24 +441,51 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
                 len++;
             }
 
-            // After the loop, check if it was properly terminated with a quote.
             if (source_code[i] != '"') {
-                // Error case 2: Unterminated string (due to newline or end-of-file).
-                // This check only runs if the string was not already found to be too long.
                 fprintf(stderr, "Tokenizer error: Unterminated string literal starting at: %.10s...\n", source_code + start - 1);
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
                 return NULL;
             }
 
-            // Success: The string is valid and properly terminated.
-            // (Assuming STRING is a valid TokenType)
             tokens[count].type = STRING; // You'll need to add TOKEN_STRING to your enum
             strncpy(tokens[count].lexeme, source_code + start, len);
             tokens[count].lexeme[len] = '\0';
             count++;
-            i++; // Move past the closing " for the next token
+            i++;
         } else {
+            char next_char = source_code[i + 1];
+
+            if (c == '<' && (isalpha((unsigned char)next_char) || next_char == '_')) {
+                size_t start = i;
+                i++;
+
+                while (isalnum((unsigned char)source_code[i]) || source_code[i] == '_') {
+                    if ((size_t)(i - start) >= MAX_LEXEME_LEN - 2) {
+                        fprintf(stderr, "Tokenizer error: TYPE_IDENTIFIER too long starting at: %.10s...\n", source_code + start);
+                        free(tokens);
+                        if (out_token_count) *out_token_count = 0;
+                        return NULL;
+                    }
+                    i++;
+                }
+
+                if (source_code[i] != '>') {
+                    fprintf(stderr, "Tokenizer error: Unterminated TYPE_IDENTIFIER starting at: %.10s...\n", source_code + start);
+                    free(tokens);
+                    if (out_token_count) *out_token_count = 0;
+                    return NULL;
+                }
+                i++;
+
+                size_t len = i - start;
+                tokens[count].type = TYPE;
+                strncpy(tokens[count].lexeme, source_code + start, len);
+                tokens[count].lexeme[len] = '\0';
+                count++;
+                continue;
+            }
+
             TokenType ttype = UNKNOWN;
 
             // Look ahead for three-character tokens
@@ -470,10 +493,7 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
                 ttype = identify_three_char_token(source_code[i], source_code[i + 1], source_code[i + 2]);
                 if (ttype != UNKNOWN) {
                     tokens[count].type = ttype;
-                    tokens[count].lexeme[0] = source_code[i];
-                    tokens[count].lexeme[1] = source_code[i + 1];
-                    tokens[count].lexeme[2] = source_code[i + 2];
-                    tokens[count].lexeme[3] = '\0';
+                    snprintf(tokens[count].lexeme, 4, "%c%c%c", source_code[i], source_code[i+1], source_code[i+2]);
                     count++;
                     i += 3;
                     continue;
@@ -485,9 +505,7 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
                 ttype = identify_two_char_token(source_code[i], source_code[i + 1]);
                 if (ttype != UNKNOWN) {
                     tokens[count].type = ttype;
-                    tokens[count].lexeme[0] = source_code[i];
-                    tokens[count].lexeme[1] = source_code[i + 1];
-                    tokens[count].lexeme[2] = '\0';
+                    snprintf(tokens[count].lexeme, 3, "%c%c", source_code[i], source_code[i+1]);
                     count++;
                     i += 2;
                     continue;
@@ -495,21 +513,20 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             }
 
             // Fallback to single-character tokens
-            ttype = identify_single_char_token(source_code[i]);
+            ttype = identify_single_char_token(c);
             if (ttype == UNKNOWN) {
-                fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", source_code[i]);
+                fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
                 return NULL;
             }
 
             tokens[count].type = ttype;
-            tokens[count].lexeme[0] = source_code[i];
+            tokens[count].lexeme[0] = c;
             tokens[count].lexeme[1] = '\0';
             count++;
             i++;
         }
-
     }
 
     if (count == 0) {
@@ -517,8 +534,6 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
         if (out_token_count) *out_token_count = 0;
         return NULL;
     }
-
-    // Attempt to shrink the array to the actual size if smaller than capacity
     if (count < capacity) {
         Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
         if (shrunk_tokens == NULL) {
@@ -527,7 +542,6 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             tokens = shrunk_tokens;
         }
     }
-
     if (out_token_count) *out_token_count = count;
     return tokens;
 }
