@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <ctype.h>
 
 #define MAX_LEXEME_LEN 64
@@ -9,7 +10,7 @@
 typedef enum {
     IDENTIFIER,
     TYPE, //@!
-    NUMBER, //@! float
+    NUMBER,
     SEMICOLON,
     ASSIGNMENT,
     ADDITION,
@@ -18,16 +19,16 @@ typedef enum {
     DIVISION,
     LEFTPARENTHESES,
     RIGHTPARENTHESES,
-    EXPONENTIATION, //@!
-    EQUALITY, //@!
-    INEQUALITY, //@!
+    EXPONENTIATION,
+    EQUALITY,
+    INEQUALITY,
     GREATERTHAN,
     LESSTHAN,
-    GREATERTHANEQUAL, //@!
-    LESSTHANEQUAL, //@!
+    GREATERTHANEQUAL,
+    LESSTHANEQUAL,
     NOT,
-    AND, //@!
-    OR, //@!
+    AND,
+    OR,
     COMMA,
     TRUEVALUE,
     FALSEVALUE,
@@ -36,7 +37,7 @@ typedef enum {
     LEFTBRACE,
     RIGHTBRACE,
     PARAMETER,
-    RETURN, //@!
+    RETURN,
     QUESTIONMARK,
     COLON,
     WHILE,
@@ -46,32 +47,32 @@ typedef enum {
     FORMATTEDSTRING, //@!
     LEFTBRACKET,
     RIGHTBRACKET,
-    ADDITIONASSIGNMENT, //@!
-    SUBTRACTIONASSIGNMENT, //@!
-    MULTIPLICATIONASSIGNMENT, //@!
-    DIVISIONASSIGNMENT, //@!
+    ADDITIONASSIGNMENT,
+    SUBTRACTIONASSIGNMENT,
+    MULTIPLICATIONASSIGNMENT,
+    DIVISIONASSIGNMENT,
     EXPONENTIATIONASSIGNMENT, //@!
-    INCREMENT, //@!
-    DECREMENT, //@!
+    INCREMENT,
+    DECREMENT,
     REFERENCE,
     PERIOD,
-    NAMESPACE, //@!
-    PRINT, //@!
-    SCAN, //@!
+    NAMESPACE,
+    PRINT,
+    SCAN,
     RAISE, //@!
-    CASTBOOLEAN, //@!
-    CASTINTEGER, //@!
-    CASTFLOAT, //@!
-    CASTSTRING, //@!
-    CASTARRAY, //@!
-    CASTHASHTABLE, //@!
-    TYPEOF, //@!
-    MODULO, //@!
+    CASTBOOLEAN,
+    CASTINTEGER,
+    CASTFLOAT,
+    CASTSTRING,
+    CASTARRAY,
+    CASTHASHTABLE,
+    TYPEOF,
+    MODULO,
     FILEREAD, //@!
     FILEWRITE, //@!
-    TIME, //@!
-    EXECUTE, //@!
-    CATCONSTANT, //@!
+    TIME,
+    EXECUTE,
+    CATCONSTANT,
     // OPEN OPERATOR
     // OPEN OPERATOR
     // OPEN OPERATOR
@@ -283,6 +284,38 @@ TokenType identify_single_char_token(char c) {
     }
 }
 
+TokenType identify_two_char_token(char first, char second) {
+    if (first == '*' && second == '*') return EXPONENTIATION;
+    if (first == '=' && second == '=') return EQUALITY;
+    if (first == '!' && second == '=') return INEQUALITY;
+    if (first == '>' && second == '=') return GREATERTHANEQUAL;
+    if (first == '<' && second == '=') return LESSTHANEQUAL;
+    if (first == '&' && second == '&') return AND;
+    if (first == '|' && second == '|') return OR;
+    if (first == '-' && second == '>') return RETURN;
+    if (first == '+' && second == '=') return ADDITIONASSIGNMENT;
+    if (first == '-' && second == '=') return SUBTRACTIONASSIGNMENT;
+    if (first == '*' && second == '=') return MULTIPLICATIONASSIGNMENT;
+    if (first == '/' && second == '=') return DIVISIONASSIGNMENT;
+    if (first == '+' && second == '+') return INCREMENT;
+    if (first == '-' && second == '-') return DECREMENT;
+    if (first == ':' && second == ':') return NAMESPACE;
+    if (first == '>' && second == '>') return PRINT;
+    if (first == '<' && second == '<') return SCAN;
+    if (first == '>' && second == 'b') return CASTBOOLEAN;
+    if (first == '>' && second == 'i') return CASTINTEGER;
+    if (first == '>' && second == 'f') return CASTFLOAT;
+    if (first == '>' && second == 's') return CASTSTRING;
+    if (first == '>' && second == 'a') return CASTARRAY;
+    if (first == '>' && second == 'h') return CASTHASHTABLE;
+    if (first == '@' && second == '@') return TYPEOF;
+    if (first == '/' && second == '%') return MODULO;
+    if (first == ':' && second == '@') return TIME;
+    if (first == ':' && second == '=') return EXECUTE;
+    if (first == ':' && second == '3') return CATCONSTANT;
+    return UNKNOWN;
+}
+
 Token *tokenize(const char *source_code, size_t *out_token_count) {
     size_t capacity = 16;
     size_t count = 0;
@@ -340,13 +373,26 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             tokens[count].lexeme[len] = '\0';
             count++;
         } else if (isdigit((unsigned char)c)) {
-            // Parse number literal
             size_t start = i;
             size_t len = 0;
+            bool has_dot = false;
 
+            // Parse digits before the decimal
             while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) {
                 i++;
                 len++;
+            }
+
+            // Check for decimal point and digits after it
+            if (source_code[i] == '.' && isdigit((unsigned char)source_code[i + 1])) {
+                has_dot = true;
+                i++; // consume the dot
+                len++;
+
+                while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) {
+                    i++;
+                    len++;
+                }
             }
 
             if (len == MAX_LEXEME_LEN - 1 && isdigit((unsigned char)source_code[i])) {
@@ -361,21 +407,38 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             tokens[count].lexeme[len] = '\0';
             count++;
         } else {
-            // Single-character tokens (or unknown)
-            TokenType ttype = identify_single_char_token(c);
+            TokenType ttype = UNKNOWN;
+
+            // Look ahead for two-character tokens
+            if (source_code[i + 1] != '\0') {
+                ttype = identify_two_char_token(source_code[i], source_code[i + 1]);
+                if (ttype != UNKNOWN) {
+                    tokens[count].type = ttype;
+                    tokens[count].lexeme[0] = source_code[i];
+                    tokens[count].lexeme[1] = source_code[i + 1];
+                    tokens[count].lexeme[2] = '\0';
+                    count++;
+                    i += 2;
+                    continue;
+                }
+            }
+
+            // Fallback to single-character tokens
+            ttype = identify_single_char_token(source_code[i]);
             if (ttype == UNKNOWN) {
-                fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
+                fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", source_code[i]);
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
                 return NULL;
             }
 
             tokens[count].type = ttype;
-            tokens[count].lexeme[0] = c;
+            tokens[count].lexeme[0] = source_code[i];
             tokens[count].lexeme[1] = '\0';
             count++;
             i++;
         }
+
     }
 
     if (count == 0) {
