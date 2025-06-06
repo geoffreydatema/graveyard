@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 
-#define MAX_LEXEME_LEN 64
+#define MAX_LEXEME_LEN 65
 
 typedef enum {
     IDENTIFIER,
@@ -33,7 +33,7 @@ typedef enum {
     TRUEVALUE,
     FALSEVALUE,
     NULLVALUE,
-    STRING, //@!
+    STRING,
     LEFTBRACE,
     RIGHTBRACE,
     PARAMETER,
@@ -211,9 +211,16 @@ char *unwhitespace(const char *source_code) {
     }
 
     char *dst = clean;
+    bool in_string = false;
+
     for (size_t i = 0; i < len; i++) {
-        if (!isspace((unsigned char)source_code[i])) {
-            *dst++ = source_code[i];
+        char c = source_code[i];
+
+        if (c == '"') {
+            *dst++ = c;
+            in_string = !in_string;
+        } else if (in_string || !isspace((unsigned char)c)) {
+            *dst++ = c;
         }
     }
 
@@ -338,13 +345,12 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
 
     size_t i = 0;
     while (source_code[i] != '\0') {
+        char c = source_code[i];
 
         if (isspace((unsigned char)source_code[i])) {
             i++;
             continue;
         }
-
-        char c = source_code[i];
 
         if (count == capacity) {
             size_t new_capacity = capacity * 2;
@@ -414,6 +420,48 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
             strncpy(tokens[count].lexeme, source_code + start, len);
             tokens[count].lexeme[len] = '\0';
             count++;
+        } else if (c == '"') {
+            size_t start = i + 1; // Start of the string's content
+            size_t len = 0;
+            i++; // Move past the opening "
+
+            // Scan for the end of the string
+            while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
+                if (len >= MAX_LEXEME_LEN - 1) {
+                    // Error case 1: String is too long. This is the highest priority error.
+                    // We've run out of buffer space but still haven't found the closing quote.
+                    fprintf(stderr, "Tokenizer error: String literal too long starting at: %.10s...\n", source_code + start - 1);
+
+                    // To prevent cascading errors, it's good practice to consume the rest of the invalid literal.
+                    while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
+                        i++;
+                    }
+
+                    free(tokens);
+                    if (out_token_count) *out_token_count = 0;
+                    return NULL;
+                }
+                i++;
+                len++;
+            }
+
+            // After the loop, check if it was properly terminated with a quote.
+            if (source_code[i] != '"') {
+                // Error case 2: Unterminated string (due to newline or end-of-file).
+                // This check only runs if the string was not already found to be too long.
+                fprintf(stderr, "Tokenizer error: Unterminated string literal starting at: %.10s...\n", source_code + start - 1);
+                free(tokens);
+                if (out_token_count) *out_token_count = 0;
+                return NULL;
+            }
+
+            // Success: The string is valid and properly terminated.
+            // (Assuming STRING is a valid TokenType)
+            tokens[count].type = STRING; // You'll need to add TOKEN_STRING to your enum
+            strncpy(tokens[count].lexeme, source_code + start, len);
+            tokens[count].lexeme[len] = '\0';
+            count++;
+            i++; // Move past the closing " for the next token
         } else {
             TokenType ttype = UNKNOWN;
 
