@@ -44,7 +44,7 @@ typedef enum {
     CONTINUE,
     BREAK,
     AT,
-    FORMATTEDSTRING, //@!
+    FORMATTEDSTRING,
     LEFTBRACKET,
     RIGHTBRACKET,
     ADDITIONASSIGNMENT,
@@ -211,15 +211,19 @@ char *unwhitespace(const char *source_code) {
     }
 
     char *dst = clean;
-    bool in_string = false;
+    bool in_double_string = false;
+    bool in_single_string = false;
 
     for (size_t i = 0; i < len; i++) {
         char c = source_code[i];
 
-        if (c == '"') {
+        if (c == '"' && !in_single_string) {
             *dst++ = c;
-            in_string = !in_string;
-        } else if (in_string || !isspace((unsigned char)c)) {
+            in_double_string = !in_double_string;
+        } else if (c == '\'' && !in_double_string) {
+            *dst++ = c;
+            in_single_string = !in_single_string;
+        } else if (in_double_string || in_single_string || !isspace((unsigned char)c)) {
             *dst++ = c;
         }
     }
@@ -335,192 +339,176 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
     size_t capacity = 16;
     size_t count = 0;
     Token *tokens = malloc(capacity * sizeof(Token));
-
     if (!tokens) {
-        perror("tokenize: malloc failed for initial tokens array");
+        perror("tokenize: malloc failed");
         if (out_token_count) *out_token_count = 0;
         return NULL;
     }
-    printf("Allocated tokens array with initial capacity: %zu\n", capacity);
+
+    // State machine variables
+    typedef enum { STATE_DEFAULT, STATE_IN_FMT_STRING } TokenizerState;
+    TokenizerState state = STATE_DEFAULT;
+    int fstring_brace_depth = 0;
 
     size_t i = 0;
     while (source_code[i] != '\0') {
-        char c = source_code[i];
-
-        if (isspace((unsigned char)source_code[i])) {
-            i++;
-            continue;
-        }
-
+        // Universal logic: Check for reallocation if the token buffer is full
         if (count == capacity) {
             size_t new_capacity = capacity * 2;
             Token *new_tokens = realloc(tokens, new_capacity * sizeof(Token));
             if (!new_tokens) {
-                perror("tokenize: realloc failed to grow tokens array");
+                perror("tokenize: realloc failed");
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
                 return NULL;
             }
             tokens = new_tokens;
             capacity = new_capacity;
-            printf("Reallocated tokens array, new capacity: %zu\n", capacity);
         }
 
-        if (isalpha((unsigned char)c) || c == '_') {
-            // Parse identifier
-            size_t start = i;
-            size_t len = 0;
-            while ((isalnum((unsigned char)source_code[i]) || source_code[i] == '_') && len < MAX_LEXEME_LEN - 1) {
-                i++;
-                len++;
-            }
+        // --- STATE-BASED TOKENIZATION ---
 
-            if (len == MAX_LEXEME_LEN - 1 && (isalnum((unsigned char)source_code[i]) || source_code[i] == '_')) {
-                fprintf(stderr, "Tokenizer error: Identifier too long starting at: %.10s...\n", source_code + start);
+        if (state == STATE_IN_FMT_STRING) {
+            // --- Logic for when we are inside a formatted string '...' ---
+            char c = source_code[i];
+
+            if (c == '\'') { // End of the formatted string
+                state = STATE_DEFAULT;
+                i++;
+                continue;
+            } else if (c == '{') { // Start of an embedded expression
+                state = STATE_DEFAULT; // Switch back to normal tokenizing
+                fstring_brace_depth = 1; // Enter expression context
+                tokens[count].type = LEFTBRACKET;
+                tokens[count].lexeme[0] = '{';
+                tokens[count].lexeme[1] = '\0';
+                count++;
+                i++;
+                continue;
+            } else if (c == '\n' || c == '\0') {
+                fprintf(stderr, "Tokenizer error: Unterminated formatted string.\n");
                 free(tokens);
                 if (out_token_count) *out_token_count = 0;
                 return NULL;
-            }
-
-            tokens[count].type = IDENTIFIER;
-            strncpy(tokens[count].lexeme, source_code + start, len);
-            tokens[count].lexeme[len] = '\0';
-            count++;
-        } else if (isdigit((unsigned char)c)) {
-            size_t start = i;
-            size_t len = 0;
-            bool has_dot = false;
-
-            // Parse digits before the decimal
-            while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) {
-                i++;
-                len++;
-            }
-
-            // Check for decimal point and digits after it
-            if (source_code[i] == '.' && isdigit((unsigned char)source_code[i + 1])) {
-                has_dot = true;
-                i++; // consume the dot
-                len++;
-
-                while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) {
-                    i++;
-                    len++;
-                }
-            }
-
-            if (len == MAX_LEXEME_LEN - 1 && isdigit((unsigned char)source_code[i])) {
-                fprintf(stderr, "Tokenizer error: Number literal too long starting at: %.10s...\n", source_code + start);
-                free(tokens);
-                if (out_token_count) *out_token_count = 0;
-                return NULL;
-            }
-
-            tokens[count].type = NUMBER;
-            strncpy(tokens[count].lexeme, source_code + start, len);
-            tokens[count].lexeme[len] = '\0';
-            count++;
-        } else if (c == '"') {
-            size_t start = i + 1;
-            size_t len = 0;
-            i++;
-
-            while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
-                if (len >= MAX_LEXEME_LEN - 1) {
-                    fprintf(stderr, "Tokenizer error: String literal too long starting at: %.10s...\n", source_code + start - 1);
-
-                    while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
-                        i++;
-                    }
-
-                    free(tokens);
-                    if (out_token_count) *out_token_count = 0;
-                    return NULL;
-                }
-                i++;
-                len++;
-            }
-
-            if (source_code[i] != '"') {
-                fprintf(stderr, "Tokenizer error: Unterminated string literal starting at: %.10s...\n", source_code + start - 1);
-                free(tokens);
-                if (out_token_count) *out_token_count = 0;
-                return NULL;
-            }
-
-            tokens[count].type = STRING; // You'll need to add TOKEN_STRING to your enum
-            strncpy(tokens[count].lexeme, source_code + start, len);
-            tokens[count].lexeme[len] = '\0';
-            count++;
-            i++;
-        } else {
-            char next_char = source_code[i + 1];
-
-            if (c == '<' && (isalpha((unsigned char)next_char) || next_char == '_')) {
+            } else { // A literal part of the formatted string
                 size_t start = i;
-                i++;
-
-                while (isalnum((unsigned char)source_code[i]) || source_code[i] == '_') {
-                    if ((size_t)(i - start) >= MAX_LEXEME_LEN - 2) {
-                        fprintf(stderr, "Tokenizer error: TYPE_IDENTIFIER too long starting at: %.10s...\n", source_code + start);
+                while (source_code[i] != '\'' && source_code[i] != '{' && source_code[i] != '\n' && source_code[i] != '\0') {
+                    i++;
+                }
+                size_t len = i - start;
+                if (len > 0) {
+                     if (len >= MAX_LEXEME_LEN) {
+                        fprintf(stderr, "Tokenizer error: Literal part of formatted string is too long.\n");
                         free(tokens);
                         if (out_token_count) *out_token_count = 0;
                         return NULL;
                     }
-                    i++;
+                    tokens[count].type = FORMATTEDSTRING;
+                    strncpy(tokens[count].lexeme, source_code + start, len);
+                    tokens[count].lexeme[len] = '\0';
+                    count++;
                 }
-
-                if (source_code[i] != '>') {
-                    fprintf(stderr, "Tokenizer error: Unterminated TYPE_IDENTIFIER starting at: %.10s...\n", source_code + start);
-                    free(tokens);
-                    if (out_token_count) *out_token_count = 0;
-                    return NULL;
-                }
-                i++;
-
-                size_t len = i - start;
-                tokens[count].type = TYPE;
-                strncpy(tokens[count].lexeme, source_code + start, len);
-                tokens[count].lexeme[len] = '\0';
-                count++;
+                // The main loop will continue and handle the character that stopped this scan
                 continue;
             }
+        }
 
-            TokenType ttype = UNKNOWN;
+        // --- Logic for the default state (normal code) ---
 
-            // Look ahead for three-character tokens
-            if (source_code[i + 2] != '\0') {
-                ttype = identify_three_char_token(source_code[i], source_code[i + 1], source_code[i + 2]);
-                if (ttype != UNKNOWN) {
-                    tokens[count].type = ttype;
-                    snprintf(tokens[count].lexeme, 4, "%c%c%c", source_code[i], source_code[i+1], source_code[i+2]);
-                    count++;
-                    i += 3;
-                    continue;
+        if (isspace((unsigned char)source_code[i])) {
+            i++;
+            continue;
+        }
+
+        char c = source_code[i];
+
+        // Check for start of a formatted string
+        if (c == '\'') {
+            state = STATE_IN_FMT_STRING;
+            i++;
+            continue;
+        }
+        
+        // Handle brace context if we are inside a formatted string expression
+        if (fstring_brace_depth > 0) {
+            if (c == '}') {
+                fstring_brace_depth--;
+                if (fstring_brace_depth == 0) {
+                    state = STATE_IN_FMT_STRING; // Exit expression, back to scanning literal parts
+                }
+            } else if (c == '{') {
+                fstring_brace_depth++;
+            }
+        }
+
+        // --- Regular Tokenizing Logic ---
+
+        if (isalpha((unsigned char)c) || c == '_') {
+            size_t start = i;
+            size_t len = 0;
+            while ((isalnum((unsigned char)source_code[i]) || source_code[i] == '_') && len < MAX_LEXEME_LEN - 1) { i++; len++; }
+            if (len == MAX_LEXEME_LEN - 1 && (isalnum((unsigned char)source_code[i]) || source_code[i] == '_')) {
+                fprintf(stderr, "Tokenizer error: Identifier too long.\n"); free(tokens); return NULL;
+            }
+            tokens[count].type = IDENTIFIER;
+            strncpy(tokens[count].lexeme, source_code + start, len); tokens[count].lexeme[len] = '\0'; count++;
+        } else if (isdigit((unsigned char)c) || (c == '.' && isdigit((unsigned char)source_code[i+1]))) {
+            size_t start = i;
+            size_t len = 0;
+            while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) { i++; len++; }
+            if (source_code[i] == '.' && isdigit((unsigned char)source_code[i + 1])) {
+                i++; len++;
+                while (isdigit((unsigned char)source_code[i]) && len < MAX_LEXEME_LEN - 1) { i++; len++; }
+            }
+            if (len == MAX_LEXEME_LEN - 1 && isdigit((unsigned char)source_code[i])) {
+                 fprintf(stderr, "Tokenizer error: Number literal too long.\n"); free(tokens); return NULL;
+            }
+            tokens[count].type = NUMBER;
+            strncpy(tokens[count].lexeme, source_code + start, len); tokens[count].lexeme[len] = '\0'; count++;
+        } else if (c == '"') {
+             size_t start = i + 1;
+             size_t len = 0;
+             i++;
+             while (source_code[i] != '"' && source_code[i] != '\0' && source_code[i] != '\n') {
+                 if (len >= MAX_LEXEME_LEN - 1) {
+                     fprintf(stderr, "Tokenizer error: String literal too long.\n"); free(tokens); return NULL;
+                 }
+                 i++; len++;
+             }
+             if (source_code[i] != '"') {
+                 fprintf(stderr, "Tokenizer error: Unterminated string literal.\n"); free(tokens); return NULL;
+             }
+             tokens[count].type = STRING;
+             strncpy(tokens[count].lexeme, source_code + start, len); tokens[count].lexeme[len] = '\0'; count++; i++;
+        } else {
+            // --- Logic for Operators, including robust <sometype> vs < check ---
+            if (c == '<') {
+                size_t lookahead_i = i + 1;
+                if (isalpha((unsigned char)source_code[lookahead_i]) || source_code[lookahead_i] == '_') {
+                    lookahead_i++;
+                    while (isalnum((unsigned char)source_code[lookahead_i]) || source_code[lookahead_i] == '_') { lookahead_i++; }
+                    if (source_code[lookahead_i] == '>') {
+                        size_t start = i;
+                        size_t len = (lookahead_i + 1) - start;
+                        if (len >= MAX_LEXEME_LEN) {
+                            fprintf(stderr, "Tokenizer error: TYPE_IDENTIFIER too long.\n"); free(tokens); return NULL;
+                        }
+                        tokens[count].type = TYPE;
+                        strncpy(tokens[count].lexeme, source_code + start, len);
+                        tokens[count].lexeme[len] = '\0';
+                        count++;
+                        i = lookahead_i + 1;
+                        continue;
+                    }
                 }
             }
 
-            // Look ahead for two-character tokens
-            if (source_code[i + 1] != '\0') {
-                ttype = identify_two_char_token(source_code[i], source_code[i + 1]);
-                if (ttype != UNKNOWN) {
-                    tokens[count].type = ttype;
-                    snprintf(tokens[count].lexeme, 3, "%c%c", source_code[i], source_code[i+1]);
-                    count++;
-                    i += 2;
-                    continue;
-                }
-            }
-
-            // Fallback to single-character tokens
-            ttype = identify_single_char_token(c);
+            // Fallback to generic single-character tokens
+            TokenType ttype = identify_single_char_token(c);
             if (ttype == UNKNOWN) {
                 fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
-                free(tokens);
-                if (out_token_count) *out_token_count = 0;
-                return NULL;
+                free(tokens); if (out_token_count) *out_token_count = 0; return NULL;
             }
-
             tokens[count].type = ttype;
             tokens[count].lexeme[0] = c;
             tokens[count].lexeme[1] = '\0';
@@ -529,18 +517,19 @@ Token *tokenize(const char *source_code, size_t *out_token_count) {
         }
     }
 
-    if (count == 0) {
+    // Final check for unterminated formatted string
+    if (state == STATE_IN_FMT_STRING) {
+        fprintf(stderr, "Tokenizer error: Unterminated formatted string at end of file.\n");
         free(tokens);
         if (out_token_count) *out_token_count = 0;
         return NULL;
     }
+
+    // Shrink-to-fit and return logic
+    if (count == 0) { free(tokens); if (out_token_count) *out_token_count = 0; return NULL; }
     if (count < capacity) {
         Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
-        if (shrunk_tokens == NULL) {
-            perror("tokenize: realloc failed to shrink tokens array (continuing with larger array)");
-        } else {
-            tokens = shrunk_tokens;
-        }
+        if (shrunk_tokens) { tokens = shrunk_tokens; }
     }
     if (out_token_count) *out_token_count = count;
     return tokens;
