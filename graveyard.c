@@ -44,18 +44,12 @@ typedef struct {
     char *preprocessed_source;
     Token *tokens;
     size_t token_count;
-
-    // Future state can be added here
-    // AstNode *ast_root;
 } Graveyard;
 
 
 // --- Forward Declarations for Helper Functions ---
 
 char *load(FILE *file, long *out_length);
-char *entry(const char *source_code);
-char *uncomment(const char *source_code);
-char *unwhitespace(const char *source_code);
 TokenType identify_single_char_token(char c);
 TokenType identify_two_char_token(char first, char second);
 TokenType identify_three_char_token(char first, char second, char third);
@@ -88,44 +82,105 @@ void graveyard_free(Graveyard *gy) {
 // --- Core Logic Functions ---
 
 bool preprocess(Graveyard *gy) {
-    // This function takes the raw source from gy->source_code,
-    // runs it through the preprocessing steps, and stores the
-    // final result in gy->preprocessed_source.
+    // This single-pass function finds the global scope, removes comments,
+    // and strips whitespace, producing a clean string for the tokenizer.
     
-    char *cropped = entry(gy->source_code);
-    if (!cropped) {
-        fprintf(stderr, "Preprocessor error: Failed to find global scope.\n");
+    // 1. Find Boundaries (like the old 'entry' function)
+    const char *source = gy->source_code;
+    const char *start_ptr = strstr(source, "::{");
+    if (!start_ptr) {
+        fprintf(stderr, "Preprocessor error: Failed to find global scope start '::{'.\n");
+        return false;
+    }
+    start_ptr += 3; // Move past "::{"
+
+    const char *end_ptr = strrchr(start_ptr, '}');
+    if (!end_ptr) {
+        fprintf(stderr, "Preprocessor error: Failed to find global scope end '}'.\n");
         return false;
     }
 
-    char *uncommented = uncomment(cropped);
-    free(cropped);
-    if (!uncommented) {
-        fprintf(stderr, "Preprocessor error: Failed to remove comments.\n");
+    // 2. Single Allocation (safe upper bound)
+    size_t max_len = end_ptr - start_ptr;
+    char *result_buffer = malloc(max_len + 1);
+    if (!result_buffer) {
+        perror("preprocess: malloc failed");
+        return false;
+    }
+    char *dst = result_buffer;
+
+    // 3. Single-Pass State Machine
+    typedef enum {
+        S_DEFAULT, S_LINE_COMMENT, S_BLOCK_COMMENT,
+        S_DOUBLE_QUOTE_STRING, S_SINGLE_QUOTE_STRING
+    } PreprocessState;
+
+    PreprocessState state = S_DEFAULT;
+    const char *src = start_ptr;
+
+    while (src < end_ptr) {
+        char c = *src;
+        char next_c = (src + 1 < end_ptr) ? *(src + 1) : '\0';
+
+        switch (state) {
+            case S_DEFAULT:
+                if (c == '/' && next_c == '/') { state = S_LINE_COMMENT; src += 2; }
+                else if (c == '/' && next_c == '*') { state = S_BLOCK_COMMENT; src += 2; }
+                else if (c == '"') { state = S_DOUBLE_QUOTE_STRING; *dst++ = c; src++; }
+                else if (c == '\'') { state = S_SINGLE_QUOTE_STRING; *dst++ = c; src++; }
+                else if (isspace((unsigned char)c)) { src++; } // Skip whitespace
+                else { *dst++ = c; src++; }
+                break;
+
+            case S_LINE_COMMENT:
+                if (c == '\n') { state = S_DEFAULT; }
+                src++;
+                break;
+
+            case S_BLOCK_COMMENT:
+                if (c == '*' && next_c == '/') { state = S_DEFAULT; src += 2; }
+                else { src++; }
+                break;
+
+            case S_DOUBLE_QUOTE_STRING:
+            case S_SINGLE_QUOTE_STRING:
+                if (c == '\\') { // Handle escape sequence
+                    *dst++ = c; src++;
+                    if (src < end_ptr) { *dst++ = *src; src++; }
+                } else if ((state == S_DOUBLE_QUOTE_STRING && c == '"') || (state == S_SINGLE_QUOTE_STRING && c == '\'')) {
+                    state = S_DEFAULT; *dst++ = c; src++;
+                } else {
+                    *dst++ = c; src++;
+                }
+                break;
+        }
+    }
+
+    // Check for unterminated states
+    if (state == S_BLOCK_COMMENT) {
+        fprintf(stderr, "Preprocessor error: Unterminated block comment.\n");
+        free(result_buffer);
+        return false;
+    }
+    if (state == S_DOUBLE_QUOTE_STRING || state == S_SINGLE_QUOTE_STRING) {
+        fprintf(stderr, "Preprocessor error: Unterminated string literal.\n");
+        free(result_buffer);
         return false;
     }
 
-    char *unwhitespaced = unwhitespace(uncommented);
-    free(uncommented);
-    if (!unwhitespaced) {
-        fprintf(stderr, "Preprocessor error: Failed to remove whitespace.\n");
-        return false;
-    }
-    
-    gy->preprocessed_source = unwhitespaced;
+    // 4. Finalize and Store
+    *dst = '\0';
+    gy->preprocessed_source = result_buffer;
     return true;
 }
 
 bool tokenize(Graveyard *gy) {
     const char* source_code = gy->preprocessed_source;
-    size_t source_len = strlen(source_code); // Get length for safe bounds checking
+    size_t source_len = strlen(source_code);
     size_t capacity = 16;
     size_t count = 0;
     Token *tokens = malloc(capacity * sizeof(Token));
-    if (!tokens) { /* Malloc failure handling */
-        perror("tokenize: malloc failed");
-        return false;
-    }
+    if (!tokens) { perror("tokenize: malloc failed"); return false; }
 
     typedef enum { STATE_DEFAULT, STATE_IN_FMT_STRING } TokenizerState;
     TokenizerState state = STATE_DEFAULT;
@@ -216,7 +271,6 @@ bool tokenize(Graveyard *gy) {
              tokens[count].type = STRING;
              strncpy(tokens[count].lexeme, source_code + start, len); tokens[count].lexeme[len] = '\0'; count++;
         } else {
-            // --- Logic for Operators, including robust <sometype> vs < check ---
             if (c == '<') {
                 size_t lookahead_i = i + 1;
                 if (lookahead_i < source_len && (isalpha((unsigned char)source_code[lookahead_i]) || source_code[lookahead_i] == '_')) {
@@ -236,28 +290,21 @@ bool tokenize(Graveyard *gy) {
                     }
                 }
             }
-
             TokenType ttype = UNKNOWN;
-
-            // Look ahead for three-character tokens
             if (i + 2 < source_len) {
                 ttype = identify_three_char_token(source_code[i], source_code[i+1], source_code[i+2]);
                 if (ttype != UNKNOWN) {
-                    tokens[count].type = ttype;
                     snprintf(tokens[count].lexeme, 4, "%c%c%c", source_code[i], source_code[i+1], source_code[i+2]);
-                    count++; i += 3; continue;
+                    tokens[count].type = ttype; count++; i += 3; continue;
                 }
             }
-            // Look ahead for two-character tokens
             if (i + 1 < source_len) {
                 ttype = identify_two_char_token(source_code[i], source_code[i+1]);
                 if (ttype != UNKNOWN) {
-                    tokens[count].type = ttype;
                     snprintf(tokens[count].lexeme, 3, "%c%c", source_code[i], source_code[i+1]);
-                    count++; i += 2; continue;
+                    tokens[count].type = ttype; count++; i += 2; continue;
                 }
             }
-            // Fallback to single-character tokens
             ttype = identify_single_char_token(c);
             if (ttype == UNKNOWN) {
                 fprintf(stderr, "Tokenizer error: Unknown character encountered: '%c'\n", c);
@@ -273,8 +320,7 @@ bool tokenize(Graveyard *gy) {
         fprintf(stderr, "Tokenizer error: Unterminated formatted string at end of file.\n");
         goto cleanup_failure;
     }
-
-    if (count == 0) { goto cleanup_failure; }
+    if (count == 0) { free(tokens); gy->tokens = NULL; return true; } // Not a failure, just no tokens.
     
     if (count < capacity) {
         Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
@@ -294,21 +340,14 @@ cleanup_failure:
 
 // --- Stub Functions ---
 
-void parse(Graveyard *gy) {
-    (void)gy; // Suppress unused parameter warning
-    printf("Parsing source...\n\n");
-}
-void execute(Graveyard *gy) {
-    (void)gy;
-    printf("Executing source...\n\n");
-}
+void parse(Graveyard *gy) { (void)gy; printf("Parsing source...\n\n"); }
+void execute(Graveyard *gy) { (void)gy; printf("Executing source...\n\n"); }
 
 // --- Main Application Logic ---
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
-        // (Print modes...)
         return 1;
     }
 
@@ -341,18 +380,17 @@ int main(int argc, char *argv[]) {
     bool success = true;
 
     if (strcmp(gy->mode, "--preprocess") == 0 || strcmp(gy->mode, "-pre") == 0) {
+        printf("Loaded source file (%ld bytes)\n", source_length);
         if (preprocess(gy)) {
-            printf("%s\n", gy->preprocessed_source);
+            printf("Preprocessed Source:\n%s\n", gy->preprocessed_source);
         } else {
-            fprintf(stderr, "Preprocessing failed.\n");
             success = false;
         }
     } else if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
+        printf("Loaded source file (%ld bytes)\n", source_length);
         if (!preprocess(gy)) {
-            fprintf(stderr, "Preprocessing failed.\n");
             success = false;
         } else if (!tokenize(gy)) {
-            fprintf(stderr, "Tokenization failed.\n");
             success = false;
         } else {
             printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
@@ -370,7 +408,6 @@ int main(int argc, char *argv[]) {
 }
 
 // --- Helper Function Implementations ---
-// (These are simple and can be placed at the end)
 
 char *load(FILE *file, long *out_length) {
     if (out_length) { *out_length = 0; }
@@ -394,65 +431,6 @@ char *load(FILE *file, long *out_length) {
     if (out_length) { *out_length = (long)items_read; }
     return buffer;
 }
-
-char *entry(const char *source_code) {
-    const char *start = strstr(source_code, "::{");
-    if (!start) { return NULL; }
-    start += 3;
-    const char *end = strrchr(start, '}');
-    if (!end) { return NULL; }
-    size_t cropped_length = end - start;
-    char *cropped_source_code = malloc(cropped_length + 1);
-    if (!cropped_source_code) { return NULL; }
-    strncpy(cropped_source_code, start, cropped_length);
-    cropped_source_code[cropped_length] = '\0';
-    return cropped_source_code;
-}
-
-char *uncomment(const char *source_code) {
-    size_t len = strlen(source_code);
-    char *clean = malloc(len + 1);
-    if (!clean) { return NULL; }
-    char *dst = clean;
-    for (size_t i = 0; i < len;) {
-        if (i + 1 < len && source_code[i] == '/' && source_code[i + 1] == '/') {
-            i += 2;
-            while (i < len && source_code[i] != '\n') i++;
-        } else if (i + 1 < len && source_code[i] == '/' && source_code[i + 1] == '*') {
-            i += 2;
-            while (i + 1 < len && !(source_code[i] == '*' && source_code[i + 1] == '/')) i++;
-            if (i + 1 < len) i += 2; else i = len;
-        } else {
-            *dst++ = source_code[i++];
-        }
-    }
-    *dst = '\0';
-    return clean;
-}
-
-char *unwhitespace(const char *source_code) {
-    size_t len = strlen(source_code);
-    char *clean = malloc(len + 1);
-    if (!clean) { return NULL; }
-    char *dst = clean;
-    bool in_double_string = false;
-    bool in_single_string = false;
-    for (size_t i = 0; i < len; i++) {
-        char c = source_code[i];
-        if (c == '\\' && (in_double_string || in_single_string)) {
-            *dst++ = c;
-            if (i + 1 < len) { *dst++ = source_code[++i]; }
-            continue;
-        }
-        if (c == '"' && !in_single_string) { *dst++ = c; in_double_string = !in_double_string; }
-        else if (c == '\'' && !in_double_string) { *dst++ = c; in_single_string = !in_single_string; }
-        else if (in_double_string || in_single_string || !isspace((unsigned char)c)) { *dst++ = c; }
-    }
-    *dst = '\0';
-    return clean;
-}
-
-// --- Token Identification Helpers ---
 
 TokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == '*' && c2 == '*' && c3 == '=') return EXPONENTIATIONASSIGNMENT;
