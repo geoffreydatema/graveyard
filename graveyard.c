@@ -217,6 +217,15 @@ char *unwhitespace(const char *source_code) {
     for (size_t i = 0; i < len; i++) {
         char c = source_code[i];
 
+        // Check for an escape character
+        if (c == '\\' && (in_double_string || in_single_string)) {
+            *dst++ = c; // Copy the backslash
+            if (i + 1 < len) {
+                *dst++ = source_code[++i]; // Copy the escaped character and skip it
+            }
+            continue;
+        }
+
         if (c == '"' && !in_single_string) {
             *dst++ = c;
             in_double_string = !in_double_string;
