@@ -10,7 +10,7 @@
 // --- Type Definitions ---
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -20,6 +20,45 @@ typedef struct {
     int column;
 } Token;
 
+typedef enum {
+    AST_ASSIGNMENT,      // For variable assignments like: x = 1;
+    AST_IDENTIFIER,      // For referencing a variable or function name, like 'x'
+    AST_LITERAL_NUMBER   // For a literal number like '1'
+} AstNodeType;
+
+// Forward-declare the main struct so its pointers can be used inside our definitions
+typedef struct AstNode AstNode;
+
+// Node for: my_variable = <expression>
+typedef struct {
+    Token identifier; // The token for the variable name being assigned to
+    AstNode *value;   // The expression node for the value on the right-hand side
+} AstNodeAssignment;
+
+// Node for referencing an identifier (e.g., a variable or function name)
+typedef struct {
+    Token name; // The IDENTIFIER token itself
+} AstNodeIdentifier;
+
+// Node for a literal value, like a number or string
+typedef struct {
+    Token value;
+} AstNodeLiteral;
+
+// The main generic AST node struct, using a tagged union.
+// This allows a single struct type to represent many different kinds of nodes
+// in a memory-efficient way.
+struct AstNode {
+    AstNodeType type; // The tag that tells us which part of the union is active
+    int line;         // The line number for excellent error reporting!
+
+    union {
+        AstNodeAssignment   assignment;
+        AstNodeIdentifier   identifier;
+        AstNodeLiteral      literal;
+    } as;
+};
+
 // --- Main Interpreter Struct ---
 
 typedef struct {
@@ -28,6 +67,7 @@ typedef struct {
     char *source_code;
     Token *tokens;
     size_t token_count;
+    AstNode *ast_root; // Add a field to hold the root of the generated AST
 } Graveyard;
 
 char *load(FILE *file, long *out_length) {
@@ -143,20 +183,266 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->source_code = NULL;
     gy->tokens = NULL;
     gy->token_count = 0;
+    gy->ast_root = NULL;
     return gy;
+}
+
+void free_ast(AstNode* node) {
+    if (node == NULL) return;
+
+    switch (node->type) {
+        case AST_ASSIGNMENT:
+            // Recursively free the child node(s) before freeing the parent.
+            free_ast(node->as.assignment.value);
+            break;
+        case AST_IDENTIFIER:
+        case AST_LITERAL_NUMBER:
+            // These nodes have no children, so there's nothing more to free.
+            break;
+    }
+
+    // Free the node itself after its children have been freed.
+    free(node);
 }
 
 void graveyard_free(Graveyard *gy) {
     if (!gy) return;
     free(gy->source_code);
     free(gy->tokens);
+    free_ast(gy->ast_root);
     free(gy);
+}
+
+// --- Parser Implementation ---
+
+typedef struct {
+    Graveyard* gy;         // A link back to the main state if needed
+    Token* tokens;     // The array of tokens we are parsing
+    size_t     token_count;
+    size_t     current;    // Index of the next token to be processed
+    bool       had_error;
+} Parser;
+
+// Returns the current token without consuming it.
+static Token* peek(Parser* parser) {
+    return &parser->tokens[parser->current];
+}
+
+// Checks if we have run out of tokens to parse.
+static bool is_at_end(Parser* parser) {
+    return peek(parser)->type == TOKEN_EOF;
+}
+
+// Consumes the current token and returns it, advancing the cursor.
+static Token* consume(Parser* parser) {
+    if (!is_at_end(parser)) {
+        parser->current++;
+    }
+    // Return the token that was just consumed.
+    return &parser->tokens[parser->current - 1];
+}
+
+// Reports an error at a given token's location.
+static void error_at_token(Parser* parser, Token* token, const char* message) {
+    if (parser->had_error) return; // Only report the first error encountered.
+    parser->had_error = true;
+
+    fprintf(stderr, "Parser Error [line %d, col %d]: ", token->line, token->column);
+    if (token->type == TOKEN_EOF) {
+        fprintf(stderr, "at end of file. ");
+    } else {
+        fprintf(stderr, "at '%s'. ", token->lexeme);
+    }
+    fprintf(stderr, "%s\n", message);
+}
+
+// Checks if the current token is of the expected type. If not, reports an error.
+// This is for mandatory tokens, like a semicolon at the end of a statement.
+static Token* expect(Parser* parser, TokenType type, const char* message) {
+    if (peek(parser)->type == type) {
+        return consume(parser);
+    }
+    error_at_token(parser, peek(parser), message);
+    return NULL; // Return NULL on error
+}
+
+// Checks if the current token is of a given type. If so, consumes it and returns true.
+// This is for optional tokens, like an 'else' clause after an 'if'.
+static bool match(Parser* parser, TokenType type) {
+    if (is_at_end(parser)) return false;
+    if (peek(parser)->type == type) {
+        consume(parser);
+        return true;
+    }
+    return false;
+}
+
+// Forward-declare parsing functions that call each other.
+static AstNode* parse_statement(Parser* parser);
+static AstNode* parse_expression(Parser* parser);
+
+// Helper to create a new AST node and allocate memory for it.
+static AstNode* create_node(Parser* parser, AstNodeType type) {
+    AstNode* node = malloc(sizeof(AstNode));
+    if (!node) {
+        parser->had_error = true;
+        perror("AST node malloc failed");
+        return NULL;
+    }
+    node->type = type;
+    return node;
+}
+
+// Parses the most basic units of an expression.
+// For now, it only handles numbers and identifiers.
+static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, NUMBER)) {
+        Token literal_token = parser->tokens[parser->current - 1];
+        AstNode* node = create_node(parser, AST_LITERAL_NUMBER);
+        node->line = literal_token.line;
+        node->as.literal.value = literal_token;
+        return node;
+    }
+    
+    if (match(parser, IDENTIFIER)) {
+        Token identifier_token = parser->tokens[parser->current - 1];
+        AstNode* node = create_node(parser, AST_IDENTIFIER);
+        node->line = identifier_token.line;
+        node->as.identifier.name = identifier_token;
+        return node;
+    }
+
+    // If we get here, it's not a valid start to an expression.
+    error_at_token(parser, peek(parser), "Expected expression.");
+    return NULL;
+}
+
+// Parses an expression. For now, it's very simple.
+// This will grow significantly to handle +, -, *, etc.
+static AstNode* parse_expression(Parser* parser) {
+    return parse_primary(parser);
+}
+
+// Parses an assignment statement like 'x = 1;'
+static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
+    int line = identifier_node->line;
+    // The '=' token has already been matched by the caller.
+    AstNode* value = parse_expression(parser);
+    if (!value) return NULL; // Propagate error
+
+    AstNode* node = create_node(parser, AST_ASSIGNMENT);
+    node->line = line;
+    // In an assignment, the left side isn't a value, it's a target.
+    // For now, we reuse the identifier node, but later this might change.
+    node->as.assignment.identifier = identifier_node->as.identifier.name;
+    node->as.assignment.value = value;
+    
+    // We consumed the identifier node to create this new assignment node.
+    free(identifier_node);
+    
+    return node;
+}
+
+// This function acts as a dispatcher to the correct statement parser.
+static AstNode* parse_statement(Parser* parser) {
+    // Peek ahead to see if this is an assignment statement.
+    if (peek(parser)->type == IDENTIFIER &&
+        parser->tokens[parser->current + 1].type == ASSIGNMENT) {
+        
+        AstNode* identifier_node = parse_primary(parser);
+        match(parser, ASSIGNMENT); // Consume the '='
+        return parse_assignment(identifier_node, parser);
+    }
+
+    // For now, we don't have other statement types. Add them here later.
+    // e.g., if (match(parser, WHILE)) { return parse_while_statement(parser); }
+    
+    error_at_token(parser, peek(parser), "Expected a statement.");
+    return NULL;
+}
+
+// This is the top-level function that orchestrates the parsing.
+bool parse(Graveyard *gy) {
+    Parser parser;
+    parser.gy = gy;
+    parser.tokens = gy->tokens;
+    parser.token_count = gy->token_count;
+    parser.current = 0;
+    parser.had_error = false;
+
+    // A program is a series of statements. We'll only parse one for now.
+    // A real parser would loop here until is_at_end() is true.
+    gy->ast_root = parse_statement(&parser);
+    
+    // Check for a final semicolon
+    expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
+
+    if (parser.had_error) {
+        free_ast(gy->ast_root); // Clean up partially created tree on error
+        gy->ast_root = NULL;
+    }
+    
+    return !parser.had_error;
+}
+
+// --- AST Serialization ---
+
+// The recursive helper function that traverses the tree and prints it.
+static void write_ast_node(FILE* file, AstNode* node, int indent) {
+    if (node == NULL) {
+        return;
+    }
+
+    // Print indentation to show the tree structure
+    for (int i = 0; i < indent; ++i) {
+        fprintf(file, "  ");
+    }
+
+    // Print the node's information based on its type
+    switch (node->type) {
+        case AST_ASSIGNMENT:
+            // For an assignment, we print the variable name and recurse on the value
+            fprintf(file, "(ASSIGN identifier=\"%s\" line=%d\n", node->as.assignment.identifier.lexeme, node->line);
+            write_ast_node(file, node->as.assignment.value, indent + 1);
+            
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); } // Indent the closing parenthesis
+            fprintf(file, ")\n");
+            break;
+
+        case AST_IDENTIFIER:
+            fprintf(file, "(IDENTIFIER name=\"%s\" line=%d)\n", node->as.identifier.name.lexeme, node->line);
+            break;
+
+        case AST_LITERAL_NUMBER:
+            fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", node->as.literal.value.lexeme, node->line);
+            break;
+        
+        default:
+             fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
+             break;
+    }
+}
+
+// The main public function to save the entire AST to a file.
+bool save_ast_to_file(Graveyard* gy, const char* out_filename) {
+    FILE* file = fopen(out_filename, "w");
+    if (!file) {
+        perror("save_ast_to_file: Could not open file for writing");
+        return false;
+    }
+
+    printf("Writing AST to %s...\n", out_filename);
+    
+    // Start the recursive writing process from the root node
+    write_ast_node(file, gy->ast_root, 0);
+
+    fclose(file);
+    return true;
 }
 
 // --- Core Logic Functions ---
 
 bool tokenize(Graveyard *gy) {
-    // 1. Find boundaries first
     const char* source = gy->source_code;
     const char* start_ptr = strstr(source, "::{");
     if (!start_ptr) {
@@ -400,7 +686,11 @@ bool tokenize(Graveyard *gy) {
         goto cleanup_failure;
     }
 
-    if (count == 0 && (end_ptr - start_ptr) > 0) { /* No tokens generated, could be an issue */ }
+    tokens[count].type = TOKEN_EOF;
+    tokens[count].lexeme[0] = '\0';
+    tokens[count].line = line;
+    tokens[count].column = (current_ptr - line_start_ptr) + 1;
+    count++;
     
     if (count < capacity && count > 0) {
         Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
@@ -420,7 +710,6 @@ cleanup_failure:
 
 // --- Stub Functions ---
 
-void parse(Graveyard *gy) { (void)gy; printf("Parsing source...\n\n"); }
 void execute(Graveyard *gy) { (void)gy; printf("Executing source...\n\n"); }
 
 // --- Main Application Logic ---
@@ -428,6 +717,9 @@ void execute(Graveyard *gy) { (void)gy; printf("Executing source...\n\n"); }
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
+        fprintf(stderr, "Modes:\n");
+        fprintf(stderr, "  --tokenize, -t      Tokenize only and print tokens to console\n");
+        fprintf(stderr, "  --parse, -p         Parse the source and write the AST to a .gyc file\n");
         return 1;
     }
 
@@ -460,10 +752,9 @@ int main(int argc, char *argv[]) {
     bool success = true;
 
     if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-        printf("Loaded source file (%ld bytes)\n", source_length);
-        
+        printf("--- Tokenize Only Mode ---\n");
         if (!tokenize(gy)) {
-            fprintf(stderr, "Compilation failed during tokenization.\n");
+            fprintf(stderr, "Tokenization failed.\n");
             success = false;
         } else {
             printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
@@ -476,11 +767,39 @@ int main(int argc, char *argv[]) {
                        gy->tokens[i].lexeme);
             }
         }
+    } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
+        printf("--- Parse/Precompile Mode ---\n");
+        if (!tokenize(gy)) {
+            fprintf(stderr, "Compilation failed during tokenization.\n");
+            success = false;
+        } else if (!parse(gy)) {
+            fprintf(stderr, "Compilation failed during parsing.\n");
+            success = false;
+        } else {
+            printf("Parsing successful. AST created.\n");
+            
+            char out_filename[512];
+            strncpy(out_filename, gy->filename, sizeof(out_filename) - 5);
+            out_filename[sizeof(out_filename) - 5] = '\0';
+            
+            char* dot = strrchr(out_filename, '.');
+            if (dot != NULL) {
+                strcpy(dot, ".gyc");
+            } else {
+                strncat(out_filename, ".gyc", sizeof(out_filename) - strlen(out_filename) - 1);
+            }
+
+            if (!save_ast_to_file(gy, out_filename)) {
+                fprintf(stderr, "Failed to write AST file.\n");
+                success = false;
+            }
+        }
     } else {
-        fprintf(stderr, "Mode '%s' is not supported. Try '--tokenize'.\n", gy->mode);
+        fprintf(stderr, "Unknown mode: %s\n", gy->mode);
         success = false;
     }
     
     graveyard_free(gy);
+    
     return success ? 0 : 1;
 }
