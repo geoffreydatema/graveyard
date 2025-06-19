@@ -20,14 +20,21 @@ typedef struct {
     int column;
 } Token;
 
+// Forward-declare the main struct so its pointers can be used inside our definitions
+typedef struct AstNode AstNode;
+
+typedef struct {
+    AstNode** statements; // Dynamic array of pointers to statement nodes
+    size_t count;
+    size_t capacity;
+} AstNodeProgram;
+
 typedef enum {
+    AST_PROGRAM,
     AST_ASSIGNMENT,      // For variable assignments like: x = 1;
     AST_IDENTIFIER,      // For referencing a variable or function name, like 'x'
     AST_LITERAL_NUMBER   // For a literal number like '1'
 } AstNodeType;
-
-// Forward-declare the main struct so its pointers can be used inside our definitions
-typedef struct AstNode AstNode;
 
 // Node for: my_variable = <expression>
 typedef struct {
@@ -53,6 +60,7 @@ struct AstNode {
     int line;         // The line number for excellent error reporting!
 
     union {
+        AstNodeProgram      program;
         AstNodeAssignment   assignment;
         AstNodeIdentifier   identifier;
         AstNodeLiteral      literal;
@@ -191,17 +199,20 @@ void free_ast(AstNode* node) {
     if (node == NULL) return;
 
     switch (node->type) {
+        case AST_PROGRAM:
+            // NEW: Free each statement in the list, then free the list itself.
+            for (size_t i = 0; i < node->as.program.count; i++) {
+                free_ast(node->as.program.statements[i]);
+            }
+            free(node->as.program.statements);
+            break;
         case AST_ASSIGNMENT:
-            // Recursively free the child node(s) before freeing the parent.
             free_ast(node->as.assignment.value);
             break;
         case AST_IDENTIFIER:
         case AST_LITERAL_NUMBER:
-            // These nodes have no children, so there's nothing more to free.
             break;
     }
-
-    // Free the node itself after its children have been freed.
     free(node);
 }
 
@@ -370,15 +381,56 @@ bool parse(Graveyard *gy) {
     parser.current = 0;
     parser.had_error = false;
 
-    // A program is a series of statements. We'll only parse one for now.
-    // A real parser would loop here until is_at_end() is true.
-    gy->ast_root = parse_statement(&parser);
-    
-    // Check for a final semicolon
-    expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
+    AstNode* root = create_node(&parser, AST_PROGRAM);
+    if (!root) return false; // Malloc failed
+    root->line = 0; // The program node doesn't correspond to a single line
 
+    // Initialize the dynamic array of statements
+    root->as.program.capacity = 8;
+    root->as.program.count = 0;
+    root->as.program.statements = malloc(root->as.program.capacity * sizeof(AstNode*));
+    if (!root->as.program.statements) {
+        perror("AST statements malloc failed");
+        free(root);
+        parser.had_error = true;
+        return false;
+    }
+    
+    gy->ast_root = root;
+
+    // --- NEW: Loop until we run out of tokens ---
+    while (!is_at_end(&parser)) {
+        AstNode* statement = parse_statement(&parser);
+        if (parser.had_error) {
+            // If an error occurred, stop and clean up.
+            // Note: parse_statement is responsible for freeing its own partial nodes.
+            // We just need to free the program list.
+            goto cleanup;
+        }
+
+        // Expect a semicolon after every statement
+        expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
+        if (parser.had_error) goto cleanup;
+
+        // Add the successfully parsed statement to our program's list
+        if (root->as.program.count == root->as.program.capacity) {
+            size_t new_capacity = root->as.program.capacity * 2;
+            AstNode** new_statements = realloc(root->as.program.statements, new_capacity * sizeof(AstNode*));
+            if (!new_statements) {
+                perror("AST statements realloc failed");
+                parser.had_error = true;
+                goto cleanup;
+            }
+            root->as.program.statements = new_statements;
+            root->as.program.capacity = new_capacity;
+        }
+        root->as.program.statements[root->as.program.count++] = statement;
+    }
+
+cleanup:
     if (parser.had_error) {
-        free_ast(gy->ast_root); // Clean up partially created tree on error
+        // free_ast is now responsible for freeing the program node and its children
+        free_ast(gy->ast_root); 
         gy->ast_root = NULL;
     }
     
@@ -400,6 +452,16 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
 
     // Print the node's information based on its type
     switch (node->type) {
+        case AST_PROGRAM:
+            // NEW: Print the program node and then iterate through each statement.
+            fprintf(file, "(PROGRAM\n");
+            for (size_t i = 0; i < node->as.program.count; i++) {
+                write_ast_node(file, node->as.program.statements[i], indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+
         case AST_ASSIGNMENT:
             // For an assignment, we print the variable name and recurse on the value
             fprintf(file, "(ASSIGN identifier=\"%s\" line=%d\n", node->as.assignment.identifier.lexeme, node->line);
