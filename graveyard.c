@@ -23,18 +23,25 @@ typedef struct {
 // Forward-declare the main struct so its pointers can be used inside our definitions
 typedef struct AstNode AstNode;
 
+typedef enum {
+    AST_PROGRAM,
+    AST_BINARY_OP,
+    AST_ASSIGNMENT,
+    AST_IDENTIFIER,
+    AST_LITERAL_NUMBER
+} AstNodeType;
+
 typedef struct {
     AstNode** statements; // Dynamic array of pointers to statement nodes
     size_t count;
     size_t capacity;
 } AstNodeProgram;
 
-typedef enum {
-    AST_PROGRAM,
-    AST_ASSIGNMENT,      // For variable assignments like: x = 1;
-    AST_IDENTIFIER,      // For referencing a variable or function name, like 'x'
-    AST_LITERAL_NUMBER   // For a literal number like '1'
-} AstNodeType;
+typedef struct {
+    Token operator;
+    AstNode *left;
+    AstNode *right;
+} AstNodeBinaryOp;
 
 // Node for: my_variable = <expression>
 typedef struct {
@@ -61,6 +68,7 @@ struct AstNode {
 
     union {
         AstNodeProgram      program;
+        AstNodeBinaryOp     binary_op;
         AstNodeAssignment   assignment;
         AstNodeIdentifier   identifier;
         AstNodeLiteral      literal;
@@ -200,11 +208,14 @@ void free_ast(AstNode* node) {
 
     switch (node->type) {
         case AST_PROGRAM:
-            // NEW: Free each statement in the list, then free the list itself.
             for (size_t i = 0; i < node->as.program.count; i++) {
                 free_ast(node->as.program.statements[i]);
             }
             free(node->as.program.statements);
+            break;
+        case AST_BINARY_OP:
+            free_ast(node->as.binary_op.left);
+            free_ast(node->as.binary_op.right);
             break;
         case AST_ASSIGNMENT:
             free_ast(node->as.assignment.value);
@@ -304,9 +315,39 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
     return node;
 }
 
+// Add this helper function with the other parser helpers
+static int get_operator_precedence(TokenType type) {
+    switch (type) {
+        case EQUALITY:
+        case INEQUALITY:
+            return 1;
+        case LESSTHAN:
+        case GREATERTHAN:
+        case LESSTHANEQUAL:
+        case GREATERTHANEQUAL:
+            return 2;
+        case ADDITION:
+        case SUBTRACTION:
+            return 3;
+        case MULTIPLICATION:
+        case DIVISION:
+            return 4;
+        case EXPONENTIATION:
+            return 5;
+        default:
+            return 0; // Not a binary operator
+    }
+}
+
 // Parses the most basic units of an expression.
 // For now, it only handles numbers and identifiers.
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, LEFTPARENTHESES)) {
+        AstNode* expr = parse_expression(parser);
+        expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
+        return expr;
+    }
+
     if (match(parser, NUMBER)) {
         Token literal_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_LITERAL_NUMBER);
@@ -328,10 +369,40 @@ static AstNode* parse_primary(Parser* parser) {
     return NULL;
 }
 
-// Parses an expression. For now, it's very simple.
-// This will grow significantly to handle +, -, *, etc.
+// This replaces the old, simple parse_expression
 static AstNode* parse_expression(Parser* parser) {
-    return parse_primary(parser);
+    // First, parse the left-hand side (a number, identifier, or parenthesized expression)
+    AstNode* left = parse_primary(parser);
+    if (!left) return NULL;
+
+    // The Precedence Climbing loop
+    while (true) {
+        Token operator = *peek(parser);
+        int precedence = get_operator_precedence(operator.type);
+        // A precedence of 0 means it's not a binary operator we should handle here.
+        if (precedence == 0) {
+            break;
+        }
+
+        consume(parser); // Consume the operator
+
+        // Parse the right-hand side of the operator
+        AstNode* right = parse_primary(parser); // In a full parser, this would be a recursive call to parse_expression_with_precedence
+        if (!right) { free_ast(left); return NULL; }
+
+        // Create a new node for this binary operation
+        AstNode* node = create_node(parser, AST_BINARY_OP);
+        node->line = operator.line;
+        node->as.binary_op.operator = operator;
+        node->as.binary_op.left = left;
+        node->as.binary_op.right = right;
+        
+        // The new node becomes the new 'left' for the next iteration
+        // This is how chaining works (e.g., 1 + 2 + 3)
+        left = node;
+    }
+
+    return left;
 }
 
 // Parses an assignment statement like 'x = 1;'
@@ -461,24 +532,26 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
-
+        case AST_BINARY_OP:
+            fprintf(file, "(BINARY_OP op=\"%s\" line=%d\n", node->as.binary_op.operator.lexeme, node->line);
+            write_ast_node(file, node->as.binary_op.left, indent + 1);
+            write_ast_node(file, node->as.binary_op.right, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
         case AST_ASSIGNMENT:
-            // For an assignment, we print the variable name and recurse on the value
             fprintf(file, "(ASSIGN identifier=\"%s\" line=%d\n", node->as.assignment.identifier.lexeme, node->line);
             write_ast_node(file, node->as.assignment.value, indent + 1);
             
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); } // Indent the closing parenthesis
             fprintf(file, ")\n");
             break;
-
         case AST_IDENTIFIER:
             fprintf(file, "(IDENTIFIER name=\"%s\" line=%d)\n", node->as.identifier.name.lexeme, node->line);
             break;
-
         case AST_LITERAL_NUMBER:
             fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", node->as.literal.value.lexeme, node->line);
             break;
-        
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
