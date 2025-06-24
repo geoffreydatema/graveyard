@@ -1138,7 +1138,42 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
     return create_null_value();
 }
 
-// --- Main Application Logic ---
+// This helper function encapsulates the full compilation pipeline:
+// source -> tokens -> AST -> .gyc file
+static bool compile_source(Graveyard* gy) {
+    if (!tokenize(gy)) {
+        fprintf(stderr, "Compilation failed during tokenization.\n");
+        return false;
+    }
+    if (!parse(gy)) {
+        fprintf(stderr, "Compilation failed during parsing.\n");
+        return false;
+    }
+
+    printf("Parsing successful. AST created.\n");
+    
+    // Generate the output filename (e.g., test.gy -> test.gyc)
+    char out_filename[512];
+    strncpy(out_filename, gy->filename, sizeof(out_filename) - 5);
+    out_filename[sizeof(out_filename) - 5] = '\0';
+    
+    char* dot = strrchr(out_filename, '.');
+    if (dot != NULL) {
+        strcpy(dot, ".gyc");
+    } else {
+        strncat(out_filename, ".gyc", sizeof(out_filename) - strlen(out_filename) - 1);
+    }
+
+    // Save the generated AST to the file
+    if (save_ast_to_file(gy, out_filename)) {
+        printf("Successfully wrote AST to %s\n", out_filename);
+    } else {
+        fprintf(stderr, "Failed to write AST file.\n");
+        return false;
+    }
+    
+    return true;
+}
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
@@ -1180,7 +1215,7 @@ int main(int argc, char *argv[]) {
     bool success = true;
 
     if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-        // This mode ONLY tokenizes for debugging purposes.
+        // This debug mode remains separate as it doesn't parse or save.
         if (!tokenize(gy)) {
             fprintf(stderr, "Tokenization failed.\n");
             success = false;
@@ -1188,31 +1223,34 @@ int main(int argc, char *argv[]) {
             printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
         }
     } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
-        // This mode runs the pipeline up to producing the .gyc file.
-        if (!tokenize(gy) || !parse(gy)) {
-            fprintf(stderr, "Compilation failed.\n");
+        // The parse command is now just a call to our compile helper.
+        if (!compile_source(gy)) {
             success = false;
-        } else {
-            printf("Parsing successful. AST created.\n");
-            // (Code to generate .gyc filename and save AST...)
         }
     } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
-        // This mode runs the full pipeline silently.
-        if (!tokenize(gy) || !parse(gy) || !execute(gy)) {
-            fprintf(stderr, "Execution failed.\n");
+        // First, compile and save the source. If that succeeds, then execute.
+        if (compile_source(gy)) {
+            if (!execute(gy)) {
+                fprintf(stderr, "Execution failed.\n");
+                success = false;
+            }
+        } else {
             success = false;
         }
-        // No output on success.
     } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
-        // This mode runs the full pipeline and prints the final result.
-        if (!tokenize(gy) || !parse(gy) || !execute(gy)) {
-            fprintf(stderr, "Debug execution failed.\n");
-            success = false;
+        // First, compile and save. If that succeeds, execute and print the result.
+        if (compile_source(gy)) {
+            if (execute(gy)) {
+                printf("--- Debug Execution Result ---\n");
+                printf("Final statement evaluated to: ");
+                print_value(gy->last_executed_value);
+                printf("\n");
+            } else {
+                fprintf(stderr, "Execution failed.\n");
+                success = false;
+            }
         } else {
-            printf("--- Debug Execution Result ---\n");
-            printf("Final statement evaluated to: ");
-            print_value(gy->last_executed_value);
-            printf("\n");
+            success = false;
         }
     } else {
         fprintf(stderr, "Unknown mode: %s\n", gy->mode);
