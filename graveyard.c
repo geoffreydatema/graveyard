@@ -481,10 +481,6 @@ static bool match(Parser* parser, TokenType type) {
     return false;
 }
 
-// Forward-declare parsing functions that call each other.
-static AstNode* parse_statement(Parser* parser);
-static AstNode* parse_expression(Parser* parser);
-
 // Helper to create a new AST node and allocate memory for it.
 static AstNode* create_node(Parser* parser, AstNodeType type) {
     AstNode* node = malloc(sizeof(AstNode));
@@ -521,11 +517,16 @@ static int get_operator_precedence(TokenType type) {
     }
 }
 
+// Forward-declare parsing functions that call each other.
+static AstNode* parse_statement(Parser* parser);
+static AstNode* parse_expression(Parser* parser, int min_precedence);
+
 // Parses the most basic units of an expression.
 // For now, it only handles numbers and identifiers.
 static AstNode* parse_primary(Parser* parser) {
     if (match(parser, LEFTPARENTHESES)) {
-        AstNode* expr = parse_expression(parser);
+        // A parenthesized expression starts a new precedence context.
+        AstNode* expr = parse_expression(parser, 1);
         expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
         return expr;
     }
@@ -551,36 +552,42 @@ static AstNode* parse_primary(Parser* parser) {
     return NULL;
 }
 
-// This replaces the old, simple parse_expression
-static AstNode* parse_expression(Parser* parser) {
-    // First, parse the left-hand side (a number, identifier, or parenthesized expression)
+// This is the new, precedence-aware expression parser.
+static AstNode* parse_expression(Parser* parser, int min_precedence) {
+    // First, parse a "primary" expression, which is the start of our sequence.
+    // This could be a number, an identifier, or a parenthesized expression.
     AstNode* left = parse_primary(parser);
     if (!left) return NULL;
 
     // The Precedence Climbing loop
     while (true) {
-        Token operator = *peek(parser);
-        int precedence = get_operator_precedence(operator.type);
-        // A precedence of 0 means it's not a binary operator we should handle here.
-        if (precedence == 0) {
+        Token operator_token = *peek(parser);
+        int current_precedence = get_operator_precedence(operator_token.type);
+
+        // If the next token is not an operator, or its precedence is too low,
+        // we're done with this sub-expression.
+        if (current_precedence == 0 || current_precedence < min_precedence) {
             break;
         }
 
-        consume(parser); // Consume the operator
+        // We found an operator with good precedence, so consume it.
+        consume(parser);
 
-        // Parse the right-hand side of the operator
-        AstNode* right = parse_primary(parser); // In a full parser, this would be a recursive call to parse_expression_with_precedence
+        // Recursively call parse_expression for the right-hand side.
+        // This is the magic: we pass a higher precedence level to ensure that
+        // operators to the right are handled correctly.
+        AstNode* right = parse_expression(parser, current_precedence + 1);
         if (!right) { free_ast(left); return NULL; }
 
-        // Create a new node for this binary operation
+        // Combine the left, operator, and right into a new binary operation node.
         AstNode* node = create_node(parser, AST_BINARY_OP);
-        node->line = operator.line;
-        node->as.binary_op.operator = operator;
+        node->line = operator_token.line;
+        node->as.binary_op.operator = operator_token;
         node->as.binary_op.left = left;
         node->as.binary_op.right = right;
         
-        // The new node becomes the new 'left' for the next iteration
-        // This is how chaining works (e.g., 1 + 2 + 3)
+        // This new node now becomes the 'left' side for the next loop iteration.
+        // This is how we handle chains like 1 + 2 + 3.
         left = node;
     }
 
@@ -591,7 +598,9 @@ static AstNode* parse_expression(Parser* parser) {
 static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
     int line = identifier_node->line;
     // The '=' token has already been matched by the caller.
-    AstNode* value = parse_expression(parser);
+
+    // Call parse_expression with the lowest precedence to parse the whole right-hand side.
+    AstNode* value = parse_expression(parser, 1);
     if (!value) return NULL; // Propagate error
 
     AstNode* node = create_node(parser, AST_ASSIGNMENT);
