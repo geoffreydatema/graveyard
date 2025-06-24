@@ -1053,6 +1053,29 @@ bool execute(Graveyard *gy) {
     return true; 
 }
 
+// --- Execution Helpers ---
+
+// A helper function to check if two Graveyard values are equal.
+// This centralizes the language's rules for equality.
+static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
+    // If the types are different, they can't be equal.
+    // (A more advanced language might allow '5 == "5"', but we'll keep it strict for now).
+    if (a.type != b.type) {
+        return false;
+    }
+
+    // Compare the values based on their shared type.
+    switch (a.type) {
+        case VAL_NULL:   return true; // null is always equal to null
+        case VAL_BOOL:   return a.as.boolean == b.as.boolean;
+        case VAL_NUMBER: return a.as.number == b.as.number;
+        // When you add strings, the case would look like this:
+        // case VAL_STRING: return strcmp(a.as.string->chars, b.as.string->chars) == 0;
+        default:
+            return false; // Should be unreachable for types we handle
+    }
+}
+
 // The recursive AST walker that evaluates each node.
 // Every expression-like node will return the GraveyardValue it evaluates to.
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
@@ -1102,35 +1125,57 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BINARY_OP: {
-            // Recursively execute the left and right children to get their values.
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
 
-            // For now, we only perform math on numbers.
-            // A full implementation would check for string concatenation, etc.
-            if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) {
-                fprintf(stderr, "Runtime Error [line %d]: Operands must be numbers for binary operations.\n", node->line);
-                return create_null_value();
-            }
-
-            // Perform the operation based on the token type.
             switch (node->as.binary_op.operator.type) {
-                case ADDITION:       return create_number_value(left.as.number + right.as.number);
-                case SUBTRACTION:    return create_number_value(left.as.number - right.as.number);
-                case MULTIPLICATION: return create_number_value(left.as.number * right.as.number);
+                // --- Equality Operators (use the new helper) ---
+                case EQUALITY:
+                    return create_bool_value(are_values_equal(left, right));
+                case INEQUALITY:
+                    return create_bool_value(!are_values_equal(left, right));
+
+                // --- Relational & Arithmetic Operators (still require numbers for now) ---
+                case GREATERTHAN:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_bool_value(left.as.number > right.as.number);
+                case LESSTHAN:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_bool_value(left.as.number < right.as.number);
+                case GREATERTHANEQUAL:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_bool_value(left.as.number >= right.as.number);
+                case LESSTHANEQUAL:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_bool_value(left.as.number <= right.as.number);
+                
+                case ADDITION:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_number_value(left.as.number + right.as.number);
+                case SUBTRACTION:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_number_value(left.as.number - right.as.number);
+                case MULTIPLICATION:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    return create_number_value(left.as.number * right.as.number);
                 case DIVISION:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
                     if (right.as.number == 0) {
                         fprintf(stderr, "Runtime Error [line %d]: Division by zero.\n", node->line);
                         return create_null_value();
                     }
                     return create_number_value(left.as.number / right.as.number);
                 case EXPONENTIATION:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
                     return create_number_value(pow(left.as.number, right.as.number));
                 
                 default:
-                    fprintf(stderr, "Runtime Error [line %d]: Unknown binary operator.\n", node->line);
+                    fprintf(stderr, "Runtime Error [line %d]: Unknown or unimplemented binary operator.\n", node->line);
                     return create_null_value();
             }
+        type_error:
+            fprintf(stderr, "Runtime Error [line %d]: Operands have incompatible types for this operation.\n", node->line);
+            return create_null_value();
         }
     }
 
