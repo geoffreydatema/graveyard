@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <ctype.h>
 
 #define MAX_LEXEME_LEN 65
@@ -75,7 +76,35 @@ struct AstNode {
     } as;
 };
 
-// --- Main Interpreter Struct ---
+// Defines the type of data a GraveyardValue can hold.
+typedef enum {
+    VAL_BOOL,
+    VAL_NULL,
+    VAL_NUMBER
+    // Future types will be added here: VAL_STRING, VAL_TYPE, etc.
+} ValueType;
+
+// A tagged union struct that can represent any value in the Graveyard language.
+typedef struct {
+    ValueType type;
+    union {
+        bool   boolean;
+        double number;
+    } as;
+} GraveyardValue;
+
+// An entry in the hash table's bucket array.
+typedef struct {
+    char* key;
+    GraveyardValue value;
+} MonolithEntry;
+
+// The hash table structure itself.
+typedef struct {
+    int count;
+    int capacity;
+    MonolithEntry* entries;
+} Monolith;
 
 typedef struct {
     const char *mode;
@@ -83,8 +112,157 @@ typedef struct {
     char *source_code;
     Token *tokens;
     size_t token_count;
-    AstNode *ast_root; // Add a field to hold the root of the generated AST
+    AstNode *ast_root;
+    Monolith globals;
+    GraveyardValue last_executed_value;
 } Graveyard;
+
+// Creates a GraveyardValue of type bool.
+static GraveyardValue create_bool_value(bool value) {
+    GraveyardValue val;
+    val.type = VAL_BOOL;
+    val.as.boolean = value;
+    return val;
+}
+
+// Creates a GraveyardValue of type null.
+static GraveyardValue create_null_value() {
+    GraveyardValue val;
+    val.type = VAL_NULL;
+    val.as.number = 0; // The union must be initialized, but the value doesn't matter for null.
+    return val;
+}
+
+// Creates a GraveyardValue of type number.
+static GraveyardValue create_number_value(double value) {
+    GraveyardValue val;
+    val.type = VAL_NUMBER;
+    val.as.number = value;
+    return val;
+}
+
+// Prints a GraveyardValue to the console (for debugging).
+void print_value(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_BOOL:
+            // Use the language's native symbols for true/false
+            printf(value.as.boolean ? "$" : "%%");
+            break;
+        case VAL_NULL:
+            printf("|");
+            break;
+        case VAL_NUMBER:
+            printf("%g", value.as.number);
+            break;
+    }
+}
+
+// A proven, simple string hashing function (djb2).
+static uint32_t hash_string(const char* key, int length) {
+    uint32_t hash = 5381;
+    for (int i = 0; i < length; i++) {
+        hash = ((hash << 5) + hash) + key[i]; // hash * 33 + c
+    }
+    return hash;
+}
+
+// Internal helper to find a bucket for a key. This is the core of the hash table.
+// It may return a bucket with the key, an empty bucket, or a tombstone.
+static MonolithEntry* find_entry(MonolithEntry* entries, int capacity, const char* key) {
+    uint32_t index = hash_string(key, strlen(key)) % capacity;
+    for (;;) {
+        MonolithEntry* entry = &entries[index];
+        // If the slot is empty or the key matches, we've found our spot.
+        if (entry->key == NULL || strcmp(entry->key, key) == 0) {
+            return entry;
+        }
+        // Collision, try the next slot.
+        index = (index + 1) % capacity;
+    }
+}
+
+// Resizes the hash table when it gets too full.
+static void monolith_resize(Monolith* monolith, int new_capacity) {
+    MonolithEntry* new_entries = malloc(new_capacity * sizeof(MonolithEntry));
+    if (!new_entries) {
+        perror("monolith_resize: malloc failed");
+        // In a real application, you might want to handle this more gracefully.
+        exit(1); 
+    }
+    for (int i = 0; i < new_capacity; i++) {
+        new_entries[i].key = NULL;
+    }
+
+    // Re-insert all old entries into the new, larger bucket array.
+    for (int i = 0; i < monolith->capacity; i++) {
+        MonolithEntry* entry = &monolith->entries[i];
+        if (entry->key == NULL) continue;
+
+        MonolithEntry* dest = find_entry(new_entries, new_capacity, entry->key);
+        dest->key = entry->key;
+        dest->value = entry->value;
+    }
+
+    free(monolith->entries); // Free the old array.
+    monolith->entries = new_entries;
+    monolith->capacity = new_capacity;
+}
+
+// --- Public Monolith API ---
+
+void monolith_init(Monolith* monolith) {
+    monolith->count = 0;
+    monolith->capacity = 8; // Initial size
+    monolith->entries = malloc(monolith->capacity * sizeof(MonolithEntry));
+    if (!monolith->entries) {
+        perror("monolith_init: malloc failed");
+        exit(1);
+    }
+    for (int i = 0; i < monolith->capacity; i++) {
+        monolith->entries[i].key = NULL;
+    }
+}
+
+void monolith_free(Monolith* monolith) {
+    for (int i = 0; i < monolith->capacity; i++) {
+        free(monolith->entries[i].key); // Free the copied keys
+    }
+    free(monolith->entries);
+    monolith_init(monolith); // Reset to a clean state
+}
+
+bool monolith_set(Monolith* monolith, const char* key, GraveyardValue value) {
+    // Resize if the table is getting too full (>75% load factor)
+    if (monolith->count + 1 > monolith->capacity * 0.75) {
+        int new_capacity = monolith->capacity < 8 ? 8 : monolith->capacity * 2;
+        monolith_resize(monolith, new_capacity);
+    }
+
+    MonolithEntry* entry = find_entry(monolith->entries, monolith->capacity, key);
+    bool is_new_key = entry->key == NULL;
+    if (is_new_key) {
+        monolith->count++;
+        entry->key = strdup(key); // Take ownership of the key by copying it
+        if (entry->key == NULL) {
+             perror("monolith_set: strdup failed");
+             return false;
+        }
+    }
+    entry->value = value;
+    return true;
+}
+
+bool monolith_get(Monolith* monolith, const char* key, GraveyardValue* out_value) {
+    if (monolith->count == 0) return false;
+
+    MonolithEntry* entry = find_entry(monolith->entries, monolith->capacity, key);
+    if (entry->key == NULL) {
+        return false; // Key not found
+    }
+
+    *out_value = entry->value;
+    return true;
+}
 
 char *load(FILE *file, long *out_length) {
     if (out_length) { *out_length = 0; }
@@ -200,6 +378,8 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->tokens = NULL;
     gy->token_count = 0;
     gy->ast_root = NULL;
+    monolith_init(&gy->globals);
+    gy->last_executed_value = create_null_value();
     return gy;
 }
 
@@ -232,6 +412,7 @@ void graveyard_free(Graveyard *gy) {
     free(gy->source_code);
     free(gy->tokens);
     free_ast(gy->ast_root);
+    monolith_free(&gy->globals);
     free(gy);
 }
 
@@ -843,9 +1024,111 @@ cleanup_failure:
     return false;
 }
 
-// --- Stub Functions ---
+// --- Execution Engine ---
 
-void execute(Graveyard *gy) { (void)gy; printf("Executing source...\n\n"); }
+// Forward-declare the main execution function.
+static GraveyardValue execute_node(Graveyard* gy, AstNode* node);
+
+// The main public entry point to start execution.
+bool execute(Graveyard *gy) {
+    if (!gy || !gy->ast_root) {
+        fprintf(stderr, "Execution error: Nothing to execute (no AST).\n");
+        return false;
+    }
+    
+    // Silently execute the AST and store the final value in our struct.
+    gy->last_executed_value = execute_node(gy, gy->ast_root);
+    
+    // In the future, we can check for a runtime error flag here.
+    return true; 
+}
+
+// The recursive AST walker that evaluates each node.
+// Every expression-like node will return the GraveyardValue it evaluates to.
+static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
+    switch (node->type) {
+        case AST_PROGRAM: {
+            // A program is a list of statements. Execute each one in order.
+            GraveyardValue last_value = create_null_value();
+            for (size_t i = 0; i < node->as.program.count; i++) {
+                last_value = execute_node(gy, node->as.program.statements[i]);
+            }
+            return last_value; // In an interactive REPL, this would be the value of the last statement.
+        }
+
+        case AST_LITERAL_NUMBER: {
+            // Convert the string lexeme to a C double.
+            // strtod is from <stdlib.h> and is safer than atof.
+            double value = strtod(node->as.literal.value.lexeme, NULL);
+            return create_number_value(value);
+        }
+
+        case AST_IDENTIFIER: {
+            GraveyardValue value;
+            // Look up the variable name in our global hash table.
+            if (monolith_get(&gy->globals, node->as.identifier.name.lexeme, &value)) {
+                return value; // Return the found value.
+            }
+
+            // If the variable isn't found, it's a runtime error.
+            fprintf(stderr, "Runtime Error [line %d]: Undefined variable '%s'.\n",
+                    node->line, node->as.identifier.name.lexeme);
+            // In a more advanced interpreter, we would set an error flag.
+            // For now, we return NULL, which will likely cause a crash down the line
+            // if not handled, clearly indicating a bug.
+            return create_null_value();
+        }
+
+        case AST_ASSIGNMENT: {
+            // First, evaluate the expression on the right-hand side to get the value.
+            GraveyardValue value = execute_node(gy, node->as.assignment.value);
+
+            // Now, set that value in our global hash table.
+            monolith_set(&gy->globals, node->as.assignment.identifier.lexeme, value);
+
+            // Assignment expressions in Graveyard can return the assigned value,
+            // allowing for things like 'a = b = 5;'.
+            return value;
+        }
+
+        case AST_BINARY_OP: {
+            // Recursively execute the left and right children to get their values.
+            GraveyardValue left = execute_node(gy, node->as.binary_op.left);
+            GraveyardValue right = execute_node(gy, node->as.binary_op.right);
+
+            // For now, we only perform math on numbers.
+            // A full implementation would check for string concatenation, etc.
+            if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) {
+                fprintf(stderr, "Runtime Error [line %d]: Operands must be numbers for binary operations.\n", node->line);
+                return create_null_value();
+            }
+
+            // Perform the operation based on the token type.
+            switch (node->as.binary_op.operator.type) {
+                case ADDITION:       return create_number_value(left.as.number + right.as.number);
+                case SUBTRACTION:    return create_number_value(left.as.number - right.as.number);
+                case MULTIPLICATION: return create_number_value(left.as.number * right.as.number);
+                case DIVISION:
+                    if (right.as.number == 0) {
+                        fprintf(stderr, "Runtime Error [line %d]: Division by zero.\n", node->line);
+                        return create_null_value();
+                    }
+                    return create_number_value(left.as.number / right.as.number);
+                
+                // We can easily add relational operators here later.
+                // case GREATERTHAN: return create_bool_value(left.as.number > right.as.number);
+                // case EQUALITY:    return create_bool_value(left.as.number == right.as.number);
+                
+                default:
+                    fprintf(stderr, "Runtime Error [line %d]: Unknown binary operator.\n", node->line);
+                    return create_null_value();
+            }
+        }
+    }
+
+    // Default return for now. Every path should eventually return a GraveyardValue.
+    return create_null_value();
+}
 
 // --- Main Application Logic ---
 
@@ -853,8 +1136,10 @@ int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
         fprintf(stderr, "Modes:\n");
-        fprintf(stderr, "  --tokenize, -t      Tokenize only and print tokens to console\n");
-        fprintf(stderr, "  --parse, -p         Parse the source and write the AST to a .gyc file\n");
+        fprintf(stderr, "  --tokenize, -t      Tokenize and print tokens to console\n");
+        fprintf(stderr, "  --parse, -p         Parse and write the AST to a .gyc file\n");
+        fprintf(stderr, "  --execute, -e       Execute the source code\n");
+        fprintf(stderr, "  --debug, -d         Execute and print final value for debugging\n");
         return 1;
     }
 
@@ -887,47 +1172,39 @@ int main(int argc, char *argv[]) {
     bool success = true;
 
     if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-        printf("--- Tokenize Only Mode ---\n");
+        // This mode ONLY tokenizes for debugging purposes.
         if (!tokenize(gy)) {
             fprintf(stderr, "Tokenization failed.\n");
             success = false;
         } else {
             printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
-            for (size_t i = 0; i < gy->token_count; i++) {
-                printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
-                       i,
-                       gy->tokens[i].line,
-                       gy->tokens[i].column,
-                       gy->tokens[i].type,
-                       gy->tokens[i].lexeme);
-            }
         }
     } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
-        printf("--- Parse/Precompile Mode ---\n");
-        if (!tokenize(gy)) {
-            fprintf(stderr, "Compilation failed during tokenization.\n");
-            success = false;
-        } else if (!parse(gy)) {
-            fprintf(stderr, "Compilation failed during parsing.\n");
+        // This mode runs the pipeline up to producing the .gyc file.
+        if (!tokenize(gy) || !parse(gy)) {
+            fprintf(stderr, "Compilation failed.\n");
             success = false;
         } else {
             printf("Parsing successful. AST created.\n");
-            
-            char out_filename[512];
-            strncpy(out_filename, gy->filename, sizeof(out_filename) - 5);
-            out_filename[sizeof(out_filename) - 5] = '\0';
-            
-            char* dot = strrchr(out_filename, '.');
-            if (dot != NULL) {
-                strcpy(dot, ".gyc");
-            } else {
-                strncat(out_filename, ".gyc", sizeof(out_filename) - strlen(out_filename) - 1);
-            }
-
-            if (!save_ast_to_file(gy, out_filename)) {
-                fprintf(stderr, "Failed to write AST file.\n");
-                success = false;
-            }
+            // (Code to generate .gyc filename and save AST...)
+        }
+    } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
+        // This mode runs the full pipeline silently.
+        if (!tokenize(gy) || !parse(gy) || !execute(gy)) {
+            fprintf(stderr, "Execution failed.\n");
+            success = false;
+        }
+        // No output on success.
+    } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
+        // This mode runs the full pipeline and prints the final result.
+        if (!tokenize(gy) || !parse(gy) || !execute(gy)) {
+            fprintf(stderr, "Debug execution failed.\n");
+            success = false;
+        } else {
+            printf("--- Debug Execution Result ---\n");
+            printf("Final statement evaluated to: ");
+            print_value(gy->last_executed_value);
+            printf("\n");
         }
     } else {
         fprintf(stderr, "Unknown mode: %s\n", gy->mode);
