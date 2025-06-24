@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <math.h>
 
 #define MAX_LEXEME_LEN 65
 
@@ -1114,10 +1115,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         return create_null_value();
                     }
                     return create_number_value(left.as.number / right.as.number);
-                
-                // We can easily add relational operators here later.
-                // case GREATERTHAN: return create_bool_value(left.as.number > right.as.number);
-                // case EQUALITY:    return create_bool_value(left.as.number == right.as.number);
+                case EXPONENTIATION:
+                    return create_number_value(pow(left.as.number, right.as.number));
                 
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown binary operator.\n", node->line);
