@@ -30,7 +30,8 @@ typedef enum {
     AST_BINARY_OP,
     AST_ASSIGNMENT,
     AST_IDENTIFIER,
-    AST_LITERAL_NUMBER
+    AST_LITERAL_NUMBER,
+    AST_PRINT_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -61,6 +62,13 @@ typedef struct {
     Token value;
 } AstNodeLiteral;
 
+// Node for a print statement, holds a list of expressions to be printed.
+typedef struct {
+    AstNode** expressions; // Dynamic array of pointers to expression nodes
+    size_t count;
+    size_t capacity;
+} AstNodePrintStmt;
+
 // The main generic AST node struct, using a tagged union.
 // This allows a single struct type to represent many different kinds of nodes
 // in a memory-efficient way.
@@ -74,6 +82,7 @@ struct AstNode {
         AstNodeAssignment   assignment;
         AstNodeIdentifier   identifier;
         AstNodeLiteral      literal;
+        AstNodePrintStmt    print_stmt;
     } as;
 };
 
@@ -394,6 +403,12 @@ void free_ast(AstNode* node) {
             }
             free(node->as.program.statements);
             break;
+        case AST_PRINT_STATEMENT:
+            for (size_t i = 0; i < node->as.print_stmt.count; i++) {
+                free_ast(node->as.print_stmt.expressions[i]);
+            }
+            free(node->as.print_stmt.expressions);
+            break;
         case AST_BINARY_OP:
             free_ast(node->as.binary_op.left);
             free_ast(node->as.binary_op.right);
@@ -616,9 +631,57 @@ static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
     return node;
 }
 
+// Parses a print statement like '>> a, b + c, "hello";'
+static AstNode* parse_print_statement(Parser* parser) {
+    // We get here right after the '>>' (PRINT) token has been consumed.
+    int line = parser->tokens[parser->current - 1].line;
+
+    AstNode* node = create_node(parser, AST_PRINT_STATEMENT);
+    if (!node) return NULL;
+    node->line = line;
+
+    // Initialize the dynamic array of expressions
+    node->as.print_stmt.capacity = 4;
+    node->as.print_stmt.count = 0;
+    node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
+    if (!node->as.print_stmt.expressions) {
+        perror("AST print expressions malloc failed");
+        free(node);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    // A do-while loop is perfect for comma-separated lists
+    // that must have at least one item.
+    do {
+        // Add the parsed expression to our list
+        if (node->as.print_stmt.count == node->as.print_stmt.capacity) {
+            size_t new_capacity = node->as.print_stmt.capacity * 2;
+            AstNode** new_expressions = realloc(node->as.print_stmt.expressions, new_capacity * sizeof(AstNode*));
+            if (!new_expressions) {
+                perror("AST print expressions realloc failed");
+                parser->had_error = true;
+                // Note: a more robust implementation would free the whole node here.
+                return NULL;
+            }
+            node->as.print_stmt.expressions = new_expressions;
+            node->as.print_stmt.capacity = new_capacity;
+        }
+        
+        node->as.print_stmt.expressions[node->as.print_stmt.count++] = parse_expression(parser, 1);
+
+    } while (match(parser, COMMA)); // Keep going as long as we find a comma
+
+    return node;
+}
+
 // This function acts as a dispatcher to the correct statement parser.
 static AstNode* parse_statement(Parser* parser) {
-    // Peek ahead to see if this is an assignment statement.
+    if (match(parser, PRINT)) {
+        return parse_print_statement(parser);
+    }
+    
+    // Check for an assignment statement.
     if (peek(parser)->type == IDENTIFIER &&
         parser->tokens[parser->current + 1].type == ASSIGNMENT) {
         
@@ -627,9 +690,8 @@ static AstNode* parse_statement(Parser* parser) {
         return parse_assignment(identifier_node, parser);
     }
 
-    // For now, we don't have other statement types. Add them here later.
-    // e.g., if (match(parser, WHILE)) { return parse_while_statement(parser); }
-    
+    // Add other statement types like 'while' here in the future...
+
     error_at_token(parser, peek(parser), "Expected a statement.");
     return NULL;
 }
@@ -719,6 +781,15 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, "(PROGRAM\n");
             for (size_t i = 0; i < node->as.program.count; i++) {
                 write_ast_node(file, node->as.program.statements[i], indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        case AST_PRINT_STATEMENT:
+            fprintf(file, "(PRINT_STATEMENT line=%d\n", node->line);
+            // Iterate through the list of expressions and print each one.
+            for (size_t i = 0; i < node->as.print_stmt.count; i++) {
+                write_ast_node(file, node->as.print_stmt.expressions[i], indent + 1);
             }
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
@@ -1087,6 +1158,27 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 last_value = execute_node(gy, node->as.program.statements[i]);
             }
             return last_value; // In an interactive REPL, this would be the value of the last statement.
+        }
+
+        case AST_PRINT_STATEMENT: {
+            // A print statement executes its list of expressions in order.
+            for (size_t i = 0; i < node->as.print_stmt.count; i++) {
+                // 1. Recursively execute the expression node to get its value.
+                GraveyardValue value = execute_node(gy, node->as.print_stmt.expressions[i]);
+
+                // 2. Use our existing helper to print the resulting value.
+                print_value(value);
+
+                // 3. Print a space between values, but not after the last one.
+                if (i < node->as.print_stmt.count - 1) {
+                    printf(" ");
+                }
+            }
+            // 4. After printing all values, print a single newline for clean formatting.
+            printf("\n");
+
+            // Print statements do not have a value themselves, so they return null.
+            return create_null_value();
         }
 
         case AST_LITERAL_NUMBER: {
