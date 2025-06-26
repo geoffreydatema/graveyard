@@ -30,7 +30,7 @@ typedef enum {
     AST_BINARY_OP,
     AST_ASSIGNMENT,
     AST_IDENTIFIER,
-    AST_LITERAL_NUMBER,
+    AST_LITERAL,
     AST_PRINT_STATEMENT
 } AstNodeType;
 
@@ -417,7 +417,7 @@ void free_ast(AstNode* node) {
             free_ast(node->as.assignment.value);
             break;
         case AST_IDENTIFIER:
-        case AST_LITERAL_NUMBER:
+        case AST_LITERAL:
             break;
     }
     free(node);
@@ -546,10 +546,18 @@ static AstNode* parse_primary(Parser* parser) {
         expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
         return expr;
     }
+    
+    if (match(parser, TRUEVALUE) || match(parser, FALSEVALUE) || match(parser, NULLVALUE)) {
+        Token literal_token = parser->tokens[parser->current - 1]; // The token we just matched
+        AstNode* node = create_node(parser, AST_LITERAL); // Use the generic AST_LITERAL type
+        node->line = literal_token.line;
+        node->as.literal.value = literal_token;
+        return node;
+    }
 
     if (match(parser, NUMBER)) {
         Token literal_token = parser->tokens[parser->current - 1];
-        AstNode* node = create_node(parser, AST_LITERAL_NUMBER);
+        AstNode* node = create_node(parser, AST_LITERAL);
         node->line = literal_token.line;
         node->as.literal.value = literal_token;
         return node;
@@ -812,9 +820,27 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         case AST_IDENTIFIER:
             fprintf(file, "(IDENTIFIER name=\"%s\" line=%d)\n", node->as.identifier.name.lexeme, node->line);
             break;
-        case AST_LITERAL_NUMBER:
-            fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", node->as.literal.value.lexeme, node->line);
+        case AST_LITERAL: {
+            Token literal_token = node->as.literal.value;
+            switch (literal_token.type) {
+                case NUMBER:
+                    fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    break;
+                case TRUEVALUE:
+                    fprintf(file, "(LITERAL_BOOL value=\"$\" line=%d)\n", node->line);
+                    break;
+                case FALSEVALUE:
+                    fprintf(file, "(LITERAL_BOOL value=\"%%\" line=%d)\n", node->line);
+                    break;
+                case NULLVALUE:
+                    fprintf(file, "(LITERAL_NULL line=%d)\n", node->line);
+                    break;
+                default:
+                    fprintf(file, "(LITERAL_UNKNOWN)\n");
+                    break;
+            }
             break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -1182,11 +1208,22 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             return create_null_value();
         }
 
-        case AST_LITERAL_NUMBER: {
-            // Convert the string lexeme to a C double.
-            // strtod is from <stdlib.h> and is safer than atof.
-            double value = strtod(node->as.literal.value.lexeme, NULL);
-            return create_number_value(value);
+        case AST_LITERAL: {
+            Token literal_token = node->as.literal.value;
+            // Look at the original token's type to decide what value to create
+            switch (literal_token.type) {
+                case NUMBER:
+                    return create_number_value(strtod(literal_token.lexeme, NULL));
+                case TRUEVALUE: // $
+                    return create_bool_value(true);
+                case FALSEVALUE: // %
+                    return create_bool_value(false);
+                case NULLVALUE: // |
+                    return create_null_value();
+                default:
+                    // Should not be reached if the parser is correct
+                    return create_null_value();
+            }
         }
 
         case AST_IDENTIFIER: {
