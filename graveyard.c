@@ -524,6 +524,7 @@ static int get_operator_precedence(TokenType type) {
             return 3;
         case MULTIPLICATION:
         case DIVISION:
+        case MODULO:
             return 4;
         case EXPONENTIATION:
             return 5;
@@ -1260,7 +1261,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case EXPONENTIATION:
                     if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
                     return create_number_value(pow(left.as.number, right.as.number));
-                
+                case MODULO:
+                    if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+                    if (right.as.number == 0) {
+                        fprintf(stderr, "Runtime Error [line %d]: Division by zero in modulo operation.\n", node->line);
+                        return create_null_value();
+                    }
+                    return create_number_value(fmod(left.as.number, right.as.number));
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown or unimplemented binary operator.\n", node->line);
                     return create_null_value();
@@ -1312,34 +1319,35 @@ static bool compile_source(Graveyard* gy) {
     return true;
 }
 
+// --- Main Application Logic ---
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
         fprintf(stderr, "Modes:\n");
         fprintf(stderr, "  --tokenize, -t      Tokenize and print tokens to console\n");
-        fprintf(stderr, "  --parse, -p         Parse and write the AST to a .gyc file\n");
-        fprintf(stderr, "  --execute, -e       Execute the source code\n");
-        fprintf(stderr, "  --debug, -d         Execute and print final value for debugging\n");
+        fprintf(stderr, "  --parse, -p         Parse source and save the AST to a .gyc file\n");
+        fprintf(stderr, "  --execute, -e       Parse, save AST, and execute the source code\n");
+        fprintf(stderr, "  --debug, -d         Parse, save AST, execute, and print final value\n");
         return 1;
     }
 
     Graveyard *gy = graveyard_init(argv[1], argv[2]);
     if (!gy) { return 1; }
 
+    // --- File loading logic (remains the same) ---
     const char *ext = strrchr(gy->filename, '.');
     if (!ext || strcmp(ext, ".gy") != 0) {
         fprintf(stderr, "Error: %s is not Graveyard source code, use the .gy extension\n", gy->filename);
         graveyard_free(gy);
         return 1;
     }
-
     FILE *file = fopen(gy->filename, "r");
     if (!file) {
         perror("Error opening source file");
         graveyard_free(gy);
         return 1;
     }
-
     long source_length = 0;
     gy->source_code = load(file, &source_length);
     fclose(file);
@@ -1352,15 +1360,25 @@ int main(int argc, char *argv[]) {
     bool success = true;
 
     if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-        // This debug mode remains separate as it doesn't parse or save.
+        // This mode ONLY tokenizes for debugging purposes.
         if (!tokenize(gy)) {
             fprintf(stderr, "Tokenization failed.\n");
             success = false;
         } else {
             printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
+            
+            for (size_t i = 0; i < gy->token_count; i++) {
+                // We also print the EOF token here, which can be useful for debugging.
+                printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
+                       i,
+                       gy->tokens[i].line,
+                       gy->tokens[i].column,
+                       gy->tokens[i].type,
+                       gy->tokens[i].lexeme);
+            }
         }
     } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
-        // The parse command is now just a call to our compile helper.
+        // This mode runs the pipeline up to producing the .gyc file.
         if (!compile_source(gy)) {
             success = false;
         }
