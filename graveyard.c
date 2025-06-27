@@ -1071,7 +1071,25 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
         case AST_BINARY_OP: {
+            // This part is correct: get the operator's string representation ("+" or "**", etc.)
             get_attribute_string(line, "op=", node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN);
+            
+            // --- NEW FIX: Determine the operator's TokenType from its lexeme ---
+            char* op_str = node->as.binary_op.operator.lexeme;
+            size_t op_len = strlen(op_str);
+            TokenType op_type = UNKNOWN;
+
+            if (op_len == 3) {
+                op_type = identify_three_char_token(op_str[0], op_str[1], op_str[2]);
+            } else if (op_len == 2) {
+                op_type = identify_two_char_token(op_str[0], op_str[1]);
+            } else if (op_len == 1) {
+                op_type = identify_single_char_token(op_str[0]);
+            }
+            node->as.binary_op.operator.type = op_type;
+            // --- END OF FIX ---
+
+            // This part is also correct: parse the children
             node->as.binary_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             node->as.binary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
