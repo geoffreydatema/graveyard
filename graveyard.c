@@ -26,6 +26,7 @@ typedef struct {
 typedef struct AstNode AstNode;
 
 typedef enum {
+    AST_UNKNOWN,
     AST_PROGRAM,
     AST_BINARY_OP,
     AST_ASSIGNMENT,
@@ -864,6 +865,252 @@ bool save_ast_to_file(Graveyard* gy, const char* out_filename) {
     return true;
 }
 
+// --- AST Deserializer Helpers ---
+
+// Calculates the indentation level of a line (assumes 2 spaces per level).
+static int get_indent_level(const char* line) {
+    int indent = 0;
+    while (line[indent] == ' ') {
+        indent++;
+    }
+    return indent / 2;
+}
+
+// Parses a node type string like "(ASSIGN" from a line.
+// e.g., from "(ASSIGN ...", it extracts "ASSIGN" into out_type_str.
+static bool get_node_type_from_line(const char* line, char* out_type_str, size_t buffer_size) {
+    const char* start = strchr(line, '(');
+    if (!start) return false;
+    start++; // Move past '('
+
+    // Find the end of the type name (space, newline, or closing parenthesis)
+    const char* end = start;
+    while (*end && *end != ' ' && *end != '\n' && *end != ')') {
+        end++;
+    }
+
+    size_t len = end - start;
+    if (len == 0 || len >= buffer_size) return false;
+
+    strncpy(out_type_str, start, len);
+    out_type_str[len] = '\0';
+    return true;
+}
+
+// Finds a key like "name=" and extracts the quoted string value that follows.
+static bool get_attribute_string(const char* line, const char* key, char* out_buffer, size_t buffer_size) {
+    const char* key_ptr = strstr(line, key);
+    if (!key_ptr) return false;
+
+    const char* value_start = key_ptr + strlen(key);
+    if (*value_start != '"') return false; // We expect attributes to be in quotes
+    value_start++; // Move past opening quote
+
+    const char* value_end = strchr(value_start, '"');
+    if (!value_end) return false; // Missing closing quote
+
+    size_t len = value_end - value_start;
+    if (len >= buffer_size) return false;
+
+    strncpy(out_buffer, value_start, len);
+    out_buffer[len] = '\0';
+    return true;
+}
+
+// Finds a key like "line=" and extracts the integer value that follows.
+static int get_attribute_int(const char* line, const char* key) {
+    const char* key_ptr = strstr(line, key);
+    if (!key_ptr) return -1; // Return an invalid value on failure
+
+    const char* value_start = key_ptr + strlen(key);
+    return atoi(value_start);
+}
+
+// Converts a node type string (e.g., "ASSIGN") to an AstNodeType enum.
+// This is the reverse of the switch statement in write_ast_node.
+static AstNodeType get_node_type_from_string(const char* type_str) {
+    if (strcmp(type_str, "PROGRAM") == 0) return AST_PROGRAM;
+    if (strcmp(type_str, "ASSIGN") == 0) return AST_ASSIGNMENT;
+    if (strcmp(type_str, "IDENTIFIER") == 0) return AST_IDENTIFIER;
+    if (strcmp(type_str, "LITERAL_NUM") == 0) return AST_LITERAL;
+    if (strcmp(type_str, "LITERAL_BOOL") == 0) return AST_LITERAL;
+    if (strcmp(type_str, "LITERAL_NULL") == 0) return AST_LITERAL;
+    if (strcmp(type_str, "BINARY_OP") == 0) return AST_BINARY_OP;
+    if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
+    return AST_UNKNOWN;
+}
+
+// --- AST Deserializer ---
+
+// A simple structure to hold the lines of the read file
+typedef struct {
+    char** lines;
+    int count;
+} Lines;
+
+// Forward-declare the recursive helper function
+static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int expected_indent, Parser* dummy_parser_for_node_creation);
+
+
+// Main function to load an AST from a .gyc file
+bool load_ast_from_file(Graveyard* gy, const char* filename) {
+    long file_size = 0;
+    FILE* file = fopen(filename, "r");
+    if (!file) {
+        perror("load_ast_from_file: Could not open file");
+        return false;
+    }
+    char* buffer = load(file, &file_size);
+    fclose(file);
+    if (!buffer) return false;
+
+    // --- Split buffer into an array of lines ---
+    Lines lines;
+    lines.count = 0;
+    lines.lines = malloc(sizeof(char*)); // Start with space for one line
+    int capacity = 1;
+
+    char* line = strtok(buffer, "\n");
+    while (line != NULL) {
+        if (lines.count == capacity) {
+            capacity *= 2;
+            lines.lines = realloc(lines.lines, capacity * sizeof(char*));
+        }
+        lines.lines[lines.count++] = line;
+        line = strtok(NULL, "\n");
+    }
+
+    // --- Begin Recursive Parsing ---
+    int current_line = 0;
+    Parser dummy_parser = {0}; // Needed for create_node helper
+    gy->ast_root = parse_node_recursive(&lines, &current_line, 0, &dummy_parser);
+    
+    // --- Cleanup ---
+    free(lines.lines);
+    free(buffer);
+
+    if (dummy_parser.had_error) {
+        free_ast(gy->ast_root);
+        gy->ast_root = NULL;
+        return false;
+    }
+
+    return gy->ast_root != NULL;
+}
+
+// The recursive function that builds the AST from the lines array.
+static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int expected_indent, Parser* parser) {
+    if (*current_line_idx >= lines->count) return NULL; // No more lines
+
+    const char* line = lines->lines[*current_line_idx];
+    int current_indent = get_indent_level(line);
+
+    if (current_indent < expected_indent) return NULL; // Returned to a parent level
+
+    // Check if the line is just a closing parenthesis. If so, it's not a new node.
+    const char* first_char_ptr = line + current_indent * 2;
+    if (*first_char_ptr == ')') {
+        return NULL;
+    }
+    
+    if (current_indent > expected_indent) {
+        fprintf(stderr, "AST Deserializer Error [line %d]: Unexpected indentation.\n", *current_line_idx + 1);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    // --- We have a valid line, so parse it and create the node ---
+    (*current_line_idx)++; // Consume this line
+
+    char type_str[64];
+    if (!get_node_type_from_line(line, type_str, sizeof(type_str))) {
+        fprintf(stderr, "AST Deserializer Error [line %d]: Malformed node, expected '('.\n", *current_line_idx);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    AstNodeType type = get_node_type_from_string(type_str);
+    if (type == AST_UNKNOWN) {
+        fprintf(stderr, "AST Deserializer Error [line %d]: Unknown node type '%s'.\n", *current_line_idx, type_str);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    AstNode* node = create_node(parser, type);
+    if (!node) return NULL;
+    node->line = get_attribute_int(line, "line=");
+
+    // --- Populate the node's data and recursively parse its children ---
+    switch (type) {
+        case AST_PROGRAM:
+        case AST_PRINT_STATEMENT: {
+            // These nodes contain a dynamic list of child nodes.
+            AstNode** list = NULL;
+            size_t* count = NULL;
+            size_t* capacity = NULL;
+
+            if (type == AST_PROGRAM) {
+                node->as.program.capacity = 8;
+                node->as.program.count = 0;
+                node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
+                list = node->as.program.statements;
+                count = &node->as.program.count;
+                capacity = &node->as.program.capacity;
+            } else { // AST_PRINT_STATEMENT
+                node->as.print_stmt.capacity = 4;
+                node->as.print_stmt.count = 0;
+                node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
+                list = node->as.print_stmt.expressions;
+                count = &node->as.print_stmt.count;
+                capacity = &node->as.print_stmt.capacity;
+            }
+            if (!list) { parser->had_error = true; free(node); return NULL; }
+
+            AstNode* child;
+            while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
+                if (*count == *capacity) {
+                    *capacity *= 2;
+                    AstNode** new_list = realloc(list, *capacity * sizeof(AstNode*));
+                    if (!new_list) { parser->had_error = true; free_ast(child); free_ast(node); return NULL; }
+                    list = new_list;
+                    // Update the pointer in the actual struct
+                    if (type == AST_PROGRAM) node->as.program.statements = new_list;
+                    else node->as.print_stmt.expressions = new_list;
+                }
+                list[(*count)++] = child;
+            }
+            break;
+        }
+        case AST_ASSIGNMENT:
+            get_attribute_string(line, "identifier=", node->as.assignment.identifier.lexeme, MAX_LEXEME_LEN);
+            node->as.assignment.value = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        case AST_BINARY_OP:
+            get_attribute_string(line, "op=", node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN);
+            node->as.binary_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.binary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        case AST_LITERAL:
+            get_attribute_string(line, "value=", node->as.literal.value.lexeme, MAX_LEXEME_LEN);
+            if (strcmp(type_str, "LITERAL_NUM") == 0) node->as.literal.value.type = NUMBER;
+            else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
+                if (strcmp(node->as.literal.value.lexeme, "$") == 0) node->as.literal.value.type = TRUEVALUE;
+                else node->as.literal.value.type = FALSEVALUE;
+            } else if (strcmp(type_str, "LITERAL_NULL") == 0) node->as.literal.value.type = NULLVALUE;
+            break;
+        case AST_IDENTIFIER:
+            get_attribute_string(line, "name=", node->as.identifier.name.lexeme, MAX_LEXEME_LEN);
+            break;
+        default: break;
+    }
+    
+    if (parser->had_error) {
+        free_ast(node);
+        return NULL;
+    }
+    return node;
+}
+
 // --- Core Logic Functions ---
 
 bool tokenize(Graveyard *gy) {
@@ -1362,91 +1609,80 @@ int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
         fprintf(stderr, "Modes:\n");
-        fprintf(stderr, "  --tokenize, -t      Tokenize and print tokens to console\n");
-        fprintf(stderr, "  --parse, -p         Parse source and save the AST to a .gyc file\n");
-        fprintf(stderr, "  --execute, -e       Parse, save AST, and execute the source code\n");
-        fprintf(stderr, "  --debug, -d         Parse, save AST, execute, and print final value\n");
+        fprintf(stderr, "  --tokenize, -t          Tokenize source and print tokens\n");
+        fprintf(stderr, "  --parse, -p             Parse source and save the AST to a .gyc file\n");
+        fprintf(stderr, "  --execute, -e           Parse, save AST, and execute the source code\n");
+        fprintf(stderr, "  --debug, -d             Parse, save AST, execute, and print final value\n");
+        fprintf(stderr, "  --executecompiled, -ec  Execute a pre-parsed .gyc file\n");
         return 1;
     }
 
     Graveyard *gy = graveyard_init(argv[1], argv[2]);
     if (!gy) { return 1; }
 
-    // --- File loading logic (remains the same) ---
-    const char *ext = strrchr(gy->filename, '.');
-    if (!ext || strcmp(ext, ".gy") != 0) {
-        fprintf(stderr, "Error: %s is not Graveyard source code, use the .gy extension\n", gy->filename);
-        graveyard_free(gy);
-        return 1;
-    }
-    FILE *file = fopen(gy->filename, "r");
-    if (!file) {
-        perror("Error opening source file");
-        graveyard_free(gy);
-        return 1;
-    }
-    long source_length = 0;
-    gy->source_code = load(file, &source_length);
-    fclose(file);
-    if (!gy->source_code) {
-        fprintf(stderr, "Failed to load source file.\n");
-        graveyard_free(gy);
-        return 1;
-    }
-
     bool success = true;
 
-    if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-        // This mode ONLY tokenizes for debugging purposes.
-        if (!tokenize(gy)) {
-            fprintf(stderr, "Tokenization failed.\n");
+    // --- UPDATED DISPATCH LOGIC ---
+
+    if (strcmp(gy->mode, "--executecompiled") == 0 || strcmp(gy->mode, "-ec") == 0) {
+        // This special mode loads the AST directly from a .gyc file.
+        const char *ext = strrchr(gy->filename, '.');
+        if (!ext || strcmp(ext, ".gyc") != 0) {
+            fprintf(stderr, "Error: Execute compiled mode requires a .gyc file.\n");
             success = false;
         } else {
-            printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
-            
-            for (size_t i = 0; i < gy->token_count; i++) {
-                // We also print the EOF token here, which can be useful for debugging.
-                printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
-                       i,
-                       gy->tokens[i].line,
-                       gy->tokens[i].column,
-                       gy->tokens[i].type,
-                       gy->tokens[i].lexeme);
-            }
-        }
-    } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
-        // This mode runs the pipeline up to producing the .gyc file.
-        if (!compile_source(gy)) {
-            success = false;
-        }
-    } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
-        // First, compile and save the source. If that succeeds, then execute.
-        if (compile_source(gy)) {
-            if (!execute(gy)) {
-                fprintf(stderr, "Execution failed.\n");
-                success = false;
-            }
-        } else {
-            success = false;
-        }
-    } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
-        // First, compile and save. If that succeeds, execute and print the result.
-        if (compile_source(gy)) {
-            if (execute(gy)) {
-                printf("--- Debug Execution Result ---\n");
-                printf("Final statement evaluated to: ");
-                print_value(gy->last_executed_value);
-                printf("\n");
+            printf("--- Loading and Executing Compiled AST from %s ---\n", gy->filename);
+            if (load_ast_from_file(gy, gy->filename)) {
+                if (!execute(gy)) {
+                    fprintf(stderr, "Execution failed.\n");
+                    success = false;
+                }
             } else {
-                fprintf(stderr, "Execution failed.\n");
+                fprintf(stderr, "Failed to load AST from file.\n");
                 success = false;
             }
-        } else {
-            success = false;
         }
     } else {
-        fprintf(stderr, "Unknown mode: %s\n", gy->mode);
-        success = false;
+        // All other modes start from a .gy source file.
+        const char *ext = strrchr(gy->filename, '.');
+        if (!ext || strcmp(ext, ".gy") != 0) {
+            fprintf(stderr, "Error: Mode '%s' requires a .gy source file.\n", gy->mode);
+            success = false;
+        } else {
+            // Load the source code since we're starting from a .gy file
+            FILE *file = fopen(gy->filename, "r");
+            if (!file) {
+                perror("Error opening source file");
+                graveyard_free(gy); // Free gy before returning
+                return 1;
+            }
+
+            long source_length = 0;
+            gy->source_code = load(file, &source_length);
+            fclose(file);
+            if (!gy->source_code) {
+                fprintf(stderr, "Failed to load source file.\n");
+                success = false;
+            } else {
+                // Dispatch to the correct toolchain for .gy files
+                if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
+                    if (!tokenize(gy)) { success = false; }
+                } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
+                    if (!compile_source(gy)) { success = false; }
+                } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
+                    if (!compile_source(gy) || !execute(gy)) { success = false; }
+                } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
+                    if (compile_source(gy) && execute(gy)) {
+                        printf("--- Debug Result ---\nFinal Value: ");
+                        print_value(gy->last_executed_value);
+                        printf("\n");
+                    } else { success = false; }
+                } else {
+                    fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
+                    success = false;
+                }
+            }
+        }
     }
     
     graveyard_free(gy);
