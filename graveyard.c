@@ -787,8 +787,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
     // Print the node's information based on its type
     switch (node->type) {
         case AST_PROGRAM:
-            // NEW: Print the program node and then iterate through each statement.
-            fprintf(file, "(PROGRAM\n");
+            fprintf(file, "(PROGRAM line=1\n");
             for (size_t i = 0; i < node->as.program.count; i++) {
                 write_ast_node(file, node->as.program.statements[i], indent + 1);
             }
@@ -1000,18 +999,15 @@ bool load_ast_from_file(Graveyard* gy, const char* filename) {
 
 // The recursive function that builds the AST from the lines array.
 static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int expected_indent, Parser* parser) {
-    if (*current_line_idx >= lines->count) return NULL; // No more lines
+    if (*current_line_idx >= lines->count) return NULL;
 
     const char* line = lines->lines[*current_line_idx];
     int current_indent = get_indent_level(line);
 
-    if (current_indent < expected_indent) return NULL; // Returned to a parent level
+    if (current_indent < expected_indent) return NULL;
 
-    // Check if the line is just a closing parenthesis. If so, it's not a new node.
     const char* first_char_ptr = line + current_indent * 2;
-    if (*first_char_ptr == ')') {
-        return NULL;
-    }
+    if (*first_char_ptr == ')') return NULL;
     
     if (current_indent > expected_indent) {
         fprintf(stderr, "AST Deserializer Error [line %d]: Unexpected indentation.\n", *current_line_idx + 1);
@@ -1019,19 +1015,19 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         return NULL;
     }
 
-    // --- We have a valid line, so parse it and create the node ---
-    (*current_line_idx)++; // Consume this line
+    int node_line_for_errors = *current_line_idx + 1;
+    (*current_line_idx)++;
 
     char type_str[64];
     if (!get_node_type_from_line(line, type_str, sizeof(type_str))) {
-        fprintf(stderr, "AST Deserializer Error [line %d]: Malformed node, expected '('.\n", *current_line_idx);
+        fprintf(stderr, "AST Deserializer Error [line %d]: Malformed node, expected '('.\n", node_line_for_errors);
         parser->had_error = true;
         return NULL;
     }
 
     AstNodeType type = get_node_type_from_string(type_str);
     if (type == AST_UNKNOWN) {
-        fprintf(stderr, "AST Deserializer Error [line %d]: Unknown node type '%s'.\n", *current_line_idx, type_str);
+        fprintf(stderr, "AST Deserializer Error [line %d]: Unknown node type '%s'.\n", node_line_for_errors, type_str);
         parser->had_error = true;
         return NULL;
     }
@@ -1040,57 +1036,47 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     if (!node) return NULL;
     node->line = get_attribute_int(line, "line=");
 
-    // --- Populate the node's data and recursively parse its children ---
+    // --- LOGIC TO PARSE CHILDREN AND CONSUME ')' IS NOW SELF-CONTAINED IN EACH CASE ---
     switch (type) {
         case AST_PROGRAM:
         case AST_PRINT_STATEMENT: {
-            // These nodes contain a dynamic list of child nodes.
-            AstNode** list = NULL;
-            size_t* count = NULL;
-            size_t* capacity = NULL;
-
+            AstNode** list_ptr = NULL; size_t* count_ptr = NULL; size_t* capacity_ptr = NULL;
             if (type == AST_PROGRAM) {
-                node->as.program.capacity = 8;
-                node->as.program.count = 0;
+                node->as.program.capacity = 8; node->as.program.count = 0;
                 node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
-                list = node->as.program.statements;
-                count = &node->as.program.count;
-                capacity = &node->as.program.capacity;
-            } else { // AST_PRINT_STATEMENT
-                node->as.print_stmt.capacity = 4;
-                node->as.print_stmt.count = 0;
+                list_ptr = node->as.program.statements; count_ptr = &node->as.program.count; capacity_ptr = &node->as.program.capacity;
+            } else {
+                node->as.print_stmt.capacity = 4; node->as.print_stmt.count = 0;
                 node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
-                list = node->as.print_stmt.expressions;
-                count = &node->as.print_stmt.count;
-                capacity = &node->as.print_stmt.capacity;
+                list_ptr = node->as.print_stmt.expressions; count_ptr = &node->as.print_stmt.count; capacity_ptr = &node->as.print_stmt.capacity;
             }
-            if (!list) { parser->had_error = true; free(node); return NULL; }
+            if (!list_ptr) { parser->had_error = true; free(node); return NULL; }
 
             AstNode* child;
             while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
-                if (*count == *capacity) {
-                    *capacity *= 2;
-                    AstNode** new_list = realloc(list, *capacity * sizeof(AstNode*));
-                    if (!new_list) { parser->had_error = true; free_ast(child); free_ast(node); return NULL; }
-                    list = new_list;
-                    // Update the pointer in the actual struct
-                    if (type == AST_PROGRAM) node->as.program.statements = new_list;
-                    else node->as.print_stmt.expressions = new_list;
+                if (*count_ptr == *capacity_ptr) {
+                    *capacity_ptr *= 2;
+                    list_ptr = realloc(list_ptr, *capacity_ptr * sizeof(AstNode*));
+                    if (!list_ptr) { parser->had_error = true; free_ast(child); free_ast(node); return NULL; }
+                    if (type == AST_PROGRAM) node->as.program.statements = list_ptr;
+                    else node->as.print_stmt.expressions = list_ptr;
                 }
-                list[(*count)++] = child;
+                list_ptr[(*count_ptr)++] = child;
             }
             break;
         }
-        case AST_ASSIGNMENT:
+        case AST_ASSIGNMENT: {
             get_attribute_string(line, "identifier=", node->as.assignment.identifier.lexeme, MAX_LEXEME_LEN);
             node->as.assignment.value = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
-        case AST_BINARY_OP:
+        }
+        case AST_BINARY_OP: {
             get_attribute_string(line, "op=", node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN);
             node->as.binary_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             node->as.binary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
-        case AST_LITERAL:
+        }
+        case AST_LITERAL: {
             get_attribute_string(line, "value=", node->as.literal.value.lexeme, MAX_LEXEME_LEN);
             if (strcmp(type_str, "LITERAL_NUM") == 0) node->as.literal.value.type = NUMBER;
             else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
@@ -1098,17 +1084,50 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 else node->as.literal.value.type = FALSEVALUE;
             } else if (strcmp(type_str, "LITERAL_NULL") == 0) node->as.literal.value.type = NULLVALUE;
             break;
-        case AST_IDENTIFIER:
+        }
+        case AST_IDENTIFIER: {
             get_attribute_string(line, "name=", node->as.identifier.name.lexeme, MAX_LEXEME_LEN);
             break;
-        default: break;
+        }
+        default: break; // Leaf nodes with no special attributes
+    }
+
+    if (parser->had_error) { free_ast(node); return NULL; }
+    
+    // For any node that opens a block, we now consume its closing parenthesis.
+    if (type == AST_PROGRAM || type == AST_ASSIGNMENT || type == AST_BINARY_OP || type == AST_PRINT_STATEMENT) {
+        if (*current_line_idx < lines->count) {
+             const char* closing_line = lines->lines[*current_line_idx];
+             if (get_indent_level(closing_line) == expected_indent && *(closing_line + expected_indent * 2) == ')') {
+                 (*current_line_idx)++; // Success! Consume the closing parenthesis.
+             } else {
+                 fprintf(stderr, "AST Deserializer Error [line %d]: Malformed AST. Expected closing ')' for node started on line %d.\n", *current_line_idx + 1, node->line);
+                 parser->had_error = true;
+                 free_ast(node);
+                 return NULL;
+             }
+        } else {
+            fprintf(stderr, "AST Deserializer Error: Unterminated AST node (reached end of file) for node started on line %d.\n", node->line);
+            parser->had_error = true;
+            free_ast(node);
+            return NULL;
+        }
     }
     
-    if (parser->had_error) {
-        free_ast(node);
-        return NULL;
-    }
     return node;
+}
+
+// --- AST Debug Printing ---
+
+// A wrapper around write_ast_node to print the AST to the console for debugging.
+void print_ast(AstNode* root) {
+    printf("--- In-Memory AST ---\n");
+    if (root == NULL) {
+        printf("(NULL)\n");
+        return;
+    }
+    write_ast_node(stdout, root, 0);
+    printf("--- End AST ---\n");
 }
 
 // --- Core Logic Functions ---
@@ -1633,6 +1652,10 @@ int main(int argc, char *argv[]) {
         } else {
             printf("--- Loading and Executing Compiled AST from %s ---\n", gy->filename);
             if (load_ast_from_file(gy, gy->filename)) {
+                
+                // print ast
+                print_ast(gy->ast_root);
+
                 if (!execute(gy)) {
                     fprintf(stderr, "Execution failed.\n");
                     success = false;
