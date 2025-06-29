@@ -1497,6 +1497,16 @@ static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
     }
 }
 
+// Checks if a GraveyardValue is "falsy" (evaluates to false in a boolean context).
+static bool is_value_falsy(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_NULL:   return true;  // Null is falsy
+        case VAL_BOOL:   return !value.as.boolean; // False is falsy
+        case VAL_NUMBER: return value.as.number == 0; // Zero is falsy
+        default:         return false; // All other types are truthy
+    }
+}
+
 // The recursive AST walker that evaluates each node.
 // Every expression-like node will return the GraveyardValue it evaluates to.
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
@@ -1589,8 +1599,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         return create_null_value();
                     }
                     return create_number_value(-right.as.number);
-                // We can add the '!' NOT operator here later
-                // case NOT: ...
+
+                case NOT: // --- NEW CASE ---
+                    // The result of '!' is always a boolean.
+                    // It's true if the operand was falsy, and false otherwise.
+                    return create_bool_value(is_value_falsy(right));
+
+                default:
+                    fprintf(stderr, "Runtime Error [line %d]: Unknown unary operator.\n", node->line);
+                    return create_null_value();
             }
             break;
         }
