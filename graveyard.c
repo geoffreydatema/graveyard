@@ -12,7 +12,7 @@
 // --- Type Definitions ---
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -29,6 +29,7 @@ typedef enum {
     AST_UNKNOWN,
     AST_PROGRAM,
     AST_BINARY_OP,
+    AST_UNARY_OP,
     AST_ASSIGNMENT,
     AST_IDENTIFIER,
     AST_LITERAL,
@@ -46,6 +47,11 @@ typedef struct {
     AstNode *left;
     AstNode *right;
 } AstNodeBinaryOp;
+
+typedef struct {
+    Token operator;
+    AstNode *right; // The single operand
+} AstNodeUnaryOp;
 
 // Node for: my_variable = <expression>
 typedef struct {
@@ -80,6 +86,7 @@ struct AstNode {
     union {
         AstNodeProgram      program;
         AstNodeBinaryOp     binary_op;
+        AstNodeUnaryOp      unary_op;
         AstNodeAssignment   assignment;
         AstNodeIdentifier   identifier;
         AstNodeLiteral      literal;
@@ -346,7 +353,7 @@ TokenType identify_single_char_token(char c) {
         case '=': return ASSIGNMENT;
         case ';': return SEMICOLON;
         case '+': return ADDITION;
-        case '-': return SUBTRACTION;
+        case '-': return MINUS;
         case '*': return MULTIPLICATION;
         case '/': return DIVISION;
         case '(': return LEFTPARENTHESES;
@@ -413,6 +420,9 @@ void free_ast(AstNode* node) {
         case AST_BINARY_OP:
             free_ast(node->as.binary_op.left);
             free_ast(node->as.binary_op.right);
+            break;
+        case AST_UNARY_OP:
+            free_ast(node->as.unary_op.right);
             break;
         case AST_ASSIGNMENT:
             free_ast(node->as.assignment.value);
@@ -521,7 +531,7 @@ static int get_operator_precedence(TokenType type) {
         case GREATERTHANEQUAL:
             return 2;
         case ADDITION:
-        case SUBTRACTION:
+        case MINUS:
             return 3;
         case MULTIPLICATION:
         case DIVISION:
@@ -541,6 +551,20 @@ static AstNode* parse_expression(Parser* parser, int min_precedence);
 // Parses the most basic units of an expression.
 // For now, it only handles numbers and identifiers.
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, MINUS) || match(parser, NOT)) {
+        Token operator_token = parser->tokens[parser->current - 1];
+        // After consuming the operator, recursively parse the operand on its right.
+        // We use a high precedence (like for multiplication) to correctly handle cases like -a * b
+        AstNode* right = parse_expression(parser, 4); // Precedence of multiplication
+        if (!right) return NULL;
+
+        AstNode* node = create_node(parser, AST_UNARY_OP);
+        node->line = operator_token.line;
+        node->as.unary_op.operator = operator_token;
+        node->as.unary_op.right = right;
+        return node;
+    }
+
     if (match(parser, LEFTPARENTHESES)) {
         // A parenthesized expression starts a new precedence context.
         AstNode* expr = parse_expression(parser, 1);
@@ -810,6 +834,12 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
+        case AST_UNARY_OP:
+            fprintf(file, "(UNARY_OP op=\"%s\" line=%d\n", node->as.unary_op.operator.lexeme, node->line);
+            write_ast_node(file, node->as.unary_op.right, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
         case AST_ASSIGNMENT:
             fprintf(file, "(ASSIGN identifier=\"%s\" line=%d\n", node->as.assignment.identifier.lexeme, node->line);
             write_ast_node(file, node->as.assignment.value, indent + 1);
@@ -935,6 +965,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "LITERAL_BOOL") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_NULL") == 0) return AST_LITERAL;
     if (strcmp(type_str, "BINARY_OP") == 0) return AST_BINARY_OP;
+    if (strcmp(type_str, "UNARY_OP") == 0) return AST_UNARY_OP;
     if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
     return AST_UNKNOWN;
 }
@@ -999,35 +1030,39 @@ bool load_ast_from_file(Graveyard* gy, const char* filename) {
 
 // The recursive function that builds the AST from the lines array.
 static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int expected_indent, Parser* parser) {
-    if (*current_line_idx >= lines->count) return NULL;
+    // --- Phase 1: Check if there's a valid node at the current position ---
+    if (*current_line_idx >= lines->count) return NULL; // No more lines left.
 
     const char* line = lines->lines[*current_line_idx];
     int current_indent = get_indent_level(line);
 
+    // If indentation is less, we've finished this list of children.
     if (current_indent < expected_indent) return NULL;
 
-    const char* first_char_ptr = line + current_indent * 2;
-    if (*first_char_ptr == ')') return NULL;
+    // If the line at the correct indent is just a ')', it's not a new node.
+    if (*(line + current_indent * 2) == ')') return NULL;
     
+    // If indentation is greater than expected, the file is malformed.
     if (current_indent > expected_indent) {
         fprintf(stderr, "AST Deserializer Error [line %d]: Unexpected indentation.\n", *current_line_idx + 1);
         parser->had_error = true;
         return NULL;
     }
 
-    int node_line_for_errors = *current_line_idx + 1;
-    (*current_line_idx)++;
+    // --- Phase 2: We have a valid node line. Create the node. ---
+    int node_start_line_for_errors = *current_line_idx + 1;
+    (*current_line_idx)++; // Consume this line so recursive calls start on the next.
 
     char type_str[64];
     if (!get_node_type_from_line(line, type_str, sizeof(type_str))) {
-        fprintf(stderr, "AST Deserializer Error [line %d]: Malformed node, expected '('.\n", node_line_for_errors);
+        fprintf(stderr, "AST Deserializer Error [line %d]: Malformed node, expected '('.\n", node_start_line_for_errors);
         parser->had_error = true;
         return NULL;
     }
 
     AstNodeType type = get_node_type_from_string(type_str);
     if (type == AST_UNKNOWN) {
-        fprintf(stderr, "AST Deserializer Error [line %d]: Unknown node type '%s'.\n", node_line_for_errors, type_str);
+        fprintf(stderr, "AST Deserializer Error [line %d]: Unknown node type '%s'.\n", node_start_line_for_errors, type_str);
         parser->had_error = true;
         return NULL;
     }
@@ -1036,7 +1071,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     if (!node) return NULL;
     node->line = get_attribute_int(line, "line=");
 
-    // --- LOGIC TO PARSE CHILDREN AND CONSUME ')' IS NOW SELF-CONTAINED IN EACH CASE ---
+    // --- Phase 3: Based on type, parse attributes and recursively parse children. ---
     switch (type) {
         case AST_PROGRAM:
         case AST_PRINT_STATEMENT: {
@@ -1045,7 +1080,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 node->as.program.capacity = 8; node->as.program.count = 0;
                 node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
                 list_ptr = node->as.program.statements; count_ptr = &node->as.program.count; capacity_ptr = &node->as.program.capacity;
-            } else {
+            } else { // AST_PRINT_STATEMENT
                 node->as.print_stmt.capacity = 4; node->as.print_stmt.count = 0;
                 node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
                 list_ptr = node->as.print_stmt.expressions; count_ptr = &node->as.print_stmt.count; capacity_ptr = &node->as.print_stmt.capacity;
@@ -1071,27 +1106,22 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
         case AST_BINARY_OP: {
-            // This part is correct: get the operator's string representation ("+" or "**", etc.)
             get_attribute_string(line, "op=", node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN);
-            
-            // --- NEW FIX: Determine the operator's TokenType from its lexeme ---
             char* op_str = node->as.binary_op.operator.lexeme;
             size_t op_len = strlen(op_str);
-            TokenType op_type = UNKNOWN;
-
-            if (op_len == 3) {
-                op_type = identify_three_char_token(op_str[0], op_str[1], op_str[2]);
-            } else if (op_len == 2) {
-                op_type = identify_two_char_token(op_str[0], op_str[1]);
-            } else if (op_len == 1) {
-                op_type = identify_single_char_token(op_str[0]);
-            }
-            node->as.binary_op.operator.type = op_type;
-            // --- END OF FIX ---
-
-            // This part is also correct: parse the children
+            if (op_len == 3) node->as.binary_op.operator.type = identify_three_char_token(op_str[0], op_str[1], op_str[2]);
+            else if (op_len == 2) node->as.binary_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
+            else if (op_len == 1) node->as.binary_op.operator.type = identify_single_char_token(op_str[0]);
             node->as.binary_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             node->as.binary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+        case AST_UNARY_OP: {
+            get_attribute_string(line, "op=", node->as.unary_op.operator.lexeme, MAX_LEXEME_LEN);
+            if (strlen(node->as.unary_op.operator.lexeme) == 1) {
+                node->as.unary_op.operator.type = identify_single_char_token(node->as.unary_op.operator.lexeme[0]);
+            }
+            node->as.unary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
         case AST_LITERAL: {
@@ -1107,13 +1137,22 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             get_attribute_string(line, "name=", node->as.identifier.name.lexeme, MAX_LEXEME_LEN);
             break;
         }
-        default: break; // Leaf nodes with no special attributes
+        default: break;
     }
-
+    
     if (parser->had_error) { free_ast(node); return NULL; }
     
-    // For any node that opens a block, we now consume its closing parenthesis.
-    if (type == AST_PROGRAM || type == AST_ASSIGNMENT || type == AST_BINARY_OP || type == AST_PRINT_STATEMENT) {
+    // --- Phase 4 (The Fix): Consume the closing parenthesis for this node if it's a block. ---
+    bool is_block_node = false;
+    switch(type) {
+        case AST_PROGRAM: case AST_ASSIGNMENT: case AST_BINARY_OP:
+        case AST_UNARY_OP: case AST_PRINT_STATEMENT:
+            is_block_node = true;
+            break;
+        default: break;
+    }
+
+    if (is_block_node) {
         if (*current_line_idx < lines->count) {
              const char* closing_line = lines->lines[*current_line_idx];
              if (get_indent_level(closing_line) == expected_indent && *(closing_line + expected_indent * 2) == ')') {
@@ -1538,6 +1577,24 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             return value;
         }
 
+        case AST_UNARY_OP: {
+            // Recursively execute the operand to get its value.
+            GraveyardValue right = execute_node(gy, node->as.unary_op.right);
+
+            // Check the operator type to see what to do.
+            switch (node->as.unary_op.operator.type) {
+                case MINUS:
+                    if (right.type != VAL_NUMBER) {
+                        fprintf(stderr, "Runtime Error [line %d]: Operand for negation must be a number.\n", node->line);
+                        return create_null_value();
+                    }
+                    return create_number_value(-right.as.number);
+                // We can add the '!' NOT operator here later
+                // case NOT: ...
+            }
+            break;
+        }
+
         case AST_BINARY_OP: {
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
@@ -1566,7 +1623,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case ADDITION:
                     if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
                     return create_number_value(left.as.number + right.as.number);
-                case SUBTRACTION:
+                case MINUS:
                     if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
                     return create_number_value(left.as.number - right.as.number);
                 case MULTIPLICATION:
@@ -1659,10 +1716,7 @@ int main(int argc, char *argv[]) {
 
     bool success = true;
 
-    // --- UPDATED DISPATCH LOGIC ---
-
     if (strcmp(gy->mode, "--executecompiled") == 0 || strcmp(gy->mode, "-ec") == 0) {
-        // This special mode loads the AST directly from a .gyc file.
         const char *ext = strrchr(gy->filename, '.');
         if (!ext || strcmp(ext, ".gyc") != 0) {
             fprintf(stderr, "Error: Execute compiled mode requires a .gyc file.\n");
@@ -1670,10 +1724,7 @@ int main(int argc, char *argv[]) {
         } else {
             printf("--- Loading and Executing Compiled AST from %s ---\n", gy->filename);
             if (load_ast_from_file(gy, gy->filename)) {
-                
-                // print ast
-                print_ast(gy->ast_root);
-
+                print_ast(gy->ast_root); // Debug print of loaded AST
                 if (!execute(gy)) {
                     fprintf(stderr, "Execution failed.\n");
                     success = false;
@@ -1690,24 +1741,36 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error: Mode '%s' requires a .gy source file.\n", gy->mode);
             success = false;
         } else {
-            // Load the source code since we're starting from a .gy file
             FILE *file = fopen(gy->filename, "r");
             if (!file) {
                 perror("Error opening source file");
-                graveyard_free(gy); // Free gy before returning
+                graveyard_free(gy);
                 return 1;
             }
-
-            long source_length = 0;
-            gy->source_code = load(file, &source_length);
+            gy->source_code = load(file, NULL);
             fclose(file);
             if (!gy->source_code) {
                 fprintf(stderr, "Failed to load source file.\n");
                 success = false;
             } else {
-                // Dispatch to the correct toolchain for .gy files
+                // --- UPDATED DISPATCH LOGIC ---
                 if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-                    if (!tokenize(gy)) { success = false; }
+                    printf("--- Tokenizer Debug Mode ---\n");
+                    if (!tokenize(gy)) {
+                        fprintf(stderr, "Tokenization failed.\n");
+                        success = false;
+                    } else {
+                        // --- PRINT LOOP RESTORED ---
+                        printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
+                        for (size_t i = 0; i < gy->token_count; i++) {
+                            printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
+                                   i,
+                                   gy->tokens[i].line,
+                                   gy->tokens[i].column,
+                                   gy->tokens[i].type,
+                                   gy->tokens[i].lexeme);
+                        }
+                    }
                 } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
                     if (!compile_source(gy)) { success = false; }
                 } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
