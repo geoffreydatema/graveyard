@@ -532,33 +532,31 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
 }
 
 // Returns the precedence level for a given binary operator token type.
-// Higher numbers mean higher precedence (binds more tightly).
 static int get_operator_precedence(TokenType type) {
     switch (type) {
         case OR:
             return 1;
-        case AND:
+        case XOR:
             return 2;
-        
-        // Existing levels, shifted up to make room
+        case AND:
+            return 3;
         case EQUALITY:
         case INEQUALITY:
-            return 3;
+            return 4;
         case LESSTHAN:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
-            return 4;
-        case ADDITION:
-        case MINUS: // Remember you renamed this from SUBTRACTION
             return 5;
+        case ADDITION:
+        case MINUS:
+            return 6;
         case MULTIPLICATION:
         case DIVISION:
         case MODULO:
-            return 6;
-        case EXPONENTIATION:
             return 7;
-
+        case EXPONENTIATION:
+            return 8;
         default:
             return 0; // Not a binary operator
     }
@@ -1687,7 +1685,12 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     return create_bool_value(are_values_equal(left, right));
                 case INEQUALITY:
                     return create_bool_value(!are_values_equal(left, right));
-
+                case XOR: {
+                    // The result of XOR is true if and only if the operands' truthiness differs.
+                    bool left_is_truthy = !is_value_falsy(left);
+                    bool right_is_truthy = !is_value_falsy(right);
+                    return create_bool_value(left_is_truthy != right_is_truthy);
+                }
                 // --- Relational & Arithmetic Operators (still require numbers for now) ---
                 case GREATERTHAN:
                     if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
