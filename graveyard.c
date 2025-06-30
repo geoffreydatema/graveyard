@@ -30,6 +30,7 @@ typedef enum {
     AST_PROGRAM,
     AST_BINARY_OP,
     AST_UNARY_OP,
+    AST_LOGICAL_OP,
     AST_ASSIGNMENT,
     AST_IDENTIFIER,
     AST_LITERAL,
@@ -52,6 +53,12 @@ typedef struct {
     Token operator;
     AstNode *right; // The single operand
 } AstNodeUnaryOp;
+
+typedef struct {
+    Token operator;
+    AstNode *left;
+    AstNode *right;
+} AstNodeLogicalOp;
 
 // Node for: my_variable = <expression>
 typedef struct {
@@ -87,6 +94,7 @@ struct AstNode {
         AstNodeProgram      program;
         AstNodeBinaryOp     binary_op;
         AstNodeUnaryOp      unary_op;
+        AstNodeLogicalOp    logical_op;
         AstNodeAssignment   assignment;
         AstNodeIdentifier   identifier;
         AstNodeLiteral      literal;
@@ -417,6 +425,10 @@ void free_ast(AstNode* node) {
             }
             free(node->as.print_stmt.expressions);
             break;
+        case AST_LOGICAL_OP:
+            free_ast(node->as.logical_op.left);
+            free_ast(node->as.logical_op.right);
+            break;
         case AST_BINARY_OP:
             free_ast(node->as.binary_op.left);
             free_ast(node->as.binary_op.right);
@@ -519,26 +531,33 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
     return node;
 }
 
-// Add this helper function with the other parser helpers
+// Returns the precedence level for a given binary operator token type.
+// Higher numbers mean higher precedence (binds more tightly).
 static int get_operator_precedence(TokenType type) {
     switch (type) {
+        // New, lower levels for logical operators
+        case AND:
+            return 2;
+        
+        // Existing levels, shifted up to make room
         case EQUALITY:
         case INEQUALITY:
-            return 1;
+            return 3;
         case LESSTHAN:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
-            return 2;
+            return 4;
         case ADDITION:
-        case MINUS:
-            return 3;
+        case MINUS: // Remember you renamed this from SUBTRACTION
+            return 5;
         case MULTIPLICATION:
         case DIVISION:
         case MODULO:
-            return 4;
+            return 6;
         case EXPONENTIATION:
-            return 5;
+            return 7;
+
         default:
             return 0; // Not a binary operator
     }
@@ -603,40 +622,40 @@ static AstNode* parse_primary(Parser* parser) {
 
 // This is the new, precedence-aware expression parser.
 static AstNode* parse_expression(Parser* parser, int min_precedence) {
-    // First, parse a "primary" expression, which is the start of our sequence.
-    // This could be a number, an identifier, or a parenthesized expression.
     AstNode* left = parse_primary(parser);
     if (!left) return NULL;
 
-    // The Precedence Climbing loop
     while (true) {
         Token operator_token = *peek(parser);
         int current_precedence = get_operator_precedence(operator_token.type);
 
-        // If the next token is not an operator, or its precedence is too low,
-        // we're done with this sub-expression.
         if (current_precedence == 0 || current_precedence < min_precedence) {
             break;
         }
 
-        // We found an operator with good precedence, so consume it.
-        consume(parser);
+        consume(parser); // Consume the operator
 
-        // Recursively call parse_expression for the right-hand side.
-        // This is the magic: we pass a higher precedence level to ensure that
-        // operators to the right are handled correctly.
         AstNode* right = parse_expression(parser, current_precedence + 1);
         if (!right) { free_ast(left); return NULL; }
 
-        // Combine the left, operator, and right into a new binary operation node.
-        AstNode* node = create_node(parser, AST_BINARY_OP);
-        node->line = operator_token.line;
-        node->as.binary_op.operator = operator_token;
-        node->as.binary_op.left = left;
-        node->as.binary_op.right = right;
+        // --- UPDATED NODE CREATION LOGIC ---
+        AstNode* node;
+        // Check if the operator is for a logical or standard binary operation
+        if (operator_token.type == AND) { // We can add OR here later
+            node = create_node(parser, AST_LOGICAL_OP);
+            node->line = operator_token.line;
+            node->as.logical_op.operator = operator_token;
+            node->as.logical_op.left = left;
+            node->as.logical_op.right = right;
+        } else {
+            // All other operators create a standard binary op node
+            node = create_node(parser, AST_BINARY_OP);
+            node->line = operator_token.line;
+            node->as.binary_op.operator = operator_token;
+            node->as.binary_op.left = left;
+            node->as.binary_op.right = right;
+        }
         
-        // This new node now becomes the 'left' side for the next loop iteration.
-        // This is how we handle chains like 1 + 2 + 3.
         left = node;
     }
 
@@ -827,6 +846,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
+        case AST_LOGICAL_OP:
+            fprintf(file, "(LOGICAL_OP op=\"%s\" line=%d\n", node->as.logical_op.operator.lexeme, node->line);
+            write_ast_node(file, node->as.logical_op.left, indent + 1);
+            write_ast_node(file, node->as.logical_op.right, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
         case AST_BINARY_OP:
             fprintf(file, "(BINARY_OP op=\"%s\" line=%d\n", node->as.binary_op.operator.lexeme, node->line);
             write_ast_node(file, node->as.binary_op.left, indent + 1);
@@ -964,6 +990,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "LITERAL_NUM") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_BOOL") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_NULL") == 0) return AST_LITERAL;
+    if (strcmp(type_str, "LOGICAL_OP") == 0) return AST_LOGICAL_OP;
     if (strcmp(type_str, "BINARY_OP") == 0) return AST_BINARY_OP;
     if (strcmp(type_str, "UNARY_OP") == 0) return AST_UNARY_OP;
     if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
@@ -1116,6 +1143,21 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             node->as.binary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
+        case AST_LOGICAL_OP: {
+            get_attribute_string(line, "op=", node->as.logical_op.operator.lexeme, MAX_LEXEME_LEN);
+            
+            char* op_str = node->as.logical_op.operator.lexeme;
+            size_t op_len = strlen(op_str);
+            if (op_len == 2) { // For '&&' and later '||'
+                node->as.logical_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
+            } else {
+                node->as.logical_op.operator.type = UNKNOWN;
+            }
+
+            node->as.logical_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.logical_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
         case AST_UNARY_OP: {
             get_attribute_string(line, "op=", node->as.unary_op.operator.lexeme, MAX_LEXEME_LEN);
             if (strlen(node->as.unary_op.operator.lexeme) == 1) {
@@ -1147,6 +1189,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     switch(type) {
         case AST_PROGRAM: case AST_ASSIGNMENT: case AST_BINARY_OP:
         case AST_UNARY_OP: case AST_PRINT_STATEMENT:
+        case AST_LOGICAL_OP:
             is_block_node = true;
             break;
         default: break;
@@ -1585,6 +1628,25 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             // Assignment expressions in Graveyard can return the assigned value,
             // allowing for things like 'a = b = 5;'.
             return value;
+        }
+        
+        case AST_LOGICAL_OP: {
+            // First, ONLY evaluate the left-hand side.
+            GraveyardValue left = execute_node(gy, node->as.logical_op.left);
+
+            if (node->as.logical_op.operator.type == AND) {
+                // Check the truthiness of the left side.
+                if (is_value_falsy(left)) {
+                    // If the left side is falsy, the whole expression's value is
+                    // that falsy value. We short-circuit and do not execute the right side.
+                    return left;
+                }
+            } 
+            // We would add an 'else if' for the OR operator here in the future.
+
+            // If we are still here, it means the left side was truthy. The result
+            // of the '&&' expression is therefore whatever the right side evaluates to.
+            return execute_node(gy, node->as.logical_op.right);
         }
 
         case AST_UNARY_OP: {
