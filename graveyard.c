@@ -535,7 +535,8 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
 // Higher numbers mean higher precedence (binds more tightly).
 static int get_operator_precedence(TokenType type) {
     switch (type) {
-        // New, lower levels for logical operators
+        case OR:
+            return 1;
         case AND:
             return 2;
         
@@ -641,7 +642,7 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
         // --- UPDATED NODE CREATION LOGIC ---
         AstNode* node;
         // Check if the operator is for a logical or standard binary operation
-        if (operator_token.type == AND) { // We can add OR here later
+        if (operator_token.type == AND || operator_token.type == OR) {
             node = create_node(parser, AST_LOGICAL_OP);
             node->line = operator_token.line;
             node->as.logical_op.operator = operator_token;
@@ -1633,19 +1634,21 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_LOGICAL_OP: {
             // First, ONLY evaluate the left-hand side.
             GraveyardValue left = execute_node(gy, node->as.logical_op.left);
+            TokenType op_type = node->as.logical_op.operator.type;
 
-            if (node->as.logical_op.operator.type == AND) {
-                // Check the truthiness of the left side.
+            if (op_type == AND) {
+                // If the left side is falsy, short-circuit and return it.
                 if (is_value_falsy(left)) {
-                    // If the left side is falsy, the whole expression's value is
-                    // that falsy value. We short-circuit and do not execute the right side.
                     return left;
                 }
-            } 
-            // We would add an 'else if' for the OR operator here in the future.
+            } else if (op_type == OR) {
+                // If the left side is truthy, short-circuit and return it.
+                if (!is_value_falsy(left)) {
+                    return left;
+                }
+            }
 
-            // If we are still here, it means the left side was truthy. The result
-            // of the '&&' expression is therefore whatever the right side evaluates to.
+            // If we didn't short-circuit, the result is the value of the right side.
             return execute_node(gy, node->as.logical_op.right);
         }
 
