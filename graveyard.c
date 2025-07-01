@@ -792,8 +792,54 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     return assignment_node;
 }
 
+// Parses an increment/decrement statement and de-sugars it.
+static AstNode* parse_inc_dec_statement(Parser* parser) {
+    // We get here after seeing an IDENTIFIER followed by a ++ or --.
+    Token identifier = *consume(parser); // Consume the variable name 'x'
+    Token op = *consume(parser);         // Consume the '++' or '--' token
+
+    // --- De-sugaring: Build the AST for: identifier = identifier +/- 1 ---
+
+    // 1. Create an IDENTIFIER node for the 'x' on the right side of the '+'
+    AstNode* left_side = create_node(parser, AST_IDENTIFIER);
+    if (!left_side) return NULL;
+    left_side->line = identifier.line;
+    left_side->as.identifier.name = identifier;
+
+    // 2. Manually create a "1" literal node.
+    AstNode* right_side = create_node(parser, AST_LITERAL);
+    if (!right_side) { free_ast(left_side); return NULL; }
+    right_side->line = op.line;
+    right_side->as.literal.value.type = NUMBER;
+    strcpy(right_side->as.literal.value.lexeme, "1");
+
+    // 3. Create the BINARY_OP node for the '+' or '-' operation.
+    AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
+    if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
+    binary_op_node->line = op.line;
+    binary_op_node->as.binary_op.operator.type = (op.type == INCREMENT) ? ADDITION : MINUS;
+    strcpy(binary_op_node->as.binary_op.operator.lexeme, (op.type == INCREMENT) ? "+" : "-");
+    binary_op_node->as.binary_op.left = left_side;
+    binary_op_node->as.binary_op.right = right_side;
+
+    // 4. Create the final ASSIGNMENT node.
+    AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
+    if (!assignment_node) { free_ast(binary_op_node); return NULL; }
+    assignment_node->line = identifier.line;
+    assignment_node->as.assignment.identifier = identifier;
+    assignment_node->as.assignment.value = binary_op_node;
+
+    return assignment_node;
+}
+
 // This function acts as a dispatcher to the correct statement parser.
 static AstNode* parse_statement(Parser* parser) {
+    TokenType next_token_type = parser->tokens[parser->current + 1].type;
+
+    if (peek(parser)->type == IDENTIFIER && 
+       (next_token_type == INCREMENT || next_token_type == DECREMENT)) {
+        return parse_inc_dec_statement(parser);
+    }
 
     if (peek(parser)->type == IDENTIFIER &&
         is_compound_assignment(parser->tokens[parser->current + 1].type)) {
