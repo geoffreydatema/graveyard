@@ -1552,13 +1552,66 @@ bool tokenize(Graveyard *gy) {
             tokens = new_tokens;
             capacity = new_capacity;
         }
+
+        // --- STATE-BASED LOGIC ---
+        // First, check if we are inside a formatted string.
+        if (state == STATE_IN_FMT_STRING) {
+            int column = (current_ptr - line_start_ptr) + 1;
+            char c = *current_ptr;
+
+            if (c == '\'') { // End of the formatted string
+                state = STATE_DEFAULT;
+                tokens[count].type = FMT_END;
+                tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
+                tokens[count].line = line; tokens[count].column = column;
+                count++;
+                current_ptr++;
+                continue;
+            }
+            if (c == '{') { // Start of an embedded expression
+                state = STATE_DEFAULT;
+                fstring_brace_depth = 1;
+                tokens[count].type = LEFTBRACE;
+                tokens[count].lexeme[0] = '{'; tokens[count].lexeme[1] = '\0';
+                tokens[count].line = line; tokens[count].column = column;
+                count++;
+                current_ptr++;
+                continue;
+            }
+            if (c == '\n' || c == '\0') {
+                fprintf(stderr, "Tokenizer error [line %zu, col %d]: Unterminated formatted string.\n", line, column);
+                goto cleanup_failure;
+            }
+            
+            // This is a literal part of the formatted string.
+            const char* start = current_ptr;
+            while (current_ptr < end_ptr && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') {
+                current_ptr++;
+            }
+            size_t len = current_ptr - start;
+            if (len > 0) {
+                if (len >= MAX_LEXEME_LEN) {
+                    fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
+                    goto cleanup_failure;
+                }
+                tokens[count].type = LITERAL_PART;
+                strncpy(tokens[count].lexeme, start, len);
+                tokens[count].lexeme[len] = '\0';
+                tokens[count].line = line;
+                tokens[count].column = column;
+                count++;
+            }
+            continue;
+        }
         
+        // --- If we are not in a formatted string, we are in the DEFAULT state. ---
+        
+        // Step 1: Skip all non-token content (comments and whitespace)
         if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '/') {
             current_ptr += 2;
             while (current_ptr < end_ptr && *current_ptr != '\n') { current_ptr++; }
             continue;
         }
-
         if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '*') {
             const char* comment_start = current_ptr;
             int comment_start_line = line;
@@ -1575,57 +1628,19 @@ bool tokenize(Graveyard *gy) {
             current_ptr += 2;
             continue;
         }
-        
         if (isspace((unsigned char)*current_ptr)) {
             if (*current_ptr == '\n') { line++; line_start_ptr = current_ptr + 1; }
             current_ptr++;
             continue;
         }
 
+        // --- If we get here, it must be the start of a token. ---
         int column = (current_ptr - line_start_ptr) + 1;
         char c = *current_ptr;
-        
-        if (state == STATE_IN_FMT_STRING) {
-            if (c == '\'') { // End of the formatted string
-                state = STATE_DEFAULT;
-                tokens[count].type = FMT_END; // CHANGE: Emit FMT_END token
-                tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
-                tokens[count].line = line; tokens[count].column = column;
-                count++;
-                current_ptr++;
-                continue;
-            }
-            if (c == '{') { // Start of an embedded expression
-                state = STATE_DEFAULT; fstring_brace_depth = 1;
-                tokens[count].type = LEFTBRACE; tokens[count].lexeme[0] = '{'; tokens[count].lexeme[1] = '\0';
-                tokens[count].line = line; tokens[count].column = column;
-                count++; current_ptr++; continue;
-            }
-            if (c == '\n' || c == '\0') {
-                fprintf(stderr, "Tokenizer error [line %zu, col %d]: Unterminated formatted string.\n", line, column);
-                goto cleanup_failure;
-            }
-            // This is a literal part of the formatted string
-            const char* start = current_ptr;
-            while (current_ptr < end_ptr && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') { current_ptr++; }
-            size_t len = current_ptr - start;
-            if (len > 0) {
-                if (len >= MAX_LEXEME_LEN) {
-                    fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
-                    goto cleanup_failure;
-                }
-                tokens[count].type = LITERAL_PART; // CHANGE: Use new token type
-                strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
-                tokens[count].line = line; tokens[count].column = column;
-                count++;
-            }
-            continue;
-        }
-        
-        // This is the start of a formatted string when in the default state
-        if (c == '\'') {
+
+        if (c == '\'') { // Start of a formatted string
             state = STATE_IN_FMT_STRING;
-            tokens[count].type = FMT_START; // CHANGE: Emit FMT_START token
+            tokens[count].type = FMT_START;
             tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
             tokens[count].line = line; tokens[count].column = column;
             count++;
