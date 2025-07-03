@@ -12,7 +12,7 @@
 // --- Type Definitions ---
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, FMT_START, FMT_END, LITERAL_PART, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -627,14 +627,14 @@ static int get_operator_precedence(TokenType type) {
 static AstNode* parse_statement(Parser* parser);
 static AstNode* parse_expression(Parser* parser, int min_precedence);
 
-// Parses a formatted string, like 'a {b} c', into a single AST node
-// containing a list of its literal and expression parts.
-static AstNode* parse_formatted_string(Parser* parser, Token first_part) {
-    // --- CORRECTED NODE CREATION ---
+// Parses a formatted string by consuming parts until it finds an FMT_END token.
+static AstNode* parse_formatted_string(Parser* parser) {
+    // We get here right after the opening ' (FMT_START) has been consumed.
+    Token start_token = parser->tokens[parser->current - 1];
+
     AstNode* node = create_node(parser, AST_FORMATTED_STRING);
     if (!node) return NULL;
-    node->line = first_part.line; // Set line number manually
-    // --- END CORRECTION ---
+    node->line = start_token.line;
 
     // Initialize the dynamic array of parts
     node->as.formatted_string.capacity = 4;
@@ -647,48 +647,38 @@ static AstNode* parse_formatted_string(Parser* parser, Token first_part) {
         return NULL;
     }
 
-    // Add the first literal part
-    FmtStringPart initial_part;
-    initial_part.type = FMT_PART_LITERAL;
-    initial_part.as.literal = first_part;
-    node->as.formatted_string.parts[node->as.formatted_string.count++] = initial_part;
+    // Loop until we hit the closing ' (FMT_END) or run out of tokens
+    while (peek(parser)->type != FMT_END && !is_at_end(parser)) {
+        // Realloc logic for the parts array would go here in a full implementation
 
-    // Loop to parse all subsequent {expression} and literal parts
-    while (match(parser, LEFTBRACE)) {
-        if (node->as.formatted_string.count >= node->as.formatted_string.capacity) {
-            // NOTE: A full implementation would realloc the parts array here.
-            // For now, we assume it won't exceed the initial capacity.
-        }
-
-        // --- Parse the expression inside { ... } ---
-        FmtStringPart expr_part;
-        expr_part.type = FMT_PART_EXPRESSION;
-        expr_part.as.expression = parse_expression(parser, 1);
-        if (!expect(parser, RIGHTBRACE, "Expected '}' after expression in formatted string.")) {
-            // Error detected and reported by expect(). Free the parent node and fail.
-            free_ast(node);
-            return NULL;
-        }
-        
-        node->as.formatted_string.parts[node->as.formatted_string.count++] = expr_part;
-
-        // --- Check for another literal part after the { ... } ---
-        if (match(parser, FORMATTEDSTRING)) {
-             if (node->as.formatted_string.count >= node->as.formatted_string.capacity) {
-                // Handle reallocation if needed
-             }
-            FmtStringPart literal_part;
-            literal_part.type = FMT_PART_LITERAL;
-            literal_part.as.literal = parser->tokens[parser->current - 1];
-            node->as.formatted_string.parts[node->as.formatted_string.count++] = literal_part;
+        if (match(parser, LITERAL_PART)) {
+            FmtStringPart part;
+            part.type = FMT_PART_LITERAL;
+            part.as.literal = parser->tokens[parser->current - 1];
+            node->as.formatted_string.parts[node->as.formatted_string.count++] = part;
+        } else if (match(parser, LEFTBRACE)) {
+            FmtStringPart part;
+            part.type = FMT_PART_EXPRESSION;
+            part.as.expression = parse_expression(parser, 1);
+            expect(parser, RIGHTBRACE, "Expected '}' after expression in formatted string.");
+            node->as.formatted_string.parts[node->as.formatted_string.count++] = part;
+        } else {
+            // This indicates a tokenizer bug or an unterminated string
+            error_at_token(parser, peek(parser), "Unexpected token inside formatted string.");
+            break;
         }
     }
 
+    expect(parser, FMT_END, "Expected closing ' to terminate formatted string.");
     return node;
 }
 
 // Parses the most basic units of an expression.
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, FMT_START)) {
+        return parse_formatted_string(parser);
+    }
+
     if (match(parser, LEFTPARENTHESES)) {
         AstNode* expr = parse_expression(parser, 1);
         expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
@@ -710,7 +700,7 @@ static AstNode* parse_primary(Parser* parser) {
     
     // Handle formatted strings. This is now the entry point.
     if (match(parser, FORMATTEDSTRING)) {
-        return parse_formatted_string(parser, parser->tokens[parser->current - 1]);
+        return parse_formatted_string(parser);
     }
 
     if (match(parser, STRING) || match(parser, NUMBER) || 
@@ -755,7 +745,6 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
         AstNode* right = parse_expression(parser, current_precedence + 1);
         if (!right) { free_ast(left); return NULL; }
 
-        // --- UPDATED NODE CREATION LOGIC ---
         AstNode* node;
         // Check if the operator is for a logical or standard binary operation
         if (operator_token.type == AND || operator_token.type == OR) {
@@ -1556,7 +1545,7 @@ bool tokenize(Graveyard *gy) {
     const char* current_ptr = start_ptr;
 
     while (current_ptr < end_ptr) {
-        if (count == capacity) {
+        if (count + 1 >= capacity) { // Ensure space for one more token + EOF
             size_t new_capacity = capacity * 2;
             Token *new_tokens = realloc(tokens, new_capacity * sizeof(Token));
             if (!new_tokens) { perror("tokenize: realloc failed"); goto cleanup_failure; }
@@ -1595,10 +1584,18 @@ bool tokenize(Graveyard *gy) {
 
         int column = (current_ptr - line_start_ptr) + 1;
         char c = *current_ptr;
-
+        
         if (state == STATE_IN_FMT_STRING) {
-            if (c == '\'') { state = STATE_DEFAULT; current_ptr++; continue; }
-            if (c == '{') {
+            if (c == '\'') { // End of the formatted string
+                state = STATE_DEFAULT;
+                tokens[count].type = FMT_END; // CHANGE: Emit FMT_END token
+                tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
+                tokens[count].line = line; tokens[count].column = column;
+                count++;
+                current_ptr++;
+                continue;
+            }
+            if (c == '{') { // Start of an embedded expression
                 state = STATE_DEFAULT; fstring_brace_depth = 1;
                 tokens[count].type = LEFTBRACE; tokens[count].lexeme[0] = '{'; tokens[count].lexeme[1] = '\0';
                 tokens[count].line = line; tokens[count].column = column;
@@ -1608,15 +1605,16 @@ bool tokenize(Graveyard *gy) {
                 fprintf(stderr, "Tokenizer error [line %zu, col %d]: Unterminated formatted string.\n", line, column);
                 goto cleanup_failure;
             }
+            // This is a literal part of the formatted string
             const char* start = current_ptr;
             while (current_ptr < end_ptr && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') { current_ptr++; }
             size_t len = current_ptr - start;
             if (len > 0) {
-                 if (len >= MAX_LEXEME_LEN) {
+                if (len >= MAX_LEXEME_LEN) {
                     fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
                     goto cleanup_failure;
                 }
-                tokens[count].type = FORMATTEDSTRING;
+                tokens[count].type = LITERAL_PART; // CHANGE: Use new token type
                 strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
                 tokens[count].line = line; tokens[count].column = column;
                 count++;
@@ -1624,7 +1622,16 @@ bool tokenize(Graveyard *gy) {
             continue;
         }
         
-        if (c == '\'') { state = STATE_IN_FMT_STRING; current_ptr++; continue; }
+        // This is the start of a formatted string when in the default state
+        if (c == '\'') {
+            state = STATE_IN_FMT_STRING;
+            tokens[count].type = FMT_START; // CHANGE: Emit FMT_START token
+            tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
+            tokens[count].line = line; tokens[count].column = column;
+            count++;
+            current_ptr++;
+            continue;
+        }
         
         if (fstring_brace_depth > 0) {
             if (c == '}') {
@@ -2038,40 +2045,51 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_FORMATTED_STRING: {
             // We need a dynamic buffer to build the final string.
-            size_t capacity = 128; // Initial capacity
+            size_t capacity = 128; // Start with a reasonable initial capacity
             size_t length = 0;
             char* result_string = malloc(capacity);
-            result_string[0] = '\0';
+            if (!result_string) {
+                perror("Formatted string buffer malloc failed");
+                return create_null_value();
+            }
+            result_string[0] = '\0'; // Start with an empty C-string
 
             // Loop through each part of the formatted string
             for (size_t i = 0; i < node->as.formatted_string.count; i++) {
                 FmtStringPart part = node->as.formatted_string.parts[i];
-                char part_buffer[256]; // Temp buffer for the string representation of the current part
+                // A temporary buffer for the string representation of the current part
+                char part_buffer[256]; 
 
                 if (part.type == FMT_PART_LITERAL) {
                     // If it's a literal part, just use its lexeme directly.
                     strncpy(part_buffer, part.as.literal.lexeme, sizeof(part_buffer) - 1);
+                    part_buffer[sizeof(part_buffer) - 1] = '\0';
                 } else { // FMT_PART_EXPRESSION
-                    // If it's an expression, execute it to get its value...
+                    // If it's an expression, execute the sub-tree to get its value...
                     GraveyardValue value = execute_node(gy, part.as.expression);
-                    // ...then convert that value to a string.
+                    // ...then convert that value to its string representation.
                     value_to_string(value, part_buffer, sizeof(part_buffer));
                 }
                 
                 size_t part_len = strlen(part_buffer);
-                // Grow the main result buffer if needed
+                // Grow the main result buffer if it's not big enough
                 if (length + part_len + 1 > capacity) {
                     capacity = (length + part_len) * 2;
-                    result_string = realloc(result_string, capacity);
+                    char* new_result = realloc(result_string, capacity);
+                    if (!new_result) {
+                        perror("Formatted string buffer realloc failed");
+                        free(result_string);
+                        return create_null_value();
+                    }
+                    result_string = new_result;
                 }
                 // Append the current part's string to the main result
                 strcat(result_string, part_buffer);
                 length += part_len;
             }
 
-            // Create a final GraveyardValue from the concatenated string
             GraveyardValue final_value = create_string_value(result_string);
-            free(result_string); // Clean up our temporary buffer
+            free(result_string); // Clean up our temporary build buffer
             return final_value;
         }
     }
