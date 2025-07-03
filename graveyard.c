@@ -2021,6 +2021,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
             TokenType op_type = node->as.binary_op.operator.type;
 
+            // --- Group 1: Logical/Equality operators (work on multiple types) ---
             if (op_type == EQUALITY)   return create_bool_value(are_values_equal(left, right));
             if (op_type == INEQUALITY) return create_bool_value(!are_values_equal(left, right));
             if (op_type == XOR) {
@@ -2029,29 +2030,62 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_bool_value(left_is_truthy != right_is_truthy);
             }
 
-            if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) {
-                fprintf(stderr, "Runtime Error [line %d]: Operands must be numbers for this operation.\n", node->line);
-                return create_null_value();
+            // --- Group 2: Special contextual operator: Addition/Concatenation ---
+            if (op_type == ADDITION) {
+                // Case 2a: Both operands are numbers
+                if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
+                    return create_number_value(left.as.number + right.as.number);
+                }
+                // Case 2b: At least one operand is a string
+                if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                    char left_str[256];
+                    char right_str[256];
+                    value_to_string(left, left_str, sizeof(left_str));
+                    value_to_string(right, right_str, sizeof(right_str));
+
+                    size_t total_len = strlen(left_str) + strlen(right_str);
+                    if (total_len >= MAX_LEXEME_LEN) {
+                        fprintf(stderr, "Runtime Error [line %d]: Resulting string from concatenation is too long.\n", node->line);
+                        return create_null_value();
+                    }
+                    char result_buffer[MAX_LEXEME_LEN];
+                    strcpy(result_buffer, left_str);
+                    strcat(result_buffer, right_str);
+
+                    return create_string_value(result_buffer);
+                }
+                // If we get here, the types are not valid for addition (e.g., bool + null)
+                goto type_error;
             }
 
+            // --- Group 3: All other operators currently require numbers ---
+            if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+
             switch (op_type) {
-                case GREATERTHAN:    return create_bool_value(left.as.number > right.as.number);
-                case LESSTHAN:       return create_bool_value(left.as.number < right.as.number);
-                case GREATERTHANEQUAL: return create_bool_value(left.as.number >= right.as.number);
-                case LESSTHANEQUAL:  return create_bool_value(left.as.number <= right.as.number);
-                case ADDITION:       return create_number_value(left.as.number + right.as.number);
                 case MINUS:          return create_number_value(left.as.number - right.as.number);
                 case MULTIPLICATION: return create_number_value(left.as.number * right.as.number);
                 case EXPONENTIATION: return create_number_value(pow(left.as.number, right.as.number));
                 case MODULO:
-                    if (right.as.number == 0) { /* Division by zero error */ return create_null_value(); }
+                    if (right.as.number == 0) {
+                        fprintf(stderr, "Runtime Error [line %d]: Division by zero in modulo operation.\n", node->line);
+                        return create_null_value();
+                    }
                     return create_number_value(fmod(left.as.number, right.as.number));
                 case DIVISION:
-                    if (right.as.number == 0) { /* Division by zero error */ return create_null_value(); }
+                    if (right.as.number == 0) {
+                        fprintf(stderr, "Runtime Error [line %d]: Division by zero.\n", node->line);
+                        return create_null_value();
+                    }
                     return create_number_value(left.as.number / right.as.number);
+                
+                // All remaining operators in this switch must be relational
                 default:
-                    fprintf(stderr, "Runtime Error [line %d]: Unknown or unimplemented binary operator.\n", node->line);
-                    return create_null_value();
+                    return create_bool_value(
+                        op_type == GREATERTHAN    ? left.as.number > right.as.number :
+                        op_type == LESSTHAN       ? left.as.number < right.as.number :
+                        op_type == GREATERTHANEQUAL ? left.as.number >= right.as.number :
+                                                     left.as.number <= right.as.number
+                    );
             }
         type_error:
             fprintf(stderr, "Runtime Error [line %d]: Operands have incompatible types for this operation.\n", node->line);
