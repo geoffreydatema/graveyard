@@ -106,9 +106,15 @@ struct AstNode {
 typedef enum {
     VAL_BOOL,
     VAL_NULL,
-    VAL_NUMBER
-    // Future types will be added here: VAL_STRING, VAL_TYPE, etc.
+    VAL_NUMBER,
+    VAL_STRING
 } ValueType;
+
+typedef struct {
+    int ref_count;
+    char* chars;
+    size_t length;
+} GraveyardString;
 
 // A tagged union struct that can represent any value in the Graveyard language.
 typedef struct {
@@ -116,6 +122,7 @@ typedef struct {
     union {
         bool   boolean;
         double number;
+        GraveyardString* string;
     } as;
 } GraveyardValue;
 
@@ -167,6 +174,23 @@ static GraveyardValue create_number_value(double value) {
     return val;
 }
 
+// Creates a new heap-allocated Graveyard string value.
+static GraveyardValue create_string_value(const char* chars) {
+    GraveyardValue val;
+    val.type = VAL_STRING;
+
+    size_t length = strlen(chars);
+    GraveyardString* string_obj = malloc(sizeof(GraveyardString));
+    string_obj->chars = malloc(length + 1);
+    memcpy(string_obj->chars, chars, length);
+    string_obj->chars[length] = '\0';
+    string_obj->length = length;
+    string_obj->ref_count = 0; // Set to 0 initially
+
+    val.as.string = string_obj;
+    return val;
+}
+
 // Prints a GraveyardValue to the console (for debugging).
 void print_value(GraveyardValue value) {
     switch (value.type) {
@@ -179,6 +203,9 @@ void print_value(GraveyardValue value) {
             break;
         case VAL_NUMBER:
             printf("%g", value.as.number);
+            break;
+        case VAL_STRING:
+            printf("%s", value.as.string->chars);
             break;
     }
 }
@@ -567,40 +594,32 @@ static AstNode* parse_statement(Parser* parser);
 static AstNode* parse_expression(Parser* parser, int min_precedence);
 
 // Parses the most basic units of an expression.
-// For now, it only handles numbers and identifiers.
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, LEFTPARENTHESES)) {
+        AstNode* expr = parse_expression(parser, 1);
+        expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
+        return expr;
+    }
+
     if (match(parser, MINUS) || match(parser, NOT)) {
         Token operator_token = parser->tokens[parser->current - 1];
-        // After consuming the operator, recursively parse the operand on its right.
-        // We use a high precedence (like for multiplication) to correctly handle cases like -a * b
-        AstNode* right = parse_expression(parser, 4); // Precedence of multiplication
+        AstNode* right = parse_expression(parser, 6);
         if (!right) return NULL;
 
         AstNode* node = create_node(parser, AST_UNARY_OP);
+        if (!node) { free_ast(right); return NULL; }
         node->line = operator_token.line;
         node->as.unary_op.operator = operator_token;
         node->as.unary_op.right = right;
         return node;
     }
 
-    if (match(parser, LEFTPARENTHESES)) {
-        // A parenthesized expression starts a new precedence context.
-        AstNode* expr = parse_expression(parser, 1);
-        expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
-        return expr;
-    }
-    
-    if (match(parser, TRUEVALUE) || match(parser, FALSEVALUE) || match(parser, NULLVALUE)) {
-        Token literal_token = parser->tokens[parser->current - 1]; // The token we just matched
-        AstNode* node = create_node(parser, AST_LITERAL); // Use the generic AST_LITERAL type
-        node->line = literal_token.line;
-        node->as.literal.value = literal_token;
-        return node;
-    }
-
-    if (match(parser, NUMBER)) {
+    if (match(parser, STRING) || match(parser, NUMBER) || 
+        match(parser, TRUEVALUE) || match(parser, FALSEVALUE) || match(parser, NULLVALUE)) 
+    {
         Token literal_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_LITERAL);
+        if (!node) return NULL; // Check for malloc failure
         node->line = literal_token.line;
         node->as.literal.value = literal_token;
         return node;
@@ -609,12 +628,12 @@ static AstNode* parse_primary(Parser* parser) {
     if (match(parser, IDENTIFIER)) {
         Token identifier_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_IDENTIFIER);
+        if (!node) return NULL;
         node->line = identifier_token.line;
         node->as.identifier.name = identifier_token;
         return node;
     }
 
-    // If we get here, it's not a valid start to an expression.
     error_at_token(parser, peek(parser), "Expected expression.");
     return NULL;
 }
@@ -995,6 +1014,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
+                case STRING:
+                    fprintf(file, "(LITERAL_STR value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    break;
                 case NUMBER:
                     fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
                     break;
@@ -1103,6 +1125,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "PROGRAM") == 0) return AST_PROGRAM;
     if (strcmp(type_str, "ASSIGN") == 0) return AST_ASSIGNMENT;
     if (strcmp(type_str, "IDENTIFIER") == 0) return AST_IDENTIFIER;
+    if (strcmp(type_str, "LITERAL_STR") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_NUM") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_BOOL") == 0) return AST_LITERAL;
     if (strcmp(type_str, "LITERAL_NULL") == 0) return AST_LITERAL;
@@ -1284,11 +1307,16 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
         case AST_LITERAL: {
             get_attribute_string(line, "value=", node->as.literal.value.lexeme, MAX_LEXEME_LEN);
-            if (strcmp(type_str, "LITERAL_NUM") == 0) node->as.literal.value.type = NUMBER;
-            else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
+            if (strcmp(type_str, "LITERAL_STR") == 0) {
+                node->as.literal.value.type = STRING;
+            } else if (strcmp(type_str, "LITERAL_NUM") == 0) {
+                node->as.literal.value.type = NUMBER;
+            } else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
                 if (strcmp(node->as.literal.value.lexeme, "$") == 0) node->as.literal.value.type = TRUEVALUE;
                 else node->as.literal.value.type = FALSEVALUE;
-            } else if (strcmp(type_str, "LITERAL_NULL") == 0) node->as.literal.value.type = NULLVALUE;
+            } else if (strcmp(type_str, "LITERAL_NULL") == 0) {
+                node->as.literal.value.type = NULLVALUE;
+            }
             break;
         }
         case AST_IDENTIFIER: {
@@ -1704,16 +1732,17 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             Token literal_token = node->as.literal.value;
             // Look at the original token's type to decide what value to create
             switch (literal_token.type) {
+                case STRING:
+                    return create_string_value(literal_token.lexeme);
                 case NUMBER:
                     return create_number_value(strtod(literal_token.lexeme, NULL));
-                case TRUEVALUE: // $
+                case TRUEVALUE:
                     return create_bool_value(true);
-                case FALSEVALUE: // %
+                case FALSEVALUE:
                     return create_bool_value(false);
-                case NULLVALUE: // |
+                case NULLVALUE:
                     return create_null_value();
                 default:
-                    // Should not be reached if the parser is correct
                     return create_null_value();
             }
         }
