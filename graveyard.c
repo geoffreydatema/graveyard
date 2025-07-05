@@ -35,7 +35,8 @@ typedef enum {
     AST_IDENTIFIER,
     AST_LITERAL,
     AST_PRINT_STATEMENT,
-    AST_FORMATTED_STRING
+    AST_FORMATTED_STRING,
+    AST_ARRAY_LITERAL
 } AstNodeType;
 
 typedef struct {
@@ -107,6 +108,12 @@ typedef struct {
     size_t capacity;
 } AstNodeFormattedString;
 
+typedef struct {
+    AstNode** elements; // Dynamic array of expression nodes
+    size_t count;
+    size_t capacity;
+} AstNodeArrayLiteral;
+
 // The main generic AST node struct, using a tagged union.
 // This allows a single struct type to represent many different kinds of nodes
 // in a memory-efficient way.
@@ -123,33 +130,53 @@ struct AstNode {
         AstNodeIdentifier       identifier;
         AstNodeLiteral          literal;
         AstNodeFormattedString  formatted_string;
+        AstNodeArrayLiteral     array_literal;
         AstNodePrintStmt        print_stmt;
     } as;
 };
+
+typedef struct GraveyardString GraveyardString;
+typedef struct GraveyardArray GraveyardArray;
+typedef struct GraveyardValue GraveyardValue;
 
 // Defines the type of data a GraveyardValue can hold.
 typedef enum {
     VAL_BOOL,
     VAL_NULL,
     VAL_NUMBER,
-    VAL_STRING
+    VAL_STRING,
+    VAL_ARRAY
 } ValueType;
 
-typedef struct {
+// A tagged union struct that can represent any value in the Graveyard language.
+// This can now be fully defined because the compiler knows what GraveyardString*
+// and GraveyardArray* are (they are pointers to structs).
+struct GraveyardValue {
+    ValueType type;
+    union {
+        bool             boolean;
+        double           number;
+        GraveyardString* string;
+        GraveyardArray* array;
+    } as;
+};
+
+// Now we provide the full definition for the structs we forward-declared.
+
+// An object for a heap-allocated string.
+struct GraveyardString {
     int ref_count;
     char* chars;
     size_t length;
-} GraveyardString;
+};
 
-// A tagged union struct that can represent any value in the Graveyard language.
-typedef struct {
-    ValueType type;
-    union {
-        bool   boolean;
-        double number;
-        GraveyardString* string;
-    } as;
-} GraveyardValue;
+// An object for a heap-allocated, dynamic array.
+struct GraveyardArray {
+    int ref_count;
+    size_t count;
+    size_t capacity;
+    GraveyardValue* values; // This works because GraveyardValue is now fully defined.
+};
 
 // An entry in the hash table's bucket array.
 typedef struct {
@@ -231,6 +258,16 @@ void print_value(GraveyardValue value) {
             break;
         case VAL_STRING:
             printf("%s", value.as.string->chars);
+            break;
+        case VAL_ARRAY:
+            printf("[");
+            for (size_t i = 0; i < value.as.array->count; i++) {
+                print_value(value.as.array->values[i]);
+                if (i < value.as.array->count - 1) {
+                    printf(", ");
+                }
+            }
+            printf("]");
             break;
     }
 }
@@ -500,6 +537,12 @@ void free_ast(AstNode* node) {
             }
             free(node->as.formatted_string.parts);
             break;
+        case AST_ARRAY_LITERAL:
+            for (size_t i = 0; i < node->as.array_literal.count; i++) {
+                free_ast(node->as.array_literal.elements[i]);
+            }
+            free(node->as.array_literal.elements);
+            break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -673,8 +716,48 @@ static AstNode* parse_formatted_string(Parser* parser) {
     return node;
 }
 
+// Parses an array literal like '[1, "a", true]'
+static AstNode* parse_array_literal(Parser* parser) {
+    Token start_token = parser->tokens[parser->current - 1];
+
+    AstNode* node = create_node(parser, AST_ARRAY_LITERAL);
+    if (!node) return NULL;
+    node->line = start_token.line;
+
+    // Initialize the dynamic array of element expressions
+    node->as.array_literal.capacity = 4;
+    node->as.array_literal.count = 0;
+    node->as.array_literal.elements = malloc(node->as.array_literal.capacity * sizeof(AstNode*));
+    if (!node->as.array_literal.elements) {
+        perror("AST array elements malloc failed");
+        free(node);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    // Handle non-empty arrays
+    if (peek(parser)->type != RIGHTBRACKET) {
+        do {
+            // Add the parsed expression to our list
+            if (node->as.array_literal.count == node->as.array_literal.capacity) {
+                // Realloc logic for the elements array would go here
+            }
+            node->as.array_literal.elements[node->as.array_literal.count++] = parse_expression(parser, 1);
+        } while (match(parser, COMMA)); // Keep going as long as we find a comma
+    }
+
+    expect(parser, RIGHTBRACKET, "Expected ']' after elements in array literal.");
+
+    return node;
+}
+
 // Parses the most basic units of an expression.
 static AstNode* parse_primary(Parser* parser) {
+
+    if (match(parser, LEFTBRACKET)) {
+        return parse_array_literal(parser);
+    }
+
     if (match(parser, FMT_START)) {
         return parse_formatted_string(parser);
     }
@@ -1114,6 +1197,15 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_ARRAY_LITERAL: {
+            fprintf(file, "(ARRAY_LITERAL line=%d\n", node->line);
+            for (size_t i = 0; i < node->as.array_literal.count; i++) {
+                write_ast_node(file, node->as.array_literal.elements[i], indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
@@ -1237,6 +1329,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "BINARY_OP") == 0) return AST_BINARY_OP;
     if (strcmp(type_str, "UNARY_OP") == 0) return AST_UNARY_OP;
     if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
+    if (strcmp(type_str, "ARRAY_LITERAL") == 0) return AST_ARRAY_LITERAL;
     return AST_UNKNOWN;
 }
 
@@ -1344,16 +1437,21 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     // --- Phase 3: Based on type, parse attributes and recursively parse children. ---
     switch (type) {
         case AST_PROGRAM:
-        case AST_PRINT_STATEMENT: {
+        case AST_PRINT_STATEMENT:
+        case AST_ARRAY_LITERAL: {
             AstNode** list_ptr = NULL; size_t* count_ptr = NULL; size_t* capacity_ptr = NULL;
             if (type == AST_PROGRAM) {
                 node->as.program.capacity = 8; node->as.program.count = 0;
                 node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
                 list_ptr = node->as.program.statements; count_ptr = &node->as.program.count; capacity_ptr = &node->as.program.capacity;
-            } else { // AST_PRINT_STATEMENT
+            } else if (type == AST_PRINT_STATEMENT) {
                 node->as.print_stmt.capacity = 4; node->as.print_stmt.count = 0;
                 node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
                 list_ptr = node->as.print_stmt.expressions; count_ptr = &node->as.print_stmt.count; capacity_ptr = &node->as.print_stmt.capacity;
+            } else {
+                node->as.array_literal.capacity = 4; node->as.array_literal.count = 0;
+                node->as.array_literal.elements = malloc(node->as.array_literal.capacity * sizeof(AstNode*));
+                list_ptr = node->as.array_literal.elements; count_ptr = &node->as.array_literal.count; capacity_ptr = &node->as.array_literal.capacity;
             }
             if (!list_ptr) { parser->had_error = true; free(node); return NULL; }
 
@@ -1474,6 +1572,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_PROGRAM: case AST_ASSIGNMENT: case AST_BINARY_OP:
         case AST_UNARY_OP: case AST_PRINT_STATEMENT:
         case AST_LOGICAL_OP: case AST_FORMATTED_STRING:
+        case AST_ARRAY_LITERAL:
             is_block_node = true;
             break;
         default: break;
@@ -1874,6 +1973,7 @@ static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
         case VAL_NUMBER: return a.as.number == b.as.number;
         // When you add strings, the case would look like this:
         // case VAL_STRING: return strcmp(a.as.string->chars, b.as.string->chars) == 0;
+        case VAL_ARRAY: return a.as.array == b.as.array;
         default:
             return false; // Should be unreachable for types we handle
     }
@@ -1885,8 +1985,34 @@ static bool is_value_falsy(GraveyardValue value) {
         case VAL_NULL:   return true;  // Null is falsy
         case VAL_BOOL:   return !value.as.boolean; // False is falsy
         case VAL_NUMBER: return value.as.number == 0; // Zero is falsy
+        case VAL_ARRAY:  return value.as.array->count == 0;
         default:         return false; // All other types are truthy
     }
+}
+
+// Creates a new, empty, heap-allocated Graveyard array value.
+static GraveyardValue create_array_value() {
+    GraveyardValue val;
+    val.type = VAL_ARRAY;
+
+    GraveyardArray* array_obj = malloc(sizeof(GraveyardArray));
+    array_obj->capacity = 8; // Start with an initial capacity of 8
+    array_obj->count = 0;
+    array_obj->values = malloc(array_obj->capacity * sizeof(GraveyardValue));
+    array_obj->ref_count = 0;
+
+    val.as.array = array_obj;
+    return val;
+}
+
+// Appends a value to a GraveyardArray, resizing if necessary.
+static void array_append(GraveyardArray* array, GraveyardValue value) {
+    if (array->count == array->capacity) {
+        array->capacity *= 2;
+        array->values = realloc(array->values, array->capacity * sizeof(GraveyardValue));
+        // A full implementation should check if realloc returned NULL
+    }
+    array->values[array->count++] = value;
 }
 
 // The recursive AST walker that evaluates each node.
@@ -1940,6 +2066,23 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 default:
                     return create_null_value();
             }
+        }
+
+        case AST_ARRAY_LITERAL: {
+            // 1. Create a new, empty runtime array object.
+            GraveyardValue array_val = create_array_value();
+
+            // 2. Loop through each expression in the AST node.
+            for (size_t i = 0; i < node->as.array_literal.count; i++) {
+                // 3. Evaluate the expression to get its value.
+                GraveyardValue element_value = execute_node(gy, node->as.array_literal.elements[i]);
+                
+                // 4. Append the resulting value to our new runtime array.
+                array_append(array_val.as.array, element_value);
+            }
+            
+            // 5. Return the completed array.
+            return array_val;
         }
 
         case AST_IDENTIFIER: {
