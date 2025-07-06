@@ -10,7 +10,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKEN_EOF, FMT_START, FMT_END, LITERAL_PART, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -334,7 +334,7 @@ bool tokenize(Graveyard *gy) {
 
             if (c == '\'') { // End of the formatted string
                 state = STATE_DEFAULT;
-                tokens[count].type = FMT_END;
+                tokens[count].type = FORMATTEDEND;
                 tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
                 tokens[count].line = line; tokens[count].column = column;
                 count++;
@@ -367,7 +367,7 @@ bool tokenize(Graveyard *gy) {
                     fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
                     goto cleanup_failure;
                 }
-                tokens[count].type = LITERAL_PART;
+                tokens[count].type = FORMATTEDPART;
                 strncpy(tokens[count].lexeme, start, len);
                 tokens[count].lexeme[len] = '\0';
                 tokens[count].line = line;
@@ -413,7 +413,7 @@ bool tokenize(Graveyard *gy) {
 
         if (c == '\'') { // Start of a formatted string
             state = STATE_IN_FMT_STRING;
-            tokens[count].type = FMT_START;
+            tokens[count].type = FORMATTEDSTART;
             tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
             tokens[count].line = line; tokens[count].column = column;
             count++;
@@ -566,7 +566,7 @@ bool tokenize(Graveyard *gy) {
         goto cleanup_failure;
     }
 
-    tokens[count].type = TOKEN_EOF;
+    tokens[count].type = TOKENEOF;
     tokens[count].lexeme[0] = '\0';
     tokens[count].line = line;
     tokens[count].column = (current_ptr - line_start_ptr) + 1;
@@ -659,7 +659,7 @@ static Token* peek(Parser* parser) {
 }
 
 static bool is_at_end(Parser* parser) {
-    return peek(parser)->type == TOKEN_EOF;
+    return peek(parser)->type == TOKENEOF;
 }
 
 static Token* consume(Parser* parser) {
@@ -674,7 +674,7 @@ static void error_at_token(Parser* parser, Token* token, const char* message) {
     parser->had_error = true;
 
     fprintf(stderr, "Parser Error [line %d, col %d]: ", token->line, token->column);
-    if (token->type == TOKEN_EOF) {
+    if (token->type == TOKENEOF) {
         fprintf(stderr, "at end of file. ");
     } else {
         fprintf(stderr, "at '%s'. ", token->lexeme);
@@ -760,9 +760,9 @@ static AstNode* parse_formatted_string(Parser* parser) {
         return NULL;
     }
 
-    while (peek(parser)->type != FMT_END && !is_at_end(parser)) {
+    while (peek(parser)->type != FORMATTEDEND && !is_at_end(parser)) {
 
-        if (match(parser, LITERAL_PART)) {
+        if (match(parser, FORMATTEDPART)) {
             FmtStringPart part;
             part.type = FMT_PART_LITERAL;
             part.as.literal = parser->tokens[parser->current - 1];
@@ -779,7 +779,7 @@ static AstNode* parse_formatted_string(Parser* parser) {
         }
     }
 
-    expect(parser, FMT_END, "Expected closing ' to terminate formatted string.");
+    expect(parser, FORMATTEDEND, "Expected closing ' to terminate formatted string.");
     return node;
 }
 
@@ -828,7 +828,7 @@ static AstNode* parse_primary(Parser* parser) {
         return parse_array_literal(parser);
     }
 
-    if (match(parser, FMT_START)) {
+    if (match(parser, FORMATTEDSTART)) {
         return parse_formatted_string(parser);
     }
 
@@ -849,10 +849,6 @@ static AstNode* parse_primary(Parser* parser) {
         node->as.unary_op.operator = operator_token;
         node->as.unary_op.right = right;
         return node;
-    }
-    
-    if (match(parser, FORMATTEDSTRING)) {
-        return parse_formatted_string(parser);
     }
 
     if (match(parser, STRING) || match(parser, NUMBER) || 
@@ -1234,7 +1230,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 FmtStringPart part = node->as.formatted_string.parts[i];
                 if (part.type == FMT_PART_LITERAL) {
                     for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
-                    fprintf(file, "(LITERAL_PART value=\"%s\")\n", part.as.literal.lexeme);
+                    fprintf(file, "(FORMATTEDPART value=\"%s\")\n", part.as.literal.lexeme);
                 } else {
                     write_ast_node(file, part.as.expression, indent + 1);
                 }
@@ -1526,7 +1522,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 get_node_type_from_line(part_line, part_type_str, sizeof(part_type_str));
 
                 FmtStringPart part;
-                if (strcmp(part_type_str, "LITERAL_PART") == 0) {
+                if (strcmp(part_type_str, "FORMATTEDPART") == 0) {
                     part.type = FMT_PART_LITERAL;
                     get_attribute_string(part_line, "value=", part.as.literal.lexeme, MAX_LEXEME_LEN);
                     part.as.literal.type = FORMATTEDSTRING;
