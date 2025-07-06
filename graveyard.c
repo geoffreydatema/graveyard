@@ -175,6 +175,11 @@ typedef struct {
 } Monolith;
 
 typedef struct {
+    char** lines;
+    int count;
+} Lines;
+
+typedef struct {
     const char *mode;
     const char *filename;
     char *source_code;
@@ -184,6 +189,14 @@ typedef struct {
     Monolith globals;
     GraveyardValue last_executed_value;
 } Graveyard;
+
+typedef struct {
+    Graveyard* gy;
+    Token* tokens;
+    size_t     token_count;
+    size_t     current;
+    bool       had_error;
+} Parser;
 
 //LOAD--------------------------------------------------------------------
 
@@ -318,7 +331,7 @@ bool tokenize(Graveyard *gy) {
     const char* current_ptr = start_ptr;
 
     while (current_ptr < end_ptr) {
-        if (count + 1 >= capacity) { // Ensure space for one more token + EOF
+        if (count + 1 >= capacity) {
             size_t new_capacity = capacity * 2;
             Token *new_tokens = realloc(tokens, new_capacity * sizeof(Token));
             if (!new_tokens) { perror("tokenize: realloc failed"); goto cleanup_failure; }
@@ -326,13 +339,11 @@ bool tokenize(Graveyard *gy) {
             capacity = new_capacity;
         }
 
-        // --- STATE-BASED LOGIC ---
-        // First, check if we are inside a formatted string.
         if (state == STATE_IN_FMT_STRING) {
             int column = (current_ptr - line_start_ptr) + 1;
             char c = *current_ptr;
 
-            if (c == '\'') { // End of the formatted string
+            if (c == '\'') {
                 state = STATE_DEFAULT;
                 tokens[count].type = FORMATTEDEND;
                 tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
@@ -341,7 +352,7 @@ bool tokenize(Graveyard *gy) {
                 current_ptr++;
                 continue;
             }
-            if (c == '{') { // Start of an embedded expression
+            if (c == '{') {
                 state = STATE_DEFAULT;
                 fstring_brace_depth = 1;
                 tokens[count].type = LEFTBRACE;
@@ -356,7 +367,6 @@ bool tokenize(Graveyard *gy) {
                 goto cleanup_failure;
             }
             
-            // This is a literal part of the formatted string.
             const char* start = current_ptr;
             while (current_ptr < end_ptr && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') {
                 current_ptr++;
@@ -377,14 +387,12 @@ bool tokenize(Graveyard *gy) {
             continue;
         }
         
-        // --- If we are not in a formatted string, we are in the DEFAULT state. ---
-        
-        // Step 1: Skip all non-token content (comments and whitespace)
         if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '/') {
             current_ptr += 2;
             while (current_ptr < end_ptr && *current_ptr != '\n') { current_ptr++; }
             continue;
         }
+
         if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '*') {
             const char* comment_start = current_ptr;
             int comment_start_line = line;
@@ -394,10 +402,12 @@ bool tokenize(Graveyard *gy) {
                 if (*current_ptr == '\n') { line++; line_start_ptr = current_ptr + 1; }
                 current_ptr++;
             }
+
             if (current_ptr + 1 >= end_ptr) {
                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated block comment.\n", comment_start_line, comment_start_col);
                 goto cleanup_failure;
             }
+
             current_ptr += 2;
             continue;
         }
@@ -407,11 +417,10 @@ bool tokenize(Graveyard *gy) {
             continue;
         }
 
-        // --- If we get here, it must be the start of a token. ---
         int column = (current_ptr - line_start_ptr) + 1;
         char c = *current_ptr;
 
-        if (c == '\'') { // Start of a formatted string
+        if (c == '\'') {
             state = STATE_IN_FMT_STRING;
             tokens[count].type = FORMATTEDSTART;
             tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
@@ -589,14 +598,6 @@ cleanup_failure:
 }
 
 //PARSE---------------------------------------------------------------
-
-typedef struct {
-    Graveyard* gy;         // A link back to the main state if needed
-    Token* tokens;     // The array of tokens we are parsing
-    size_t     token_count;
-    size_t     current;    // Index of the next token to be processed
-    bool       had_error;
-} Parser;
 
 void free_ast(AstNode* node) {
     if (node == NULL) return;
@@ -935,7 +936,7 @@ static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
     int line = identifier_node->line;
 
     AstNode* value = parse_expression(parser, 1);
-    if (!value) return NULL; // Propagate error
+    if (!value) return NULL;
 
     AstNode* node = create_node(parser, AST_ASSIGNMENT);
     node->line = line;
@@ -1316,11 +1317,6 @@ void print_ast(AstNode* root) {
 }
 
 //EXECUTE GYC (DESERIALIZER)-----------------------------------------------------
-
-typedef struct {
-    char** lines;
-    int count;
-} Lines;
 
 static int get_indent_level(const char* line) {
     int indent = 0;
