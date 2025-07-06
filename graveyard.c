@@ -932,22 +932,6 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
     return left;
 }
 
-// static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
-//     int line = identifier_node->line;
-
-//     AstNode* value = parse_expression(parser, 1);
-//     if (!value) return NULL;
-
-//     AstNode* node = create_node(parser, AST_ASSIGNMENT);
-//     node->line = line;
-//     node->as.assignment.identifier = identifier_node->as.identifier.name;
-//     node->as.assignment.value = value;
-    
-//     free(identifier_node);
-    
-//     return node;
-// }
-
 static AstNode* parse_print_statement(Parser* parser) {
     int line = parser->tokens[parser->current - 1].line;
 
@@ -1015,12 +999,10 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     AstNode* right_side = parse_expression(parser, 1);
     if (!right_side) return NULL;
 
-    // This is the 'x' in 'x + 5'
     AstNode* left_side = create_node(parser, AST_IDENTIFIER);
     left_side->line = identifier.line;
     left_side->as.identifier.name = identifier;
     
-    // This is the 'x + 5' part
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     binary_op_node->line = compound_op.line;
 
@@ -1038,19 +1020,13 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
-    // This is the full 'x = x + 5' statement
     AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
     assignment_node->line = identifier.line;
 
-    // --- FIX START ---
-    // The left side of the assignment also needs to be an AST_IDENTIFIER node.
     AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
     assignment_target->line = identifier.line;
     assignment_target->as.identifier.name = identifier;
-    
-    assignment_node->as.assignment.left = assignment_target;
-    // --- FIX END ---
-    
+    assignment_node->as.assignment.left = assignment_target;    
     assignment_node->as.assignment.value = binary_op_node;
 
     return assignment_node;
@@ -1060,20 +1036,17 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     Token identifier = *consume(parser);
     Token op = *consume(parser);
 
-    // This is the 'x' in 'x + 1'
     AstNode* left_side = create_node(parser, AST_IDENTIFIER);
     if (!left_side) return NULL;
     left_side->line = identifier.line;
     left_side->as.identifier.name = identifier;
 
-    // This is the '1'
     AstNode* right_side = create_node(parser, AST_LITERAL);
     if (!right_side) { free_ast(left_side); return NULL; }
     right_side->line = op.line;
     right_side->as.literal.value.type = NUMBER;
     strcpy(right_side->as.literal.value.lexeme, "1");
 
-    // This is the 'x + 1' part
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
     binary_op_node->line = op.line;
@@ -1082,19 +1055,15 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
-    // This is the full 'x = x + 1' statement
     AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
     if (!assignment_node) { free_ast(binary_op_node); return NULL; }
     assignment_node->line = identifier.line;
 
-    // --- FIX START ---
-    // The left side of the assignment needs to be an AST_IDENTIFIER node.
     AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
     assignment_target->line = identifier.line;
     assignment_target->as.identifier.name = identifier;
 
     assignment_node->as.assignment.left = assignment_target;
-    // --- FIX END ---
 
     assignment_node->as.assignment.value = binary_op_node;
 
@@ -1102,12 +1071,10 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
 }
 
 static AstNode* parse_statement(Parser* parser) {
-    // Keep specialized statements that start with a unique token
     if (match(parser, PRINT)) {
         return parse_print_statement(parser);
     }
 
-    // Lookahead for statements that must start with an identifier
     if (peek(parser)->type == IDENTIFIER) {
         TokenType next_token_type = parser->tokens[parser->current + 1].type;
         if (next_token_type == INCREMENT || next_token_type == DECREMENT) {
@@ -1118,31 +1085,25 @@ static AstNode* parse_statement(Parser* parser) {
         }
     }
 
-    // --- NEW ASSIGNMENT LOGIC ---
-    // Parse a potential l-value expression (like 'x' or 'x[0]')
     AstNode* expr = parse_expression(parser, 1);
     if (!expr) {
         error_at_token(parser, peek(parser), "Expected a statement.");
         return NULL;
     }
 
-    // If it's followed by '=', it's an assignment statement
     if (match(parser, ASSIGNMENT)) {
-        // Check if the left-hand side is a valid assignment target (l-value)
         if (expr->type != AST_IDENTIFIER && expr->type != AST_SUBSCRIPT) {
             error_at_token(parser, &parser->tokens[parser->current - 1], "Invalid assignment target.");
             free_ast(expr);
             return NULL;
         }
         
-        // Parse the right-hand side value
         AstNode* value = parse_expression(parser, 1);
         if (!value) {
             free_ast(expr);
             return NULL;
         }
 
-        // Create the new, more flexible assignment node
         AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
         assignment_node->line = expr->line;
         assignment_node->as.assignment.left = expr;
@@ -1150,8 +1111,6 @@ static AstNode* parse_statement(Parser* parser) {
         return assignment_node;
     }
     
-    // If we parsed an expression but it wasn't an assignment, it's an error
-    // because Graveyard doesn't support standalone expression statements yet.
     error_at_token(parser, peek(parser), "Expected a statement (like an assignment with '=').");
     free_ast(expr);
     return NULL;
@@ -2027,12 +1986,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue value_to_assign = execute_node(gy, node->as.assignment.value);
 
             if (target_node->type == AST_IDENTIFIER) {
-                // This is a simple variable assignment: x = ...
                 monolith_set(&gy->globals, target_node->as.identifier.name.lexeme, value_to_assign);
                 return value_to_assign;
 
             } else if (target_node->type == AST_SUBSCRIPT) {
-                // This is a subscript assignment: x[0] = ...
                 AstNode* array_node = target_node->as.subscript.array;
                 AstNode* index_node = target_node->as.subscript.index;
 
@@ -2062,7 +2019,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     return create_null_value();
                 }
 
-                // Perform the assignment
                 array->values[index] = value_to_assign;
                 return value_to_assign;
             }
@@ -2122,9 +2078,23 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
 
             if (op_type == ADDITION) {
+                if (left.type == VAL_ARRAY) {
+                    GraveyardValue new_array_val = create_array_value();
+                    
+                    GraveyardArray* old_array = left.as.array;
+                    for (size_t i = 0; i < old_array->count; i++) {
+                        array_append(new_array_val.as.array, old_array->values[i]);
+                    }
+
+                    array_append(new_array_val.as.array, right);
+
+                    return new_array_val;
+                }
+
                 if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
                     return create_number_value(left.as.number + right.as.number);
                 }
+
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
                     char left_str[256];
                     char right_str[256];
@@ -2142,6 +2112,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                     return create_string_value(result_buffer);
                 }
+
                 goto type_error;
             }
 
