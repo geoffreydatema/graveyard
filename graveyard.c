@@ -1788,44 +1788,18 @@ static GraveyardValue create_string_value(const char* chars) {
     return val;
 }
 
-void print_value(GraveyardValue value) {
-    switch (value.type) {
-        case VAL_BOOL:
-            printf(value.as.boolean ? "$" : "%%");
-            break;
-        case VAL_NULL:
-            printf("|");
-            break;
-        case VAL_NUMBER:
-            printf("%g", value.as.number);
-            break;
-        case VAL_STRING:
-            printf("%s", value.as.string->chars);
-            break;
-        case VAL_ARRAY:
-            printf("[");
-            for (size_t i = 0; i < value.as.array->count; i++) {
-                print_value(value.as.array->values[i]);
-                if (i < value.as.array->count - 1) {
-                    printf(", ");
-                }
-            }
-            printf("]");
-            break;
-    }
-}
+static GraveyardValue create_array_value() {
+    GraveyardValue val;
+    val.type = VAL_ARRAY;
 
-static GraveyardValue execute_node(Graveyard* gy, AstNode* node);
+    GraveyardArray* array_obj = malloc(sizeof(GraveyardArray));
+    array_obj->capacity = 8;
+    array_obj->count = 0;
+    array_obj->values = malloc(array_obj->capacity * sizeof(GraveyardValue));
+    array_obj->ref_count = 0;
 
-bool execute(Graveyard *gy) {
-    if (!gy || !gy->ast_root) {
-        fprintf(stderr, "Execution error: Nothing to execute (no AST).\n");
-        return false;
-    }
-    
-    gy->last_executed_value = execute_node(gy, gy->ast_root);
-    
-    return true; 
+    val.as.array = array_obj;
+    return val;
 }
 
 static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_size) {
@@ -1873,26 +1847,39 @@ static bool is_value_falsy(GraveyardValue value) {
     }
 }
 
-static GraveyardValue create_array_value() {
-    GraveyardValue val;
-    val.type = VAL_ARRAY;
-
-    GraveyardArray* array_obj = malloc(sizeof(GraveyardArray));
-    array_obj->capacity = 8;
-    array_obj->count = 0;
-    array_obj->values = malloc(array_obj->capacity * sizeof(GraveyardValue));
-    array_obj->ref_count = 0;
-
-    val.as.array = array_obj;
-    return val;
-}
-
 static void array_append(GraveyardArray* array, GraveyardValue value) {
     if (array->count == array->capacity) {
         array->capacity *= 2;
         array->values = realloc(array->values, array->capacity * sizeof(GraveyardValue));
     }
     array->values[array->count++] = value;
+}
+
+void print_value(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_BOOL:
+            printf(value.as.boolean ? "$" : "%%");
+            break;
+        case VAL_NULL:
+            printf("|");
+            break;
+        case VAL_NUMBER:
+            printf("%g", value.as.number);
+            break;
+        case VAL_STRING:
+            printf("%s", value.as.string->chars);
+            break;
+        case VAL_ARRAY:
+            printf("[");
+            for (size_t i = 0; i < value.as.array->count; i++) {
+                print_value(value.as.array->values[i]);
+                if (i < value.as.array->count - 1) {
+                    printf(", ");
+                }
+            }
+            printf("]");
+            break;
+    }
 }
 
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
@@ -2147,6 +2134,17 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
     }
 
     return create_null_value();
+}
+
+bool execute(Graveyard *gy) {
+    if (!gy || !gy->ast_root) {
+        fprintf(stderr, "Execution error: Nothing to execute (no AST).\n");
+        return false;
+    }
+    
+    gy->last_executed_value = execute_node(gy, gy->ast_root);
+    
+    return true; 
 }
 
 //MAIN----------------------------------------------------------------------------
