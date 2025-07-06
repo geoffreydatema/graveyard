@@ -61,7 +61,7 @@ typedef struct {
 } AstNodeLogicalOp;
 
 typedef struct {
-    Token identifier;
+    AstNode *left;
     AstNode *value;
 } AstNodeAssignment;
 
@@ -932,21 +932,21 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
     return left;
 }
 
-static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
-    int line = identifier_node->line;
+// static AstNode* parse_assignment(AstNode* identifier_node, Parser* parser) {
+//     int line = identifier_node->line;
 
-    AstNode* value = parse_expression(parser, 1);
-    if (!value) return NULL;
+//     AstNode* value = parse_expression(parser, 1);
+//     if (!value) return NULL;
 
-    AstNode* node = create_node(parser, AST_ASSIGNMENT);
-    node->line = line;
-    node->as.assignment.identifier = identifier_node->as.identifier.name;
-    node->as.assignment.value = value;
+//     AstNode* node = create_node(parser, AST_ASSIGNMENT);
+//     node->line = line;
+//     node->as.assignment.identifier = identifier_node->as.identifier.name;
+//     node->as.assignment.value = value;
     
-    free(identifier_node);
+//     free(identifier_node);
     
-    return node;
-}
+//     return node;
+// }
 
 static AstNode* parse_print_statement(Parser* parser) {
     int line = parser->tokens[parser->current - 1].line;
@@ -1015,10 +1015,12 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     AstNode* right_side = parse_expression(parser, 1);
     if (!right_side) return NULL;
 
+    // This is the 'x' in 'x + 5'
     AstNode* left_side = create_node(parser, AST_IDENTIFIER);
     left_side->line = identifier.line;
     left_side->as.identifier.name = identifier;
     
+    // This is the 'x + 5' part
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     binary_op_node->line = compound_op.line;
 
@@ -1036,9 +1038,19 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
+    // This is the full 'x = x + 5' statement
     AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
     assignment_node->line = identifier.line;
-    assignment_node->as.assignment.identifier = identifier;
+
+    // --- FIX START ---
+    // The left side of the assignment also needs to be an AST_IDENTIFIER node.
+    AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
+    assignment_target->line = identifier.line;
+    assignment_target->as.identifier.name = identifier;
+    
+    assignment_node->as.assignment.left = assignment_target;
+    // --- FIX END ---
+    
     assignment_node->as.assignment.value = binary_op_node;
 
     return assignment_node;
@@ -1048,17 +1060,20 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     Token identifier = *consume(parser);
     Token op = *consume(parser);
 
+    // This is the 'x' in 'x + 1'
     AstNode* left_side = create_node(parser, AST_IDENTIFIER);
     if (!left_side) return NULL;
     left_side->line = identifier.line;
     left_side->as.identifier.name = identifier;
 
+    // This is the '1'
     AstNode* right_side = create_node(parser, AST_LITERAL);
     if (!right_side) { free_ast(left_side); return NULL; }
     right_side->line = op.line;
     right_side->as.literal.value.type = NUMBER;
     strcpy(right_side->as.literal.value.lexeme, "1");
 
+    // This is the 'x + 1' part
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
     binary_op_node->line = op.line;
@@ -1067,41 +1082,78 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
+    // This is the full 'x = x + 1' statement
     AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
     if (!assignment_node) { free_ast(binary_op_node); return NULL; }
     assignment_node->line = identifier.line;
-    assignment_node->as.assignment.identifier = identifier;
+
+    // --- FIX START ---
+    // The left side of the assignment needs to be an AST_IDENTIFIER node.
+    AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
+    assignment_target->line = identifier.line;
+    assignment_target->as.identifier.name = identifier;
+
+    assignment_node->as.assignment.left = assignment_target;
+    // --- FIX END ---
+
     assignment_node->as.assignment.value = binary_op_node;
 
     return assignment_node;
 }
 
 static AstNode* parse_statement(Parser* parser) {
-    TokenType next_token_type = parser->tokens[parser->current + 1].type;
-
-    if (peek(parser)->type == IDENTIFIER && 
-       (next_token_type == INCREMENT || next_token_type == DECREMENT)) {
-        return parse_inc_dec_statement(parser);
-    }
-
-    if (peek(parser)->type == IDENTIFIER &&
-        is_compound_assignment(parser->tokens[parser->current + 1].type)) {
-        return parse_compound_assignment(parser);
-    }
-
+    // Keep specialized statements that start with a unique token
     if (match(parser, PRINT)) {
         return parse_print_statement(parser);
     }
-    
-    if (peek(parser)->type == IDENTIFIER &&
-        parser->tokens[parser->current + 1].type == ASSIGNMENT) {
-        
-        AstNode* identifier_node = parse_primary(parser);
-        match(parser, ASSIGNMENT);
-        return parse_assignment(identifier_node, parser);
+
+    // Lookahead for statements that must start with an identifier
+    if (peek(parser)->type == IDENTIFIER) {
+        TokenType next_token_type = parser->tokens[parser->current + 1].type;
+        if (next_token_type == INCREMENT || next_token_type == DECREMENT) {
+            return parse_inc_dec_statement(parser);
+        }
+        if (is_compound_assignment(next_token_type)) {
+            return parse_compound_assignment(parser);
+        }
     }
 
-    error_at_token(parser, peek(parser), "Expected a statement.");
+    // --- NEW ASSIGNMENT LOGIC ---
+    // Parse a potential l-value expression (like 'x' or 'x[0]')
+    AstNode* expr = parse_expression(parser, 1);
+    if (!expr) {
+        error_at_token(parser, peek(parser), "Expected a statement.");
+        return NULL;
+    }
+
+    // If it's followed by '=', it's an assignment statement
+    if (match(parser, ASSIGNMENT)) {
+        // Check if the left-hand side is a valid assignment target (l-value)
+        if (expr->type != AST_IDENTIFIER && expr->type != AST_SUBSCRIPT) {
+            error_at_token(parser, &parser->tokens[parser->current - 1], "Invalid assignment target.");
+            free_ast(expr);
+            return NULL;
+        }
+        
+        // Parse the right-hand side value
+        AstNode* value = parse_expression(parser, 1);
+        if (!value) {
+            free_ast(expr);
+            return NULL;
+        }
+
+        // Create the new, more flexible assignment node
+        AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
+        assignment_node->line = expr->line;
+        assignment_node->as.assignment.left = expr;
+        assignment_node->as.assignment.value = value;
+        return assignment_node;
+    }
+    
+    // If we parsed an expression but it wasn't an assignment, it's an error
+    // because Graveyard doesn't support standalone expression statements yet.
+    error_at_token(parser, peek(parser), "Expected a statement (like an assignment with '=').");
+    free_ast(expr);
     return NULL;
 }
 
@@ -1215,7 +1267,8 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
 
         case AST_ASSIGNMENT:
-            fprintf(file, "(ASSIGN identifier=\"%s\" line=%d\n", node->as.assignment.identifier.lexeme, node->line);
+            fprintf(file, "(ASSIGN line=%d\n", node->line);
+            write_ast_node(file, node->as.assignment.left, indent + 1);
             write_ast_node(file, node->as.assignment.value, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
@@ -1539,7 +1592,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_ASSIGNMENT: {
-            get_attribute_string(line, "identifier=", node->as.assignment.identifier.lexeme, MAX_LEXEME_LEN);
+            node->as.assignment.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             node->as.assignment.value = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
@@ -1970,9 +2023,51 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_ASSIGNMENT: {
-            GraveyardValue value = execute_node(gy, node->as.assignment.value);
-            monolith_set(&gy->globals, node->as.assignment.identifier.lexeme, value);
-            return value;
+            AstNode* target_node = node->as.assignment.left;
+            GraveyardValue value_to_assign = execute_node(gy, node->as.assignment.value);
+
+            if (target_node->type == AST_IDENTIFIER) {
+                // This is a simple variable assignment: x = ...
+                monolith_set(&gy->globals, target_node->as.identifier.name.lexeme, value_to_assign);
+                return value_to_assign;
+
+            } else if (target_node->type == AST_SUBSCRIPT) {
+                // This is a subscript assignment: x[0] = ...
+                AstNode* array_node = target_node->as.subscript.array;
+                AstNode* index_node = target_node->as.subscript.index;
+
+                GraveyardValue array_val = execute_node(gy, array_node);
+                if (array_val.type != VAL_ARRAY) {
+                    fprintf(stderr, "Runtime Error [line %d]: Cannot assign to subscript of a non-array type.\n", target_node->line);
+                    return create_null_value();
+                }
+
+                GraveyardValue index_val = execute_node(gy, index_node);
+                if (index_val.type != VAL_NUMBER) {
+                    fprintf(stderr, "Runtime Error [line %d]: Array index must be a number.\n", index_node->line);
+                    return create_null_value();
+                }
+
+                double raw_index = index_val.as.number;
+                if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
+                    fprintf(stderr, "Runtime Error [line %d]: Array index must be a non-negative integer.\n", index_node->line);
+                    return create_null_value();
+                }
+                
+                int index = (int)raw_index;
+                GraveyardArray* array = array_val.as.array;
+
+                if (index >= array->count) {
+                    fprintf(stderr, "Runtime Error [line %d]: Array index out of bounds. Cannot assign to index %d in an array of size %zu.\n", target_node->line, index, array->count);
+                    return create_null_value();
+                }
+
+                // Perform the assignment
+                array->values[index] = value_to_assign;
+                return value_to_assign;
+            }
+            
+            return create_null_value();
         }
         
         case AST_LOGICAL_OP: {
