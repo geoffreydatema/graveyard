@@ -10,7 +10,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, ADDITION, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, ADDITIONASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -243,7 +243,7 @@ TokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '&' && c2 == '&') return AND;
     if (c1 == '|' && c2 == '|') return OR;
     if (c1 == '-' && c2 == '>') return RETURN;
-    if (c1 == '+' && c2 == '=') return ADDITIONASSIGNMENT;
+    if (c1 == '+' && c2 == '=') return PLUSASSIGNMENT;
     if (c1 == '-' && c2 == '=') return SUBTRACTIONASSIGNMENT;
     if (c1 == '*' && c2 == '=') return MULTIPLICATIONASSIGNMENT;
     if (c1 == '/' && c2 == '=') return DIVISIONASSIGNMENT;
@@ -272,7 +272,7 @@ TokenType identify_single_char_token(char c) {
     switch (c) {
         case '=': return ASSIGNMENT;
         case ';': return SEMICOLON;
-        case '+': return ADDITION;
+        case '+': return PLUS;
         case '-': return MINUS;
         case '*': return MULTIPLICATION;
         case '/': return DIVISION;
@@ -727,7 +727,7 @@ static int get_operator_precedence(TokenType type) {
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
             return 5;
-        case ADDITION:
+        case PLUS:
         case MINUS:
             return 6;
         case MULTIPLICATION:
@@ -971,7 +971,7 @@ static AstNode* parse_print_statement(Parser* parser) {
 
 static bool is_compound_assignment(TokenType type) {
     switch (type) {
-        case ADDITIONASSIGNMENT:
+        case PLUSASSIGNMENT:
         case SUBTRACTIONASSIGNMENT:
         case MULTIPLICATIONASSIGNMENT:
         case DIVISIONASSIGNMENT:
@@ -984,7 +984,7 @@ static bool is_compound_assignment(TokenType type) {
 
 static TokenType get_base_operator(TokenType compound_type) {
     switch (compound_type) {
-        case ADDITIONASSIGNMENT:         return ADDITION;
+        case PLUSASSIGNMENT:         return PLUS;
         case SUBTRACTIONASSIGNMENT:      return MINUS;
         case MULTIPLICATIONASSIGNMENT:   return MULTIPLICATION;
         case DIVISIONASSIGNMENT:         return DIVISION;
@@ -1009,7 +1009,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     TokenType base_op_type = get_base_operator(compound_op.type);
     binary_op_node->as.binary_op.operator.type = base_op_type;
     switch (base_op_type) {
-        case ADDITION:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
+        case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
         case MINUS:          strcpy(binary_op_node->as.binary_op.operator.lexeme, "-"); break;
         case MULTIPLICATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
         case DIVISION:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
@@ -1050,7 +1050,7 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
     binary_op_node->line = op.line;
-    binary_op_node->as.binary_op.operator.type = (op.type == INCREMENT) ? ADDITION : MINUS;
+    binary_op_node->as.binary_op.operator.type = (op.type == INCREMENT) ? PLUS : MINUS;
     strcpy(binary_op_node->as.binary_op.operator.lexeme, (op.type == INCREMENT) ? "+" : "-");
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
@@ -1886,6 +1886,26 @@ void print_value(GraveyardValue value) {
     }
 }
 
+
+void monolith_print(Monolith* monolith) {
+    printf("--- Monolith Contents ---\n");
+    if (monolith->count == 0) {
+        printf("  (empty)\n");
+        printf("-------------------------\n");
+        return;
+    }
+
+    for (int i = 0; i < monolith->capacity; i++) {
+        MonolithEntry* entry = &monolith->entries[i];
+        if (entry->key != NULL) {
+            printf("  %s = ", entry->key);
+            print_value(entry->value);
+            printf("\n");
+        }
+    }
+    printf("-------------------------\n");
+}
+
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
     switch (node->type) {
         case AST_PROGRAM: {
@@ -2077,7 +2097,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_bool_value(left_is_truthy != right_is_truthy);
             }
 
-            if (op_type == ADDITION) {
+            if (op_type == PLUS) {
                 if (left.type == VAL_ARRAY) {
                     GraveyardValue new_array_val = create_array_value();
                     
@@ -2273,7 +2293,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  --tokenize, -t          Tokenize source and print tokens\n");
         fprintf(stderr, "  --parse, -p             Parse source and save the AST to a .gyc file\n");
         fprintf(stderr, "  --execute, -e           Parse, save AST, and execute the source code\n");
-        fprintf(stderr, "  --debug, -d             Parse, save AST, execute, and print final value\n");
+        fprintf(stderr, "  --debug, -d             Parse, save AST, execute, and print monolith contents\n");
         fprintf(stderr, "  --executecompiled, -ec  Execute a pre-parsed .gyc file\n");
         return 1;
     }
@@ -2341,9 +2361,7 @@ int main(int argc, char *argv[]) {
                     if (!compile_source(gy) || !execute(gy)) { success = false; }
                 } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
                     if (compile_source(gy) && execute(gy)) {
-                        printf("--- Debug Result ---\nFinal Value: ");
-                        print_value(gy->last_executed_value);
-                        printf("\n");
+                        monolith_print(&gy->globals);
                     } else { success = false; }
                 } else {
                     fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
