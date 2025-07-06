@@ -36,7 +36,8 @@ typedef enum {
     AST_LITERAL,
     AST_PRINT_STATEMENT,
     AST_FORMATTED_STRING,
-    AST_ARRAY_LITERAL
+    AST_ARRAY_LITERAL,
+    AST_SUBSCRIPT
 } AstNodeType;
 
 typedef struct {
@@ -114,12 +115,15 @@ typedef struct {
     size_t capacity;
 } AstNodeArrayLiteral;
 
-// The main generic AST node struct, using a tagged union.
-// This allows a single struct type to represent many different kinds of nodes
-// in a memory-efficient way.
+typedef struct {
+    AstNode* array; // The node that should evaluate to an array
+    AstNode* index; // The node for the expression inside the brackets
+} AstNodeSubscript;
+
+// The main generic AST node struct
 struct AstNode {
-    AstNodeType type; // The tag that tells us which part of the union is active
-    int line;         // The line number for excellent error reporting!
+    AstNodeType type;
+    int line;
 
     union {
         AstNodeProgram          program;
@@ -132,6 +136,7 @@ struct AstNode {
         AstNodeFormattedString  formatted_string;
         AstNodeArrayLiteral     array_literal;
         AstNodePrintStmt        print_stmt;
+        AstNodeSubscript        subscript;
     } as;
 };
 
@@ -161,30 +166,24 @@ struct GraveyardValue {
     } as;
 };
 
-// Now we provide the full definition for the structs we forward-declared.
-
-// An object for a heap-allocated string.
 struct GraveyardString {
     int ref_count;
     char* chars;
     size_t length;
 };
 
-// An object for a heap-allocated, dynamic array.
 struct GraveyardArray {
     int ref_count;
     size_t count;
     size_t capacity;
-    GraveyardValue* values; // This works because GraveyardValue is now fully defined.
+    GraveyardValue* values;
 };
 
-// An entry in the hash table's bucket array.
 typedef struct {
     char* key;
     GraveyardValue value;
 } MonolithEntry;
 
-// The hash table structure itself.
 typedef struct {
     int count;
     int capacity;
@@ -543,6 +542,10 @@ void free_ast(AstNode* node) {
             }
             free(node->as.array_literal.elements);
             break;
+        case AST_SUBSCRIPT:
+            free_ast(node->as.subscript.array);
+            free_ast(node->as.subscript.index);
+            break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -718,6 +721,7 @@ static AstNode* parse_formatted_string(Parser* parser) {
 
 // Parses an array literal like '[1, "a", true]'
 static AstNode* parse_array_literal(Parser* parser) {
+    // We get here right after the '[' (LEFTBRACKET) has been consumed.
     Token start_token = parser->tokens[parser->current - 1];
 
     AstNode* node = create_node(parser, AST_ARRAY_LITERAL);
@@ -738,10 +742,23 @@ static AstNode* parse_array_literal(Parser* parser) {
     // Handle non-empty arrays
     if (peek(parser)->type != RIGHTBRACKET) {
         do {
-            // Add the parsed expression to our list
+            // --- FIX IS HERE: Add the reallocation logic ---
             if (node->as.array_literal.count == node->as.array_literal.capacity) {
-                // Realloc logic for the elements array would go here
+                size_t new_capacity = node->as.array_literal.capacity * 2;
+                AstNode** new_elements = realloc(node->as.array_literal.elements, new_capacity * sizeof(AstNode*));
+                if (!new_elements) {
+                    perror("AST array elements realloc failed");
+                    // Important: free_ast will handle freeing existing children
+                    free_ast(node);
+                    parser->had_error = true;
+                    return NULL;
+                }
+                node->as.array_literal.elements = new_elements;
+                node->as.array_literal.capacity = new_capacity;
             }
+            // --- END OF FIX ---
+            
+            // Add the parsed expression to our list
             node->as.array_literal.elements[node->as.array_literal.count++] = parse_expression(parser, 1);
         } while (match(parser, COMMA)); // Keep going as long as we find a comma
     }
@@ -810,11 +827,38 @@ static AstNode* parse_primary(Parser* parser) {
     return NULL;
 }
 
-// This is the new, precedence-aware expression parser.
+// Parses a primary value and any subsequent postfix subscript '[]' operations.
+static AstNode* parse_subscript(Parser* parser) {
+    // First, parse the primary expression (e.g., an identifier, a literal, or a '(...)' group).
+    AstNode* expr = parse_primary(parser);
+    if (!expr) return NULL;
+
+    // After parsing the primary, loop to see if a '[' follows, allowing for chains like my_array[0][1].
+    while (match(parser, LEFTBRACKET)) {
+        AstNode* index = parse_expression(parser, 1); // Parse the index expression inside the brackets.
+        expect(parser, RIGHTBRACKET, "Expected ']' after subscript index.");
+
+        // Create the new subscript node, with the previous expression as the 'array' part.
+        AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
+        if (!subscript_node) { free_ast(expr); free_ast(index); return NULL; }
+        subscript_node->line = expr->line; // Use the line of the thing being accessed.
+        subscript_node->as.subscript.array = expr;
+        subscript_node->as.subscript.index = index;
+
+        // This new subscript expression becomes the expression we check in the next loop iteration.
+        expr = subscript_node;
+    }
+
+    return expr;
+}
+
+// This is the updated, cleaner expression parser.
 static AstNode* parse_expression(Parser* parser, int min_precedence) {
-    AstNode* left = parse_primary(parser);
+    // Get the initial operand, which might be a simple primary or a full subscript expression.
+    AstNode* left = parse_subscript(parser);
     if (!left) return NULL;
 
+    // The precedence climbing loop now ONLY handles infix binary operators.
     while (true) {
         Token operator_token = *peek(parser);
         int current_precedence = get_operator_precedence(operator_token.type);
@@ -823,28 +867,24 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
             break;
         }
 
-        consume(parser); // Consume the operator
+        consume(parser);
 
         AstNode* right = parse_expression(parser, current_precedence + 1);
         if (!right) { free_ast(left); return NULL; }
 
         AstNode* node;
-        // Check if the operator is for a logical or standard binary operation
         if (operator_token.type == AND || operator_token.type == OR) {
             node = create_node(parser, AST_LOGICAL_OP);
-            node->line = operator_token.line;
             node->as.logical_op.operator = operator_token;
             node->as.logical_op.left = left;
             node->as.logical_op.right = right;
         } else {
-            // All other operators create a standard binary op node
             node = create_node(parser, AST_BINARY_OP);
-            node->line = operator_token.line;
             node->as.binary_op.operator = operator_token;
             node->as.binary_op.left = left;
             node->as.binary_op.right = right;
         }
-        
+        node->line = operator_token.line;
         left = node;
     }
 
@@ -1206,6 +1246,14 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_SUBSCRIPT: {
+            fprintf(file, "(SUBSCRIPT line=%d\n", node->line);
+            write_ast_node(file, node->as.subscript.array, indent + 1);
+            write_ast_node(file, node->as.subscript.index, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
@@ -1330,6 +1378,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "UNARY_OP") == 0) return AST_UNARY_OP;
     if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
     if (strcmp(type_str, "ARRAY_LITERAL") == 0) return AST_ARRAY_LITERAL;
+    if (strcmp(type_str, "SUBSCRIPT") == 0) return AST_SUBSCRIPT;
     return AST_UNKNOWN;
 }
 
@@ -1480,8 +1529,6 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 char part_type_str[64];
                 get_node_type_from_line(part_line, part_type_str, sizeof(part_type_str));
 
-                // Realloc parts array if needed (omitted for brevity, but you would add it here)
-
                 FmtStringPart part;
                 if (strcmp(part_type_str, "LITERAL_PART") == 0) {
                     part.type = FMT_PART_LITERAL;
@@ -1525,7 +1572,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             
             char* op_str = node->as.logical_op.operator.lexeme;
             size_t op_len = strlen(op_str);
-            if (op_len == 2) { // For '&&' and later '||'
+            if (op_len == 2) {
                 node->as.logical_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
             } else {
                 node->as.logical_op.operator.type = UNKNOWN;
@@ -1561,6 +1608,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             get_attribute_string(line, "name=", node->as.identifier.name.lexeme, MAX_LEXEME_LEN);
             break;
         }
+        case AST_SUBSCRIPT: {
+            node->as.subscript.array = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.subscript.index = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
         default: break;
     }
     
@@ -1572,7 +1624,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_PROGRAM: case AST_ASSIGNMENT: case AST_BINARY_OP:
         case AST_UNARY_OP: case AST_PRINT_STATEMENT:
         case AST_LOGICAL_OP: case AST_FORMATTED_STRING:
-        case AST_ARRAY_LITERAL:
+        case AST_ARRAY_LITERAL: case AST_SUBSCRIPT:
             is_block_node = true;
             break;
         default: break;
@@ -1582,7 +1634,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         if (*current_line_idx < lines->count) {
              const char* closing_line = lines->lines[*current_line_idx];
              if (get_indent_level(closing_line) == expected_indent && *(closing_line + expected_indent * 2) == ')') {
-                 (*current_line_idx)++; // Success! Consume the closing parenthesis.
+                 (*current_line_idx)++;
              } else {
                  fprintf(stderr, "AST Deserializer Error [line %d]: Malformed AST. Expected closing ')' for node started on line %d.\n", *current_line_idx + 1, node->line);
                  parser->had_error = true;
@@ -2083,6 +2135,40 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             
             // 5. Return the completed array.
             return array_val;
+        }
+
+        case AST_SUBSCRIPT: {
+            // 1. Evaluate the expression that should be an array.
+            GraveyardValue array_val = execute_node(gy, node->as.subscript.array);
+            if (array_val.type != VAL_ARRAY) {
+                fprintf(stderr, "Runtime Error [line %d]: Subscript '[]' can only be applied to arrays.\n", node->line);
+                return create_null_value();
+            }
+
+            // 2. Evaluate the expression for the index.
+            GraveyardValue index_val = execute_node(gy, node->as.subscript.index);
+            if (index_val.type != VAL_NUMBER) {
+                fprintf(stderr, "Runtime Error [line %d]: Array index must be a number.\n", node->line);
+                return create_null_value();
+            }
+            
+            // 3. Perform safety checks on the index value.
+            double raw_index = index_val.as.number;
+            if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
+                fprintf(stderr, "Runtime Error [line %d]: Array index must be a non-negative integer.\n", node->line);
+                return create_null_value();
+            }
+            
+            int index = (int)raw_index;
+            GraveyardArray* array = array_val.as.array;
+
+            if (index >= array->count) {
+                fprintf(stderr, "Runtime Error [line %d]: Array index out of bounds. Index %d is too large for array of size %zu.\n", node->line, index, array->count);
+                return create_null_value();
+            }
+
+            // 4. All checks passed. Return the value at the index.
+            return array->values[index];
         }
 
         case AST_IDENTIFIER: {
