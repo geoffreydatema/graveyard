@@ -1193,7 +1193,8 @@ static AstNode* parse_statement(Parser* parser) {
     }
 
     if (match(parser, ASSIGNMENT)) {
-        if (expr->type != AST_IDENTIFIER && expr->type != AST_SUBSCRIPT) {
+        if (expr->type != AST_IDENTIFIER && expr->type != AST_SUBSCRIPT && !(expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == REFERENCE))
+        {
             error_at_token(parser, &parser->tokens[parser->current - 1], "Invalid assignment target.");
             free_ast(expr);
             return NULL;
@@ -2323,6 +2324,30 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
 
                 array->values[index] = value_to_assign;
+                return value_to_assign;
+            } else if (target_node->type == AST_BINARY_OP && target_node->as.binary_op.operator.type == REFERENCE) {
+                AstNode* ht_node = target_node->as.binary_op.left;
+                AstNode* key_node = target_node->as.binary_op.right;
+
+                GraveyardValue ht_val = execute_node(gy, ht_node);
+                if (ht_val.type != VAL_HASHTABLE) {
+                    fprintf(stderr, "Runtime Error [line %d]: Cannot assign to a key of a non-hashtable type.\n", ht_node->line);
+                    return create_null_value();
+                }
+
+                GraveyardValue key_val = execute_node(gy, key_node);
+
+                if (key_val.type != VAL_STRING && key_val.type != VAL_NUMBER &&
+                    key_val.type != VAL_BOOL && key_val.type != VAL_NULL) {
+                    fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", key_node->line);
+                    return create_null_value();
+                }
+                if (key_val.type == VAL_NUMBER && fmod(key_val.as.number, 1.0) != 0) {
+                     fprintf(stderr, "Runtime Error [line %d]: A non-integer number cannot be used as a hashtable key.\n", key_node->line);
+                     return create_null_value();
+                }
+
+                hashtable_set(ht_val.as.hashtable, key_val, value_to_assign);
                 return value_to_assign;
             }
             
