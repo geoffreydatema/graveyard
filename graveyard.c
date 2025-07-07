@@ -960,28 +960,45 @@ static AstNode* parse_primary(Parser* parser) {
     return NULL;
 }
 
-static AstNode* parse_subscript(Parser* parser) {
+static AstNode* parse_postfix(Parser* parser) {
     AstNode* expr = parse_primary(parser);
     if (!expr) return NULL;
 
-    while (match(parser, LEFTBRACKET)) {
-        AstNode* index = parse_expression(parser, 1);
-        expect(parser, RIGHTBRACKET, "Expected ']' after subscript index.");
+    while (true) {
+        if (match(parser, LEFTBRACKET)) {
+            AstNode* index = parse_expression(parser, 1);
+            expect(parser, RIGHTBRACKET, "Expected ']' after subscript index.");
 
-        AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
-        if (!subscript_node) { free_ast(expr); free_ast(index); return NULL; }
-        subscript_node->line = expr->line;
-        subscript_node->as.subscript.array = expr;
-        subscript_node->as.subscript.index = index;
+            AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
+            if (!subscript_node) { free_ast(expr); free_ast(index); return NULL; }
+            subscript_node->line = expr->line;
+            subscript_node->as.subscript.array = expr;
+            subscript_node->as.subscript.index = index;
 
-        expr = subscript_node;
+            expr = subscript_node;
+        } else if (match(parser, REFERENCE)) {
+            Token op = parser->tokens[parser->current - 1];
+            AstNode* key = parse_primary(parser);
+
+            AstNode* lookup_node = create_node(parser, AST_BINARY_OP);
+            if (!lookup_node) { free_ast(expr); free_ast(key); return NULL; }
+            
+            lookup_node->line = op.line;
+            lookup_node->as.binary_op.operator = op;
+            lookup_node->as.binary_op.left = expr;
+            lookup_node->as.binary_op.right = key;
+
+            expr = lookup_node;
+        } else {
+            break;
+        }
     }
 
     return expr;
 }
 
 static AstNode* parse_expression(Parser* parser, int min_precedence) {
-    AstNode* left = parse_subscript(parser);
+    AstNode* left = parse_postfix(parser);
     if (!left) return NULL;
 
     while (true) {
@@ -1805,6 +1822,8 @@ static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
         case VAL_NULL:   return true;
         case VAL_BOOL:   return a.as.boolean == b.as.boolean;
         case VAL_NUMBER: return a.as.number == b.as.number;
+        case VAL_STRING:
+            return a.as.string->length == b.as.string->length && strcmp(a.as.string->chars, b.as.string->chars) == 0;
         case VAL_ARRAY: return a.as.array == b.as.array;
         default:
             return false;
@@ -2349,6 +2368,24 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BINARY_OP: {
+            if (node->as.binary_op.operator.type == REFERENCE) {
+                GraveyardValue ht_val = execute_node(gy, node->as.binary_op.left);
+                if (ht_val.type != VAL_HASHTABLE) {
+                    fprintf(stderr, "Runtime Error [line %d]: Cannot apply '#' lookup to non-hashtable type.\n", node->line);
+                    return create_null_value();
+                }
+
+                GraveyardValue key_val = execute_node(gy, node->as.binary_op.right);
+                GraveyardHashtable* ht = ht_val.as.hashtable;
+                HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, key_val);
+
+                if (entry->is_in_use) {
+                    return entry->value;
+                } else {
+                    return create_null_value();
+                }
+            }
+
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
             TokenType op_type = node->as.binary_op.operator.type;
