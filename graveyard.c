@@ -34,7 +34,8 @@ typedef enum {
     AST_PRINT_STATEMENT,
     AST_FORMATTED_STRING,
     AST_ARRAY_LITERAL,
-    AST_SUBSCRIPT
+    AST_SUBSCRIPT,
+    AST_HASHTABLE_LITERAL
 } AstNodeType;
 
 typedef struct {
@@ -109,6 +110,17 @@ typedef struct {
     AstNode* index;
 } AstNodeSubscript;
 
+typedef struct {
+    AstNode* key;
+    AstNode* value;
+} AstNodeKeyValuePair;
+
+typedef struct {
+    AstNodeKeyValuePair* pairs;
+    size_t count;
+    size_t capacity;
+} AstNodeHashtableLiteral;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -125,28 +137,32 @@ struct AstNode {
         AstNodeArrayLiteral     array_literal;
         AstNodePrintStmt        print_stmt;
         AstNodeSubscript        subscript;
+        AstNodeHashtableLiteral hashtable_literal;
     } as;
 };
 
 typedef struct GraveyardString GraveyardString;
-typedef struct GraveyardArray GraveyardArray;
 typedef struct GraveyardValue GraveyardValue;
+typedef struct GraveyardArray GraveyardArray;
+typedef struct GraveyardHashtable GraveyardHashtable;
 
 typedef enum {
     VAL_BOOL,
     VAL_NULL,
     VAL_NUMBER,
     VAL_STRING,
-    VAL_ARRAY
+    VAL_ARRAY,
+    VAL_HASHTABLE
 } ValueType;
 
 struct GraveyardValue {
     ValueType type;
     union {
-        bool             boolean;
-        double           number;
-        GraveyardString* string;
-        GraveyardArray* array;
+        bool                boolean;
+        double              number;
+        GraveyardString*    string;
+        GraveyardArray*     array;
+        GraveyardHashtable* hashtable;
     } as;
 };
 
@@ -161,6 +177,19 @@ struct GraveyardArray {
     size_t count;
     size_t capacity;
     GraveyardValue* values;
+};
+
+typedef struct {
+    bool is_in_use;
+    GraveyardValue key;
+    GraveyardValue value;
+} HashtableEntry;
+
+struct GraveyardHashtable {
+    int ref_count;
+    int count;
+    int capacity;
+    HashtableEntry* entries;
 };
 
 typedef struct {
@@ -648,6 +677,13 @@ void free_ast(AstNode* node) {
             free_ast(node->as.subscript.array);
             free_ast(node->as.subscript.index);
             break;
+        case AST_HASHTABLE_LITERAL:
+            for (size_t i = 0; i < node->as.hashtable_literal.count; i++) {
+                free_ast(node->as.hashtable_literal.pairs[i].key);
+                free_ast(node->as.hashtable_literal.pairs[i].value);
+            }
+            free(node->as.hashtable_literal.pairs);
+            break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -824,7 +860,55 @@ static AstNode* parse_array_literal(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_hashtable_literal(Parser* parser) {
+    AstNode* node = create_node(parser, AST_HASHTABLE_LITERAL);
+    if (!node) return NULL;
+    node->line = parser->tokens[parser->current - 1].line;
+
+    node->as.hashtable_literal.capacity = 4;
+    node->as.hashtable_literal.count = 0;
+    node->as.hashtable_literal.pairs = malloc(node->as.hashtable_literal.capacity * sizeof(AstNodeKeyValuePair));
+    if (!node->as.hashtable_literal.pairs) {
+        perror("AST hashtable pairs malloc failed");
+        free(node);
+        parser->had_error = true;
+        return NULL;
+    }
+
+    if (peek(parser)->type != RIGHTBRACE) {
+        do {
+            if (node->as.hashtable_literal.count >= node->as.hashtable_literal.capacity) {
+                size_t new_capacity = node->as.hashtable_literal.capacity * 2;
+                AstNodeKeyValuePair* new_pairs = realloc(node->as.hashtable_literal.pairs, new_capacity * sizeof(AstNodeKeyValuePair));
+                if (!new_pairs) {
+                    perror("AST hashtable pairs realloc failed");
+                    free_ast(node);
+                    parser->had_error = true;
+                    return NULL;
+                }
+                node->as.hashtable_literal.pairs = new_pairs;
+                node->as.hashtable_literal.capacity = new_capacity;
+            }
+
+            AstNodeKeyValuePair pair;
+            pair.key = parse_expression(parser, 1);
+            expect(parser, COLON, "Expected ':' between key and value in hashtable literal.");
+            pair.value = parse_expression(parser, 1);
+
+            node->as.hashtable_literal.pairs[node->as.hashtable_literal.count++] = pair;
+
+        } while (match(parser, COMMA));
+    }
+
+    expect(parser, RIGHTBRACE, "Expected '}' to close hashtable literal.");
+    return node;
+}
+
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, LEFTBRACE)) {
+        return parse_hashtable_literal(parser);
+    }
+
     if (match(parser, LEFTBRACKET)) {
         return parse_array_literal(parser);
     }
@@ -1263,6 +1347,23 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_HASHTABLE_LITERAL: {
+            fprintf(file, "(HASHTABLE_LITERAL line=%d\n", node->line);
+            for (size_t i = 0; i < node->as.hashtable_literal.count; i++) {
+                for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
+                fprintf(file, "(KEY_VALUE_PAIR\n");
+                
+                write_ast_node(file, node->as.hashtable_literal.pairs[i].key, indent + 2);
+                write_ast_node(file, node->as.hashtable_literal.pairs[i].value, indent + 2);
+
+                for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
+                fprintf(file, ")\n");
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
         case AST_SUBSCRIPT: {
             fprintf(file, "(SUBSCRIPT line=%d\n", node->line);
             write_ast_node(file, node->as.subscript.array, indent + 1);
@@ -1398,6 +1499,8 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "PRINT_STATEMENT") == 0) return AST_PRINT_STATEMENT;
     if (strcmp(type_str, "ARRAY_LITERAL") == 0) return AST_ARRAY_LITERAL;
     if (strcmp(type_str, "SUBSCRIPT") == 0) return AST_SUBSCRIPT;
+    if (strcmp(type_str, "HASHTABLE_LITERAL") == 0) return AST_HASHTABLE_LITERAL;
+    if (strcmp(type_str, "KEY_VALUE_PAIR") == 0) return AST_UNKNOWN;
     return AST_UNKNOWN;
 }
 
@@ -1518,6 +1621,39 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_HASHTABLE_LITERAL: {
+            node->as.hashtable_literal.capacity = 4;
+            node->as.hashtable_literal.count = 0;
+            node->as.hashtable_literal.pairs = malloc(node->as.hashtable_literal.capacity * sizeof(AstNodeKeyValuePair));
+            if (!node->as.hashtable_literal.pairs) { parser->had_error = true; free(node); return NULL; }
+
+            while (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
+                const char* pair_line = lines->lines[*current_line_idx];
+                char part_type_str[64];
+                get_node_type_from_line(pair_line, part_type_str, sizeof(part_type_str));
+
+                if (strcmp(part_type_str, "KEY_VALUE_PAIR") == 0) {
+                    (*current_line_idx)++;
+
+                    if (node->as.hashtable_literal.count >= node->as.hashtable_literal.capacity) {
+                        size_t new_capacity = node->as.hashtable_literal.capacity * 2;
+                        node->as.hashtable_literal.pairs = realloc(node->as.hashtable_literal.pairs, new_capacity * sizeof(AstNodeKeyValuePair));
+                        node->as.hashtable_literal.capacity = new_capacity;
+                    }
+                    
+                    AstNodeKeyValuePair pair;
+                    pair.key = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
+                    pair.value = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
+                    node->as.hashtable_literal.pairs[node->as.hashtable_literal.count++] = pair;
+
+                    (*current_line_idx)++; 
+                } else {
+                    break;
+                }
+            }
+            break;
+        }
+
         case AST_FORMATTED_STRING: {
             node->as.formatted_string.capacity = 4;
             node->as.formatted_string.count = 0;
@@ -1630,6 +1766,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_UNARY_OP: case AST_PRINT_STATEMENT:
         case AST_LOGICAL_OP: case AST_FORMATTED_STRING:
         case AST_ARRAY_LITERAL: case AST_SUBSCRIPT:
+        case AST_HASHTABLE_LITERAL:
             is_block_node = true;
             break;
         default: break;
@@ -1659,12 +1796,111 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 
 //EXECUTE----------------------------------------------------------------------
 
+static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
+    if (a.type != b.type) {
+        return false;
+    }
+
+    switch (a.type) {
+        case VAL_NULL:   return true;
+        case VAL_BOOL:   return a.as.boolean == b.as.boolean;
+        case VAL_NUMBER: return a.as.number == b.as.number;
+        case VAL_ARRAY: return a.as.array == b.as.array;
+        default:
+            return false;
+    }
+}
+
 static uint32_t hash_string(const char* key, int length) {
     uint32_t hash = 5381;
     for (int i = 0; i < length; i++) {
         hash = ((hash << 5) + hash) + key[i];
     }
     return hash;
+}
+static uint32_t hash_graveyard_value(GraveyardValue value);
+
+static GraveyardValue create_hashtable_value() {
+    GraveyardValue val;
+    val.type = VAL_HASHTABLE;
+    GraveyardHashtable* ht = malloc(sizeof(GraveyardHashtable));
+    ht->count = 0;
+    ht->capacity = 8;
+    ht->ref_count = 0;
+    ht->entries = malloc(ht->capacity * sizeof(HashtableEntry));
+    for (int i = 0; i < ht->capacity; i++) {
+        ht->entries[i].is_in_use = false;
+    }
+    val.as.hashtable = ht;
+    return val;
+}
+
+static uint32_t hash_graveyard_value(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_STRING:
+            return hash_string(value.as.string->chars, value.as.string->length);
+        case VAL_NUMBER:
+            return (uint32_t)value.as.number;
+        case VAL_BOOL:
+            return value.as.boolean ? 1 : 0;
+        case VAL_NULL:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+static HashtableEntry* hashtable_find_entry(HashtableEntry* entries, int capacity, GraveyardValue key) {
+    uint32_t index = hash_graveyard_value(key) % capacity;
+    for (;;) {
+        HashtableEntry* entry = &entries[index];
+        if (!entry->is_in_use || are_values_equal(entry->key, key)) {
+            return entry;
+        }
+        index = (index + 1) % capacity;
+    }
+}
+
+static void hashtable_resize(GraveyardHashtable* ht, int new_capacity) {
+    HashtableEntry* new_entries = malloc(new_capacity * sizeof(HashtableEntry));
+    if (!new_entries) {
+        perror("hashtable_resize: malloc failed");
+        exit(1);
+    }
+    for (int i = 0; i < new_capacity; i++) {
+        new_entries[i].key.type = VAL_NULL;
+    }
+
+    for (int i = 0; i < ht->capacity; i++) {
+        HashtableEntry* entry = &ht->entries[i];
+        if (!entry->is_in_use) continue;
+
+        HashtableEntry* dest = hashtable_find_entry(new_entries, new_capacity, entry->key);
+        dest->key = entry->key;
+        dest->value = entry->value;
+    }
+
+    free(ht->entries);
+    ht->entries = new_entries;
+    ht->capacity = new_capacity;
+}
+
+static void hashtable_set(GraveyardHashtable* ht, GraveyardValue key, GraveyardValue value) {
+    if (ht->count + 1 > ht->capacity * 0.75) {
+        int new_capacity = ht->capacity < 8 ? 8 : ht->capacity * 2;
+        hashtable_resize(ht, new_capacity);
+    }
+
+    HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, key);
+    
+    bool is_new_key = !entry->is_in_use;
+    if (is_new_key) {
+        entry->is_in_use = true;
+        ht->count++;
+    }
+    
+    entry->key = key;
+    entry->value = value;
 }
 
 static MonolithEntry* find_entry(MonolithEntry* entries, int capacity, const char* key) {
@@ -1826,21 +2062,6 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
     }
 }
 
-static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
-    if (a.type != b.type) {
-        return false;
-    }
-
-    switch (a.type) {
-        case VAL_NULL:   return true;
-        case VAL_BOOL:   return a.as.boolean == b.as.boolean;
-        case VAL_NUMBER: return a.as.number == b.as.number;
-        case VAL_ARRAY: return a.as.array == b.as.array;
-        default:
-            return false;
-    }
-}
-
 static bool is_value_falsy(GraveyardValue value) {
     switch (value.type) {
         case VAL_NULL:   return true;
@@ -1883,9 +2104,23 @@ void print_value(GraveyardValue value) {
             }
             printf("]");
             break;
+        case VAL_HASHTABLE:
+            printf("{");
+            int printed = 0;
+            for (int i = 0; i < value.as.hashtable->capacity; i++) {
+                HashtableEntry* entry = &value.as.hashtable->entries[i];
+                if (entry->is_in_use) {
+                    if (printed > 0) printf(", ");
+                    print_value(entry->key);
+                    printf(": ");
+                    print_value(entry->value);
+                    printed++;
+                }
+            }
+            printf("}");
+            break;
     }
 }
-
 
 void monolith_print(Monolith* monolith) {
     printf("--- Monolith Contents ---\n");
@@ -1988,6 +2223,35 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
 
             return array->values[index];
+        }
+
+        case AST_HASHTABLE_LITERAL: {
+            GraveyardValue ht_val = create_hashtable_value();
+            GraveyardHashtable* ht = ht_val.as.hashtable;
+
+            for (size_t i = 0; i < node->as.hashtable_literal.count; i++) {
+                AstNodeKeyValuePair pair = node->as.hashtable_literal.pairs[i];
+                GraveyardValue key = execute_node(gy, pair.key);
+
+                if (key.type != VAL_STRING && key.type != VAL_NUMBER &&
+                    key.type != VAL_BOOL && key.type != VAL_NULL) {
+                    fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", pair.key->line);
+                    free(ht->entries);
+                    free(ht);
+                    return create_null_value();
+                }
+                
+                if (key.type == VAL_NUMBER && fmod(key.as.number, 1.0) != 0) {
+                     fprintf(stderr, "Runtime Error [line %d]: A non-integer number cannot be used as a hashtable key.\n", pair.key->line);
+                     free(ht->entries);
+                     free(ht);
+                     return create_null_value();
+                }
+
+                GraveyardValue value = execute_node(gy, pair.value);
+                hashtable_set(ht, key, value);
+            }
+            return ht_val;
         }
 
         case AST_IDENTIFIER: {
