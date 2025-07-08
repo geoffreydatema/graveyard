@@ -35,7 +35,12 @@ typedef enum {
     AST_FORMATTED_STRING,
     AST_ARRAY_LITERAL,
     AST_SUBSCRIPT,
-    AST_HASHTABLE_LITERAL
+    AST_HASHTABLE_LITERAL,
+    AST_FUNCTION_DECLARATION,
+    AST_CALL_EXPRESSION,
+    AST_RETURN_STATEMENT,
+    AST_BLOCK,
+    AST_EXPRESSION_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -121,23 +126,59 @@ typedef struct {
     size_t capacity;
 } AstNodeHashtableLiteral;
 
+typedef struct {
+    Token name;
+    Token* params;
+    size_t param_count;
+    size_t param_capacity;
+    AstNode* body;
+} AstNodeFunctionDeclaration;
+
+typedef struct {
+    AstNode* callee;
+    AstNode** arguments;
+    size_t arg_count;
+    size_t arg_capacity;
+    Token paren;
+} AstNodeCallExpression;
+
+typedef struct {
+    Token keyword;
+    AstNode* value;
+} AstNodeReturnStatement;
+
+typedef struct {
+    AstNode** statements;
+    size_t count;
+    size_t capacity;
+} AstNodeBlock;
+
+typedef struct {
+    AstNode* expression;
+} AstNodeExpressionStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
 
     union {
-        AstNodeProgram          program;
-        AstNodeBinaryOp         binary_op;
-        AstNodeUnaryOp          unary_op;
-        AstNodeLogicalOp        logical_op;
-        AstNodeAssignment       assignment;
-        AstNodeIdentifier       identifier;
-        AstNodeLiteral          literal;
-        AstNodeFormattedString  formatted_string;
-        AstNodeArrayLiteral     array_literal;
-        AstNodePrintStmt        print_stmt;
-        AstNodeSubscript        subscript;
-        AstNodeHashtableLiteral hashtable_literal;
+        AstNodeProgram              program;
+        AstNodeBinaryOp             binary_op;
+        AstNodeUnaryOp              unary_op;
+        AstNodeLogicalOp            logical_op;
+        AstNodeAssignment           assignment;
+        AstNodeIdentifier           identifier;
+        AstNodeLiteral              literal;
+        AstNodeFormattedString      formatted_string;
+        AstNodeArrayLiteral         array_literal;
+        AstNodePrintStmt            print_stmt;
+        AstNodeSubscript            subscript;
+        AstNodeHashtableLiteral     hashtable_literal;
+        AstNodeFunctionDeclaration  function_declaration;
+        AstNodeCallExpression       call_expression;
+        AstNodeReturnStatement      return_statement;
+        AstNodeBlock                block;
+        AstNodeExpressionStatement expression_statement;
     } as;
 };
 
@@ -145,6 +186,7 @@ typedef struct GraveyardString GraveyardString;
 typedef struct GraveyardValue GraveyardValue;
 typedef struct GraveyardArray GraveyardArray;
 typedef struct GraveyardHashtable GraveyardHashtable;
+typedef struct GraveyardFunction GraveyardFunction;
 
 typedef enum {
     VAL_BOOL,
@@ -152,7 +194,8 @@ typedef enum {
     VAL_NUMBER,
     VAL_STRING,
     VAL_ARRAY,
-    VAL_HASHTABLE
+    VAL_HASHTABLE,
+    VAL_FUNCTION
 } ValueType;
 
 struct GraveyardValue {
@@ -163,6 +206,7 @@ struct GraveyardValue {
         GraveyardString*    string;
         GraveyardArray*     array;
         GraveyardHashtable* hashtable;
+        GraveyardFunction*  function;
     } as;
 };
 
@@ -203,6 +247,20 @@ typedef struct {
     MonolithEntry* entries;
 } Monolith;
 
+typedef struct Environment {
+    struct Environment* enclosing;
+    Monolith values;
+} Environment;
+
+struct GraveyardFunction {
+    int ref_count;
+    int arity;
+    Environment* closure;
+    GraveyardString* name;
+    AstNode* body;
+    Token* params;
+};
+
 typedef struct {
     char** lines;
     int count;
@@ -215,8 +273,10 @@ typedef struct {
     Token *tokens;
     size_t token_count;
     AstNode *ast_root;
-    Monolith globals;
+    Environment* environment;
     GraveyardValue last_executed_value;
+    bool is_returning;
+    GraveyardValue return_value;
 } Graveyard;
 
 typedef struct {
@@ -684,6 +744,30 @@ void free_ast(AstNode* node) {
             }
             free(node->as.hashtable_literal.pairs);
             break;
+        case AST_FUNCTION_DECLARATION:
+            free(node->as.function_declaration.params);
+            free_ast(node->as.function_declaration.body);
+            break;
+        case AST_CALL_EXPRESSION:
+            free_ast(node->as.call_expression.callee);
+            for (size_t i = 0; i < node->as.call_expression.arg_count; i++) {
+                free_ast(node->as.call_expression.arguments[i]);
+            }
+            free(node->as.call_expression.arguments);
+            break;
+        case AST_RETURN_STATEMENT:
+            free_ast(node->as.return_statement.value);
+            break;
+
+        case AST_BLOCK:
+            for (size_t i = 0; i < node->as.block.count; i++) {
+                free_ast(node->as.block.statements[i]);
+            }
+            free(node->as.block.statements);
+            break;
+        case AST_EXPRESSION_STATEMENT:
+            free_ast(node->as.expression_statement.expression);
+            break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -904,6 +988,115 @@ static AstNode* parse_hashtable_literal(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_block(Parser* parser) {
+    AstNode* node = create_node(parser, AST_BLOCK);
+    node->line = peek(parser)->line;
+    node->as.block.capacity = 8;
+    node->as.block.count = 0;
+    node->as.block.statements = malloc(node->as.block.capacity * sizeof(AstNode*));
+
+    while (peek(parser)->type != RIGHTBRACE && !is_at_end(parser)) {
+        if (node->as.block.count >= node->as.block.capacity) {
+            size_t new_capacity = node->as.block.capacity * 2;
+            AstNode** new_statements = realloc(node->as.block.statements, new_capacity * sizeof(AstNode*));
+            if (!new_statements) {
+                perror("AST block statements realloc failed");
+                free_ast(node);
+                parser->had_error = true;
+                return NULL;
+            }
+            node->as.block.statements = new_statements;
+            node->as.block.capacity = new_capacity;
+        }
+
+        AstNode* statement = parse_statement(parser);
+        node->as.block.statements[node->as.block.count++] = statement;
+
+        if (statement->type != AST_FUNCTION_DECLARATION) {
+            expect(parser, SEMICOLON, "Expected ';' after statement inside block.");
+            if (parser->had_error) break;
+        }
+    }
+
+    expect(parser, RIGHTBRACE, "Expected '}' after block.");
+    return node;
+}
+
+static AstNode* parse_return_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_RETURN_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.return_statement.keyword = parser->tokens[parser->current - 1];
+
+    if (peek(parser)->type != SEMICOLON) {
+        node->as.return_statement.value = parse_expression(parser, 1);
+    } else {
+        node->as.return_statement.value = NULL;
+    }
+
+    return node;
+}
+
+static AstNode* parse_call_expression(Parser* parser, AstNode* callee) {
+    AstNode* node = create_node(parser, AST_CALL_EXPRESSION);
+    node->line = callee->line;
+    node->as.call_expression.callee = callee;
+    node->as.call_expression.arg_capacity = 4;
+    node->as.call_expression.arg_count = 0;
+    node->as.call_expression.arguments = malloc(node->as.call_expression.arg_capacity * sizeof(AstNode*));
+
+    if (peek(parser)->type != RIGHTPARENTHESES) {
+        do {
+            if (node->as.call_expression.arg_count >= node->as.call_expression.arg_capacity) {
+                size_t new_capacity = node->as.call_expression.arg_capacity * 2;
+                AstNode** new_args = realloc(node->as.call_expression.arguments, new_capacity * sizeof(AstNode*));
+                if (!new_args) {
+                    perror("AST call arguments realloc failed");
+                    free_ast(node);
+                    parser->had_error = true;
+                    return NULL;
+                }
+                node->as.call_expression.arguments = new_args;
+                node->as.call_expression.arg_capacity = new_capacity;
+            }
+            node->as.call_expression.arguments[node->as.call_expression.arg_count++] = parse_expression(parser, 1);
+        } while (match(parser, COMMA));
+    }
+
+    node->as.call_expression.paren = *expect(parser, RIGHTPARENTHESES, "Expected ')' after arguments.");
+    return node;
+}
+
+static AstNode* parse_function_declaration(Parser* parser, Token name) {
+    AstNode* node = create_node(parser, AST_FUNCTION_DECLARATION);
+    node->line = name.line;
+    node->as.function_declaration.name = name;
+    node->as.function_declaration.param_capacity = 4;
+    node->as.function_declaration.param_count = 0;
+    node->as.function_declaration.params = malloc(node->as.function_declaration.param_capacity * sizeof(Token));
+
+    while (match(parser, PARAMETER)) {
+        if (node->as.function_declaration.param_count >= node->as.function_declaration.param_capacity) {
+            size_t new_capacity = node->as.function_declaration.param_capacity * 2;
+            Token* new_params = realloc(node->as.function_declaration.params, new_capacity * sizeof(Token));
+            if (!new_params) {
+                perror("AST function parameters realloc failed");
+                free_ast(node);
+                parser->had_error = true;
+                return NULL;
+            }
+            node->as.function_declaration.params = new_params;
+            node->as.function_declaration.param_capacity = new_capacity;
+        }
+        Token param_name = *expect(parser, IDENTIFIER, "Expected parameter name after '&'.");
+        node->as.function_declaration.params[node->as.function_declaration.param_count++] = param_name;
+    }
+
+    expect(parser, LEFTBRACE, "Expected '{' to begin function body.");
+    node->as.function_declaration.body = parse_block(parser);
+
+    return node;
+}
+
 static AstNode* parse_primary(Parser* parser) {
     if (match(parser, LEFTBRACE)) {
         return parse_hashtable_literal(parser);
@@ -989,6 +1182,8 @@ static AstNode* parse_postfix(Parser* parser) {
             lookup_node->as.binary_op.right = key;
 
             expr = lookup_node;
+        } else if (match(parser, LEFTPARENTHESES)) {
+            expr = parse_call_expression(parser, expr);
         } else {
             break;
         }
@@ -1172,48 +1367,59 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
 }
 
 static AstNode* parse_statement(Parser* parser) {
+    if (match(parser, RETURN)) {
+        return parse_return_statement(parser);
+    }
     if (match(parser, PRINT)) {
         return parse_print_statement(parser);
     }
-
-    if (peek(parser)->type == IDENTIFIER) {
-        TokenType next_token_type = parser->tokens[parser->current + 1].type;
-        if (next_token_type == INCREMENT || next_token_type == DECREMENT) {
-            return parse_inc_dec_statement(parser);
-        }
-        if (is_compound_assignment(next_token_type)) {
-            return parse_compound_assignment(parser);
-        }
+    
+    if (peek(parser)->type == IDENTIFIER &&
+       (parser->tokens[parser->current + 1].type == PARAMETER ||
+        parser->tokens[parser->current + 1].type == LEFTBRACE)) {
+        Token name = *consume(parser);
+        return parse_function_declaration(parser, name);
     }
 
     AstNode* expr = parse_expression(parser, 1);
     if (!expr) {
-        error_at_token(parser, peek(parser), "Expected a statement.");
         return NULL;
     }
 
     if (match(parser, ASSIGNMENT)) {
-        if (expr->type != AST_IDENTIFIER && expr->type != AST_SUBSCRIPT && !(expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == REFERENCE))
-        {
+        if (expr->type != AST_IDENTIFIER &&
+            expr->type != AST_SUBSCRIPT &&
+            !(expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == REFERENCE)) {
             error_at_token(parser, &parser->tokens[parser->current - 1], "Invalid assignment target.");
             free_ast(expr);
             return NULL;
         }
-        
+
         AstNode* value = parse_expression(parser, 1);
         if (!value) {
             free_ast(expr);
             return NULL;
         }
-
+        
         AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
         assignment_node->line = expr->line;
         assignment_node->as.assignment.left = expr;
         assignment_node->as.assignment.value = value;
-        return assignment_node;
+        
+        AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
+        stmt_node->line = assignment_node->line;
+        stmt_node->as.expression_statement.expression = assignment_node;
+        return stmt_node;
     }
     
-    error_at_token(parser, peek(parser), "Expected a statement (like an assignment with '=').");
+    if (expr->type == AST_CALL_EXPRESSION) {
+        AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
+        stmt_node->line = expr->line;
+        stmt_node->as.expression_statement.expression = expr;
+        return stmt_node;
+    }
+
+    error_at_token(parser, peek(parser), "Invalid use of expression as a statement.");
     free_ast(expr);
     return NULL;
 }
@@ -1248,8 +1454,10 @@ bool parse(Graveyard *gy) {
             goto cleanup;
         }
 
-        expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
-        if (parser.had_error) goto cleanup;
+        if (statement->type != AST_FUNCTION_DECLARATION) {
+            expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
+            if (parser.had_error) goto cleanup;
+        }
 
         if (root->as.program.count == root->as.program.capacity) {
             size_t new_capacity = root->as.program.capacity * 2;
@@ -1416,6 +1624,66 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_EXPRESSION_STATEMENT: {
+            fprintf(file, "(EXPRESSION_STATEMENT line=%d\n", node->line);
+            write_ast_node(file, node->as.expression_statement.expression, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_BLOCK: {
+            fprintf(file, "(BLOCK line=%d\n", node->line);
+            for (size_t i = 0; i < node->as.block.count; i++) {
+                write_ast_node(file, node->as.block.statements[i], indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_RETURN_STATEMENT: {
+            fprintf(file, "(RETURN_STATEMENT line=%d\n", node->line);
+            if (node->as.return_statement.value != NULL) {
+                write_ast_node(file, node->as.return_statement.value, indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_FUNCTION_DECLARATION: {
+            char params_str[256] = "";
+            for (size_t i = 0; i < node->as.function_declaration.param_count; i++) {
+                strcat(params_str, node->as.function_declaration.params[i].lexeme);
+                if (i < node->as.function_declaration.param_count - 1) {
+                    strcat(params_str, " ");
+                }
+            }
+
+            fprintf(file, "(FUNCTION_DECLARATION name=\"%s\" params=\"%s\" line=%d\n",
+                node->as.function_declaration.name.lexeme,
+                params_str,
+                node->line);
+            
+            write_ast_node(file, node->as.function_declaration.body, indent + 1);
+            
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_CALL_EXPRESSION: {
+            fprintf(file, "(CALL_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.call_expression.callee, indent + 1);
+            for (size_t i = 0; i < node->as.call_expression.arg_count; i++) {
+                write_ast_node(file, node->as.call_expression.arguments[i], indent + 1);
+            }
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -1447,7 +1715,7 @@ void print_ast(AstNode* root) {
     printf("--- End AST ---\n");
 }
 
-//EXECUTE GYC (DESERIALIZER)-----------------------------------------------------
+//DESERIALIZER-----------------------------------------------------
 
 static int get_indent_level(const char* line) {
     int indent = 0;
@@ -1518,6 +1786,11 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "ARRAY_LITERAL") == 0) return AST_ARRAY_LITERAL;
     if (strcmp(type_str, "SUBSCRIPT") == 0) return AST_SUBSCRIPT;
     if (strcmp(type_str, "HASHTABLE_LITERAL") == 0) return AST_HASHTABLE_LITERAL;
+    if (strcmp(type_str, "EXPRESSION_STATEMENT") == 0) return AST_EXPRESSION_STATEMENT;
+    if (strcmp(type_str, "BLOCK") == 0) return AST_BLOCK;
+    if (strcmp(type_str, "RETURN_STATEMENT") == 0) return AST_RETURN_STATEMENT;
+    if (strcmp(type_str, "FUNCTION_DECLARATION") == 0) return AST_FUNCTION_DECLARATION;
+    if (strcmp(type_str, "CALL_EXPRESSION") == 0) return AST_CALL_EXPRESSION;
     if (strcmp(type_str, "KEY_VALUE_PAIR") == 0) return AST_UNKNOWN;
     return AST_UNKNOWN;
 }
@@ -1773,6 +2046,108 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_EXPRESSION_STATEMENT: {
+            node->as.expression_statement.expression = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_BLOCK: {
+            node->as.block.capacity = 8;
+            node->as.block.count = 0;
+            node->as.block.statements = malloc(node->as.block.capacity * sizeof(AstNode*));
+            if (!node->as.block.statements) { parser->had_error = true; free(node); return NULL; }
+
+            AstNode* child;
+            while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
+                if (node->as.block.count >= node->as.block.capacity) {
+                    size_t new_capacity = node->as.block.capacity * 2;
+                    AstNode** new_statements = realloc(node->as.block.statements, new_capacity * sizeof(AstNode*));
+                    if (!new_statements) {
+                        perror("AST block statements realloc failed");
+                        free_ast(node);
+                        parser->had_error = true;
+                        return NULL;
+                    }
+                    node->as.block.statements = new_statements;
+                    node->as.block.capacity = new_capacity;
+                }
+                node->as.block.statements[node->as.block.count++] = child;
+            }
+            break;
+        }
+
+        case AST_RETURN_STATEMENT: {
+            if (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
+                node->as.return_statement.value = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            } else {
+                node->as.return_statement.value = NULL;
+            }
+            break;
+        }
+
+        case AST_FUNCTION_DECLARATION: {
+            get_attribute_string(line, "name=", node->as.function_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.function_declaration.name.type = IDENTIFIER;
+
+            char params_buffer[256];
+            get_attribute_string(line, "params=", params_buffer, sizeof(params_buffer));
+            
+            node->as.function_declaration.param_capacity = 4;
+            node->as.function_declaration.param_count = 0;
+            node->as.function_declaration.params = malloc(node->as.function_declaration.param_capacity * sizeof(Token));
+
+            char* param_name = strtok(params_buffer, " ");
+            while (param_name != NULL) {
+                if (node->as.function_declaration.param_count >= node->as.function_declaration.param_capacity) {
+                    size_t new_capacity = node->as.function_declaration.param_capacity * 2;
+                    Token* new_params = realloc(node->as.function_declaration.params, new_capacity * sizeof(Token));
+                    if (!new_params) {
+                        perror("AST function params realloc failed");
+                        free_ast(node);
+                        parser->had_error = true;
+                        return NULL;
+                    }
+                    node->as.function_declaration.params = new_params;
+                    node->as.function_declaration.param_capacity = new_capacity;
+                }
+                Token param_token;
+                param_token.type = IDENTIFIER;
+                strncpy(param_token.lexeme, param_name, MAX_LEXEME_LEN);
+                node->as.function_declaration.params[node->as.function_declaration.param_count++] = param_token;
+                param_name = strtok(NULL, " ");
+            }
+
+            node->as.function_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_CALL_EXPRESSION: {
+            node->as.call_expression.callee = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            
+            node->as.call_expression.arg_capacity = 4;
+            node->as.call_expression.arg_count = 0;
+            node->as.call_expression.arguments = malloc(node->as.call_expression.arg_capacity * sizeof(AstNode*));
+            if (!node->as.call_expression.arguments) { parser->had_error = true; free_ast(node); return NULL; }
+
+            AstNode* child;
+            while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
+                if (node->as.call_expression.arg_count >= node->as.call_expression.arg_capacity) {
+                    size_t new_capacity = node->as.call_expression.arg_capacity * 2;
+                    AstNode** new_args = realloc(node->as.call_expression.arguments, new_capacity * sizeof(AstNode*));
+                    if (!new_args) {
+                        perror("AST call arguments realloc failed");
+                        free_ast(node);
+                        parser->had_error = true;
+                        return NULL;
+                    }
+                    node->as.call_expression.arguments = new_args;
+                    node->as.call_expression.arg_capacity = new_capacity;
+                }
+                node->as.call_expression.arguments[node->as.call_expression.arg_count++] = child;
+            }
+            break;
+        }
+
         default: break;
     }
     
@@ -1785,6 +2160,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_LOGICAL_OP: case AST_FORMATTED_STRING:
         case AST_ARRAY_LITERAL: case AST_SUBSCRIPT:
         case AST_HASHTABLE_LITERAL:
+        case AST_EXPRESSION_STATEMENT:
+        case AST_BLOCK:
+        case AST_RETURN_STATEMENT:
+        case AST_FUNCTION_DECLARATION:
+        case AST_CALL_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -1934,6 +2314,54 @@ static MonolithEntry* find_entry(MonolithEntry* entries, int capacity, const cha
     }
 }
 
+static GraveyardValue create_null_value() {
+    GraveyardValue val;
+    val.type = VAL_NULL;
+    val.as.number = 0;
+    return val;
+}
+
+static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
+    GraveyardValue val;
+    val.type = VAL_FUNCTION;
+    GraveyardFunction* func = malloc(sizeof(GraveyardFunction));
+
+    func->ref_count = 0;
+    func->arity = node->as.function_declaration.param_count;
+    func->body = node->as.function_declaration.body;
+    func->params = node->as.function_declaration.params;
+    
+    func->closure = gy->environment;
+
+    size_t len = strlen(node->as.function_declaration.name.lexeme);
+    GraveyardString* name_str = malloc(sizeof(GraveyardString));
+    name_str->chars = malloc(len + 1);
+    memcpy(name_str->chars, node->as.function_declaration.name.lexeme, len + 1);
+    name_str->length = len;
+    func->name = name_str;
+
+    val.as.function = func;
+    return val;
+}
+
+static GraveyardValue execute_node(Graveyard* gy, AstNode* node);
+
+static GraveyardValue execute_block(Graveyard* gy, AstNode* block_node, Environment* environment) {
+    Environment* previous = gy->environment;
+    gy->environment = environment;
+    GraveyardValue last_val = create_null_value();
+
+    for (size_t i = 0; i < block_node->as.block.count; i++) {
+        last_val = execute_node(gy, block_node->as.block.statements[i]);
+        if (gy->is_returning) {
+            break;
+        }
+    }
+
+    gy->environment = previous;
+    return last_val;
+}
+
 static void monolith_resize(Monolith* monolith, int new_capacity) {
     MonolithEntry* new_entries = malloc(new_capacity * sizeof(MonolithEntry));
     if (!new_entries) {
@@ -2011,17 +2439,47 @@ bool monolith_get(Monolith* monolith, const char* key, GraveyardValue* out_value
     return true;
 }
 
+Environment* environment_new(Environment* enclosing) {
+    Environment* env = malloc(sizeof(Environment));
+    env->enclosing = enclosing;
+    monolith_init(&env->values);
+    return env;
+}
+
+void environment_define(Environment* env, const char* name, GraveyardValue value) {
+    monolith_set(&env->values, name, value);
+}
+
+bool environment_get(Environment* env, const char* name, GraveyardValue* out_value) {
+    if (monolith_get(&env->values, name, out_value)) {
+        return true;
+    }
+
+    if (env->enclosing != NULL) {
+        return environment_get(env->enclosing, name, out_value);
+    }
+
+    return false;
+}
+
+bool environment_assign(Environment* env, const char* name, GraveyardValue value) {
+    MonolithEntry* entry = find_entry(env->values.entries, env->values.capacity, name);
+    if (entry->key != NULL) {
+        entry->value = value;
+        return true;
+    }
+
+    if (env->enclosing != NULL) {
+        return environment_assign(env->enclosing, name, value);
+    }
+    
+    return false;
+}
+
 static GraveyardValue create_bool_value(bool value) {
     GraveyardValue val;
     val.type = VAL_BOOL;
     val.as.boolean = value;
-    return val;
-}
-
-static GraveyardValue create_null_value() {
-    GraveyardValue val;
-    val.type = VAL_NULL;
-    val.as.number = 0;
     return val;
 }
 
@@ -2276,7 +2734,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_IDENTIFIER: {
             GraveyardValue value;
-            if (monolith_get(&gy->globals, node->as.identifier.name.lexeme, &value)) {
+            if (environment_get(gy->environment, node->as.identifier.name.lexeme, &value)) {
                 return value;
             }
 
@@ -2285,12 +2743,20 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             return create_null_value();
         }
 
+        case AST_EXPRESSION_STATEMENT: {
+            execute_node(gy, node->as.expression_statement.expression);
+            return create_null_value();
+        }
+        
         case AST_ASSIGNMENT: {
             AstNode* target_node = node->as.assignment.left;
             GraveyardValue value_to_assign = execute_node(gy, node->as.assignment.value);
 
             if (target_node->type == AST_IDENTIFIER) {
-                monolith_set(&gy->globals, target_node->as.identifier.name.lexeme, value_to_assign);
+                const char* name = target_node->as.identifier.name.lexeme;
+                if (!environment_assign(gy->environment, name, value_to_assign)) {
+                    environment_define(gy->environment, name, value_to_assign);
+                }
                 return value_to_assign;
 
             } else if (target_node->type == AST_SUBSCRIPT) {
@@ -2535,6 +3001,62 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             free(result_string);
             return final_value;
         }
+
+        case AST_FUNCTION_DECLARATION: {
+            GraveyardValue function = create_function_value(gy, node);
+            environment_define(gy->environment, node->as.function_declaration.name.lexeme, function);
+            return create_null_value();
+        }
+
+        case AST_BLOCK: {
+            Environment* new_env = environment_new(gy->environment);
+            return execute_block(gy, node, new_env);
+        }
+
+        case AST_RETURN_STATEMENT: {
+            GraveyardValue value = create_null_value();
+            if (node->as.return_statement.value) {
+                value = execute_node(gy, node->as.return_statement.value);
+            }
+            gy->is_returning = true;
+            gy->return_value = value;
+            return value;
+        }
+
+        case AST_CALL_EXPRESSION: {
+            GraveyardValue callee = execute_node(gy, node->as.call_expression.callee);
+
+            if (callee.type != VAL_FUNCTION) {
+                fprintf(stderr, "Runtime Error [line %d]: Can only call functions.\n", node->line);
+                return create_null_value();
+            }
+
+            GraveyardFunction* function = callee.as.function;
+            int arg_count = node->as.call_expression.arg_count;
+
+            if (arg_count != function->arity) {
+                fprintf(stderr, "Runtime Error [line %d]: Expected %d arguments but got %d.\n",
+                    node->line, function->arity, arg_count);
+                return create_null_value();
+            }
+            
+            Environment* new_env = environment_new(function->closure);
+            
+            for (int i = 0; i < function->arity; i++) {
+                GraveyardValue arg_value = execute_node(gy, node->as.call_expression.arguments[i]);
+                environment_define(new_env, function->params[i].lexeme, arg_value);
+            }
+            
+            execute_block(gy, function->body, new_env);
+
+            GraveyardValue result = create_null_value();
+            if (gy->is_returning) {
+                result = gy->return_value;
+                gy->is_returning = false; 
+            }
+
+            return result;
+        }
     }
 
     return create_null_value();
@@ -2558,7 +3080,15 @@ void graveyard_free(Graveyard *gy) {
     free(gy->source_code);
     free(gy->tokens);
     free_ast(gy->ast_root);
-    monolith_free(&gy->globals);
+    
+    Environment* env = gy->environment;
+    while (env != NULL) {
+        Environment* next = env->enclosing;
+        monolith_free(&env->values);
+        free(env);
+        env = next;
+    }
+
     free(gy);
 }
 
@@ -2574,8 +3104,12 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->tokens = NULL;
     gy->token_count = 0;
     gy->ast_root = NULL;
-    monolith_init(&gy->globals);
     gy->last_executed_value = create_null_value();
+    gy->environment = malloc(sizeof(Environment));
+    gy->environment->enclosing = NULL;
+    monolith_init(&gy->environment->values);
+    gy->is_returning = false;
+    gy->return_value = create_null_value();
     return gy;
 }
 
@@ -2687,7 +3221,7 @@ int main(int argc, char *argv[]) {
                     if (!compile_source(gy) || !execute(gy)) { success = false; }
                 } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
                     if (compile_source(gy) && execute(gy)) {
-                        monolith_print(&gy->globals);
+                        monolith_print(&gy->environment->values);
                     } else { success = false; }
                 } else {
                     fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
