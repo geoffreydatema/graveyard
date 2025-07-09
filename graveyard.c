@@ -43,7 +43,10 @@ typedef enum {
     AST_EXPRESSION_STATEMENT,
     AST_IF_STATEMENT,
     AST_TERNARY_EXPRESSION,
-    AST_ASSERT_STATEMENT
+    AST_ASSERT_STATEMENT,
+    AST_WHILE_STATEMENT,
+    AST_BREAK_STATEMENT,
+    AST_CONTINUE_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -185,6 +188,19 @@ typedef struct {
     Token keyword;
 } AstNodeAssertStatement;
 
+typedef struct {
+    AstNode* condition;
+    AstNode* body;
+} AstNodeWhileStatement;
+
+typedef struct {
+    Token keyword;
+} AstNodeBreakStatement;
+
+typedef struct {
+    Token keyword;
+} AstNodeContinueStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -210,6 +226,9 @@ struct AstNode {
         AstNodeIfStatement          if_statement;
         AstNodeTernaryExpression    ternary_expression;
         AstNodeAssertStatement      assert_statement;
+        AstNodeWhileStatement      while_statement;
+        AstNodeBreakStatement      break_statement;
+        AstNodeContinueStatement   continue_statement;
     } as;
 };
 
@@ -308,6 +327,8 @@ typedef struct {
     GraveyardValue last_executed_value;
     bool is_returning;
     GraveyardValue return_value;
+    bool encountered_break;
+    bool encountered_continue;
 } Graveyard;
 
 typedef struct {
@@ -817,6 +838,12 @@ void free_ast(AstNode* node) {
         case AST_ASSERT_STATEMENT:
             free_ast(node->as.assert_statement.condition);
             break;
+        case AST_WHILE_STATEMENT:
+            free_ast(node->as.while_statement.condition);
+            free_ast(node->as.while_statement.body);
+            break;
+        case AST_BREAK_STATEMENT:
+        case AST_CONTINUE_STATEMENT:
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -1045,8 +1072,15 @@ static AstNode* parse_block(Parser* parser) {
     node->as.block.capacity = 8;
     node->as.block.count = 0;
     node->as.block.statements = malloc(node->as.block.capacity * sizeof(AstNode*));
+    if (!node->as.block.statements) {
+        perror("AST block statements malloc failed");
+        free(node);
+        parser->had_error = true;
+        return NULL;
+    }
 
     while (peek(parser)->type != RIGHTBRACE && !is_at_end(parser)) {
+        // Grow the statements array if needed
         if (node->as.block.count >= node->as.block.capacity) {
             size_t new_capacity = node->as.block.capacity * 2;
             AstNode** new_statements = realloc(node->as.block.statements, new_capacity * sizeof(AstNode*));
@@ -1061,9 +1095,19 @@ static AstNode* parse_block(Parser* parser) {
         }
 
         AstNode* statement = parse_statement(parser);
+        if (!statement) {
+            // An error in a sub-parser occurred, stop parsing this block.
+            break;
+        }
+        
         node->as.block.statements[node->as.block.count++] = statement;
 
-        if (statement->type != AST_FUNCTION_DECLARATION) {
+        // Compound statements (if, while, func def) end with '}' and don't need a semicolon.
+        // All other statements (assignment, break, continue, return, etc.) are simple and do.
+        if (statement->type != AST_FUNCTION_DECLARATION &&
+            statement->type != AST_IF_STATEMENT &&
+            statement->type != AST_WHILE_STATEMENT)
+        {
             expect(parser, SEMICOLON, "Expected ';' after statement inside block.");
             if (parser->had_error) break;
         }
@@ -1241,6 +1285,29 @@ static AstNode* parse_postfix(Parser* parser) {
     }
 
     return expr;
+}
+
+static AstNode* parse_while_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_WHILE_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.while_statement.condition = parse_expression(parser, 1);
+    expect(parser, LEFTBRACE, "Expected '{' after while condition.");
+    node->as.while_statement.body = parse_block(parser);
+    return node;
+}
+
+static AstNode* parse_break_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_BREAK_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.break_statement.keyword = parser->tokens[parser->current - 1];
+    return node;
+}
+
+static AstNode* parse_continue_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_CONTINUE_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.continue_statement.keyword = parser->tokens[parser->current - 1];
+    return node;
 }
 
 static AstNode* parse_expression(Parser* parser, int min_precedence) {
@@ -1474,6 +1541,18 @@ static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* cond
 }
 
 static AstNode* parse_statement(Parser* parser) {
+    if (match(parser, WHILE)) {
+        return parse_while_statement(parser);
+    }
+    
+    if (match(parser, BREAK)) {
+        return parse_break_statement(parser);
+    }
+    
+    if (match(parser, CONTINUE)) {
+        return parse_continue_statement(parser);
+    }
+
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
         AstNode* condition = parse_expression(parser, 1);
@@ -1577,7 +1656,9 @@ bool parse(Graveyard *gy) {
             goto cleanup;
         }
 
-        if (statement->type != AST_FUNCTION_DECLARATION && statement->type != AST_IF_STATEMENT) {
+        if (statement->type != AST_FUNCTION_DECLARATION &&
+            statement->type != AST_IF_STATEMENT &&
+            statement->type != AST_WHILE_STATEMENT) {
             expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
             if (parser.had_error) goto cleanup;
         }
@@ -1862,6 +1943,25 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_WHILE_STATEMENT: {
+            fprintf(file, "(WHILE_STATEMENT line=%d\n", node->line);
+            write_ast_node(file, node->as.while_statement.condition, indent + 1);
+            write_ast_node(file, node->as.while_statement.body, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_BREAK_STATEMENT: {
+            fprintf(file, "(BREAK_STATEMENT line=%d)\n", node->line);
+            break;
+        }
+
+        case AST_CONTINUE_STATEMENT: {
+            fprintf(file, "(CONTINUE_STATEMENT line=%d)\n", node->line);
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -1973,6 +2073,9 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "IF_STATEMENT") == 0) return AST_IF_STATEMENT;
     if (strcmp(type_str, "TERNARY_EXPRESSION") == 0) return AST_TERNARY_EXPRESSION;
     if (strcmp(type_str, "ASSERT_STATEMENT") == 0) return AST_ASSERT_STATEMENT;
+    if (strcmp(type_str, "WHILE_STATEMENT") == 0) return AST_WHILE_STATEMENT;
+    if (strcmp(type_str, "BREAK_STATEMENT") == 0) return AST_BREAK_STATEMENT;
+    if (strcmp(type_str, "CONTINUE_STATEMENT") == 0) return AST_CONTINUE_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -2382,6 +2485,16 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_WHILE_STATEMENT: {
+            node->as.while_statement.condition = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.while_statement.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_BREAK_STATEMENT:
+        case AST_CONTINUE_STATEMENT:
+            break;
+
         default: break;
     }
     
@@ -2402,6 +2515,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_IF_STATEMENT:
         case AST_TERNARY_EXPRESSION:
         case AST_ASSERT_STATEMENT:
+        case AST_WHILE_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -2590,7 +2704,7 @@ static GraveyardValue execute_block(Graveyard* gy, AstNode* block_node, Environm
 
     for (size_t i = 0; i < block_node->as.block.count; i++) {
         last_val = execute_node(gy, block_node->as.block.statements[i]);
-        if (gy->is_returning) {
+        if (gy->is_returning || gy->encountered_break || gy->encountered_continue) {
             break;
         }
     }
@@ -3335,6 +3449,42 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
             return create_null_value();
         }
+
+        case AST_WHILE_STATEMENT: {
+            while (true) {
+                GraveyardValue condition = execute_node(gy, node->as.while_statement.condition);
+                if (is_value_falsy(condition)) {
+                    break;
+                }
+
+                // Reset flags before executing the body for this iteration
+                gy->encountered_continue = false;
+                gy->encountered_break = false;
+
+                execute_block(gy, node->as.while_statement.body, environment_new(gy->environment));
+
+                if (gy->encountered_break) {
+                    break; // Exit the while loop
+                }
+
+                // Continue is implicit, the loop just continues.
+                // We just needed the flag to stop the block execution.
+            }
+            // Reset flags after the loop is done.
+            gy->encountered_break = false;
+            gy->encountered_continue = false;
+            return create_null_value();
+        }
+
+        case AST_BREAK_STATEMENT: {
+            gy->encountered_break = true;
+            return create_null_value();
+        }
+
+        case AST_CONTINUE_STATEMENT: {
+            gy->encountered_continue = true;
+            return create_null_value();
+        }
     }
 
     return create_null_value();
@@ -3388,6 +3538,8 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     monolith_init(&gy->environment->values);
     gy->is_returning = false;
     gy->return_value = create_null_value();
+    gy->encountered_break = false;
+    gy->encountered_continue = false;
     return gy;
 }
 
