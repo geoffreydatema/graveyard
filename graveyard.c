@@ -42,7 +42,8 @@ typedef enum {
     AST_BLOCK,
     AST_EXPRESSION_STATEMENT,
     AST_IF_STATEMENT,
-    AST_TERNARY_EXPRESSION
+    AST_TERNARY_EXPRESSION,
+    AST_ASSERT_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -179,6 +180,11 @@ typedef struct {
     AstNode* else_expr;
 } AstNodeTernaryExpression;
 
+typedef struct {
+    AstNode* condition;
+    Token keyword;
+} AstNodeAssertStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -202,7 +208,8 @@ struct AstNode {
         AstNodeBlock                block;
         AstNodeExpressionStatement  expression_statement;
         AstNodeIfStatement          if_statement;
-        AstNodeTernaryExpression   ternary_expression;
+        AstNodeTernaryExpression    ternary_expression;
+        AstNodeAssertStatement      assert_statement;
     } as;
 };
 
@@ -806,6 +813,9 @@ void free_ast(AstNode* node) {
             free_ast(node->as.ternary_expression.condition);
             free_ast(node->as.ternary_expression.then_expr);
             free_ast(node->as.ternary_expression.else_expr);
+            break;
+        case AST_ASSERT_STATEMENT:
+            free_ast(node->as.assert_statement.condition);
             break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
@@ -1422,11 +1432,11 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     return assignment_node;
 }
 
-static AstNode* parse_if_statement(Parser* parser) {
+static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* condition) {
     AstNode* node = create_node(parser, AST_IF_STATEMENT);
-    node->line = parser->tokens[parser->current - 1].line;
+    node->line = condition->line;
+    node->as.if_statement.condition = condition;
 
-    node->as.if_statement.condition = parse_expression(parser, 1);
     expect(parser, LEFTBRACE, "Expected '{' after if condition.");
     node->as.if_statement.then_branch = parse_block(parser);
 
@@ -1465,7 +1475,18 @@ static AstNode* parse_if_statement(Parser* parser) {
 
 static AstNode* parse_statement(Parser* parser) {
     if (match(parser, QUESTIONMARK)) {
-        return parse_if_statement(parser);
+        Token keyword = parser->tokens[parser->current - 1];
+        AstNode* condition = parse_expression(parser, 1);
+        
+        if (peek(parser)->type == LEFTBRACE) {
+            return parse_if_statement_after_condition(parser, condition);
+        } else {
+            AstNode* node = create_node(parser, AST_ASSERT_STATEMENT);
+            node->line = keyword.line;
+            node->as.assert_statement.keyword = keyword;
+            node->as.assert_statement.condition = condition;
+            return node;
+        }
     }
 
     if (match(parser, RETURN)) {
@@ -1833,6 +1854,14 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_ASSERT_STATEMENT: {
+            fprintf(file, "(ASSERT_STATEMENT line=%d\n", node->line);
+            write_ast_node(file, node->as.assert_statement.condition, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -1943,6 +1972,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "KEY_VALUE_PAIR") == 0) return AST_UNKNOWN;
     if (strcmp(type_str, "IF_STATEMENT") == 0) return AST_IF_STATEMENT;
     if (strcmp(type_str, "TERNARY_EXPRESSION") == 0) return AST_TERNARY_EXPRESSION;
+    if (strcmp(type_str, "ASSERT_STATEMENT") == 0) return AST_ASSERT_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -2347,6 +2377,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_ASSERT_STATEMENT: {
+            node->as.assert_statement.condition = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         default: break;
     }
     
@@ -2366,6 +2401,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_CALL_EXPRESSION:
         case AST_IF_STATEMENT:
         case AST_TERNARY_EXPRESSION:
+        case AST_ASSERT_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -3289,6 +3325,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             } else {
                 return execute_node(gy, node->as.ternary_expression.else_expr);
             }
+        }
+
+        case AST_ASSERT_STATEMENT: {
+            GraveyardValue condition = execute_node(gy, node->as.assert_statement.condition);
+            if (is_value_falsy(condition)) {
+                fprintf(stderr, "Assertion failed on line %d.\n", node->line);
+                exit(1);
+            }
+            return create_null_value();
         }
     }
 
