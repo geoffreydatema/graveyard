@@ -41,7 +41,8 @@ typedef enum {
     AST_RETURN_STATEMENT,
     AST_BLOCK,
     AST_EXPRESSION_STATEMENT,
-    AST_IF_STATEMENT
+    AST_IF_STATEMENT,
+    AST_TERNARY_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -172,6 +173,12 @@ typedef struct {
     AstNode* else_branch;
 } AstNodeIfStatement;
 
+typedef struct {
+    AstNode* condition;
+    AstNode* then_expr;
+    AstNode* else_expr;
+} AstNodeTernaryExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -195,6 +202,7 @@ struct AstNode {
         AstNodeBlock                block;
         AstNodeExpressionStatement  expression_statement;
         AstNodeIfStatement          if_statement;
+        AstNodeTernaryExpression   ternary_expression;
     } as;
 };
 
@@ -794,6 +802,11 @@ void free_ast(AstNode* node) {
             free(node->as.if_statement.else_if_clauses);
             free_ast(node->as.if_statement.else_branch);
             break;
+        case AST_TERNARY_EXPRESSION:
+            free_ast(node->as.ternary_expression.condition);
+            free_ast(node->as.ternary_expression.then_expr);
+            free_ast(node->as.ternary_expression.else_expr);
+            break;
         case AST_IDENTIFIER:
         case AST_LITERAL:
             break;
@@ -859,29 +872,31 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
 
 static int get_operator_precedence(TokenType type) {
     switch (type) {
-        case OR:
-            return 1;
-        case XOR:
+        case QUESTIONMARK:
             return 2;
-        case AND:
+        case OR:
             return 3;
+        case XOR:
+            return 4;
+        case AND:
+            return 5;
         case EQUALITY:
         case INEQUALITY:
-            return 4;
+            return 6;
         case LESSTHAN:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
-            return 5;
+            return 7;
         case PLUS:
         case MINUS:
-            return 6;
+            return 8;
         case MULTIPLICATION:
         case DIVISION:
         case MODULO:
-            return 7;
+            return 9;
         case EXPONENTIATION:
-            return 8;
+            return 10;
         default:
             return 0;
     }
@@ -1223,15 +1238,30 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
     if (!left) return NULL;
 
     while (true) {
-        Token operator_token = *peek(parser);
-        int current_precedence = get_operator_precedence(operator_token.type);
+        TokenType op_type = peek(parser)->type;
+        int current_precedence = get_operator_precedence(op_type);
 
         if (current_precedence == 0 || current_precedence < min_precedence) {
             break;
         }
 
-        consume(parser);
+        if (op_type == QUESTIONMARK) {
+            consume(parser);
+            AstNode* then_expr = parse_expression(parser, 1);
+            expect(parser, COLON, "Expected ':' for ternary operator.");
+            
+            AstNode* else_expr = parse_expression(parser, current_precedence - 1);
 
+            AstNode* ternary_node = create_node(parser, AST_TERNARY_EXPRESSION);
+            ternary_node->line = left->line;
+            ternary_node->as.ternary_expression.condition = left;
+            ternary_node->as.ternary_expression.then_expr = then_expr;
+            ternary_node->as.ternary_expression.else_expr = else_expr;
+            left = ternary_node;
+            continue;
+        }
+        
+        Token operator_token = *consume(parser);
         AstNode* right = parse_expression(parser, current_precedence + 1);
         if (!right) { free_ast(left); return NULL; }
 
@@ -1400,12 +1430,10 @@ static AstNode* parse_if_statement(Parser* parser) {
     expect(parser, LEFTBRACE, "Expected '{' after if condition.");
     node->as.if_statement.then_branch = parse_block(parser);
 
-    // Initialize else-if clauses
     node->as.if_statement.else_if_capacity = 4;
     node->as.if_statement.else_if_count = 0;
     node->as.if_statement.else_if_clauses = malloc(node->as.if_statement.else_if_capacity * sizeof(AstNodeElseIfClause));
     
-    // Parse optional "else if" (,) clauses
     while (match(parser, COMMA)) {
         if (node->as.if_statement.else_if_count >= node->as.if_statement.else_if_capacity) {
             size_t new_capacity = node->as.if_statement.else_if_capacity * 2;
@@ -1425,7 +1453,6 @@ static AstNode* parse_if_statement(Parser* parser) {
         clause->body = parse_block(parser);
     }
     
-    // Parse optional "else" (:) clause
     if (match(parser, COLON)) {
         expect(parser, LEFTBRACE, "Expected '{' after else colon.");
         node->as.if_statement.else_branch = parse_block(parser);
@@ -1762,7 +1789,6 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         case AST_IF_STATEMENT: {
             fprintf(file, "(IF_STATEMENT line=%d\n", node->line);
 
-            // Write the main IF condition and body
             for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
             fprintf(file, "(IF_CONDITION\n");
             write_ast_node(file, node->as.if_statement.condition, indent + 2);
@@ -1775,7 +1801,6 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
 
-            // Write ELSE IF clauses
             for (size_t i = 0; i < node->as.if_statement.else_if_count; i++) {
                 for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
                 fprintf(file, "(ELSE_IF_CLAUSE\n");
@@ -1785,7 +1810,6 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 fprintf(file, ")\n");
             }
 
-            // Write optional ELSE branch
             if (node->as.if_statement.else_branch) {
                 for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
                 fprintf(file, "(ELSE_BRANCH\n");
@@ -1794,6 +1818,16 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 fprintf(file, ")\n");
             }
 
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_TERNARY_EXPRESSION: {
+            fprintf(file, "(TERNARY_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.ternary_expression.condition, indent + 1);
+            write_ast_node(file, node->as.ternary_expression.then_expr, indent + 1);
+            write_ast_node(file, node->as.ternary_expression.else_expr, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
@@ -1908,6 +1942,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "CALL_EXPRESSION") == 0) return AST_CALL_EXPRESSION;
     if (strcmp(type_str, "KEY_VALUE_PAIR") == 0) return AST_UNKNOWN;
     if (strcmp(type_str, "IF_STATEMENT") == 0) return AST_IF_STATEMENT;
+    if (strcmp(type_str, "TERNARY_EXPRESSION") == 0) return AST_TERNARY_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -2265,18 +2300,17 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_IF_STATEMENT: {
-            // Initialize the node
             node->as.if_statement.else_branch = NULL;
             node->as.if_statement.else_if_capacity = 4;
             node->as.if_statement.else_if_count = 0;
             node->as.if_statement.else_if_clauses = malloc(node->as.if_statement.else_if_capacity * sizeof(AstNodeElseIfClause));
+            if (!node->as.if_statement.else_if_clauses) { parser->had_error = true; free(node); return NULL; }
 
-            // Loop through the child blocks (IF_CONDITION, THEN_BRANCH, etc.)
             while (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
                 const char* part_line = lines->lines[*current_line_idx];
                 char part_type_str[64];
                 get_node_type_from_line(part_line, part_type_str, sizeof(part_type_str));
-                (*current_line_idx)++; // Consume the block wrapper line, e.g., (IF_CONDITION
+                (*current_line_idx)++;
 
                 if (strcmp(part_type_str, "IF_CONDITION") == 0) {
                     node->as.if_statement.condition = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
@@ -2286,14 +2320,30 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                     node->as.if_statement.else_branch = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
                 } else if (strcmp(part_type_str, "ELSE_IF_CLAUSE") == 0) {
                     if (node->as.if_statement.else_if_count >= node->as.if_statement.else_if_capacity) {
-                        // Realloc logic for else_if_clauses...
+                        size_t new_capacity = node->as.if_statement.else_if_capacity * 2;
+                        AstNodeElseIfClause* new_clauses = realloc(node->as.if_statement.else_if_clauses, new_capacity * sizeof(AstNodeElseIfClause));
+                        if (!new_clauses) {
+                            perror("AST if-else clauses realloc failed");
+                            free_ast(node);
+                            parser->had_error = true;
+                            return NULL;
+                        }
+                        node->as.if_statement.else_if_clauses = new_clauses;
+                        node->as.if_statement.else_if_capacity = new_capacity;
                     }
                     AstNodeElseIfClause* clause = &node->as.if_statement.else_if_clauses[node->as.if_statement.else_if_count++];
                     clause->condition = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
                     clause->body = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
                 }
-                (*current_line_idx)++; // Consume the closing ')' of the block wrapper
+                (*current_line_idx)++;
             }
+            break;
+        }
+
+        case AST_TERNARY_EXPRESSION: {
+            node->as.ternary_expression.condition = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.ternary_expression.then_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.ternary_expression.else_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
@@ -2315,6 +2365,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_FUNCTION_DECLARATION:
         case AST_CALL_EXPRESSION:
         case AST_IF_STATEMENT:
+        case AST_TERNARY_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -3229,6 +3280,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
 
             return create_null_value();
+        }
+
+        case AST_TERNARY_EXPRESSION: {
+            GraveyardValue condition = execute_node(gy, node->as.ternary_expression.condition);
+            if (!is_value_falsy(condition)) {
+                return execute_node(gy, node->as.ternary_expression.then_expr);
+            } else {
+                return execute_node(gy, node->as.ternary_expression.else_expr);
+            }
         }
     }
 
