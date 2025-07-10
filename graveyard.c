@@ -49,7 +49,8 @@ typedef enum {
     AST_BREAK_STATEMENT,
     AST_CONTINUE_STATEMENT,
     AST_FOR_STATEMENT,
-    AST_FOR_EACH_STATEMENT
+    AST_FOR_EACH_STATEMENT,
+    AST_RAISE_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -223,6 +224,11 @@ typedef struct {
     AstNode* body;
 } AstNodeForEachStatement;
 
+typedef struct {
+    Token keyword;
+    AstNode* error_expr;
+} AstNodeRaiseStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -254,6 +260,7 @@ struct AstNode {
         AstNodeContinueStatement    continue_statement;
         AstNodeForStatement         for_statement;
         AstNodeForEachStatement     for_each_statement;
+        AstNodeRaiseStatement       raise_statement;
     } as;
 };
 
@@ -880,6 +887,9 @@ void free_ast(AstNode* node) {
             free_ast(node->as.for_each_statement.collection);
             free_ast(node->as.for_each_statement.body);
             break;
+        case AST_RAISE_STATEMENT:
+            free_ast(node->as.raise_statement.error_expr);
+            break;
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
         case AST_IDENTIFIER:
@@ -1489,6 +1499,14 @@ static AstNode* parse_scan_statement(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_raise_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_RAISE_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.raise_statement.keyword = parser->tokens[parser->current - 1];
+    node->as.raise_statement.error_expr = parse_expression(parser, 1);
+    return node;
+}
+
 static bool is_compound_assignment(TokenType type) {
     switch (type) {
         case PLUSASSIGNMENT:
@@ -1632,6 +1650,10 @@ static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* cond
 }
 
 static AstNode* parse_statement(Parser* parser) {
+    if (match(parser, RAISE)) {
+        return parse_raise_statement(parser);
+    }
+
     if (peek(parser)->type == IDENTIFIER && parser->tokens[parser->current + 1].type == AT) {
         consume(parser);
         consume(parser);
@@ -2126,6 +2148,14 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_RAISE_STATEMENT: {
+            fprintf(file, "(RAISE_STATEMENT line=%d\n", node->line);
+            write_ast_node(file, node->as.raise_statement.error_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2243,6 +2273,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "FOR_STATEMENT") == 0) return AST_FOR_STATEMENT;
     if (strcmp(type_str, "FOR_EACH_STATEMENT") == 0) return AST_FOR_EACH_STATEMENT;
     if (strcmp(type_str, "SCAN_STATEMENT") == 0) return AST_SCAN_STATEMENT;
+    if (strcmp(type_str, "RAISE_STATEMENT") == 0) return AST_RAISE_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -2698,6 +2729,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_RAISE_STATEMENT: {
+            node->as.raise_statement.error_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
             break;
@@ -2731,6 +2767,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_FOR_STATEMENT:
         case AST_FOR_EACH_STATEMENT:
         case AST_SCAN_STATEMENT:
+        case AST_RAISE_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -3796,6 +3833,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             gy->encountered_break = false;
             gy->encountered_continue = false;
             return create_null_value();
+        }
+
+        case AST_RAISE_STATEMENT: {
+            GraveyardValue error_val = execute_node(gy, node->as.raise_statement.error_expr);
+            char error_buffer[1024];
+            value_to_string(error_val, error_buffer, sizeof(error_buffer));
+            
+            fprintf(stderr, "Runtime Error [line %d]: %s\n", node->line, error_buffer);
+            exit(1); // Halt the program
         }
     }
 
