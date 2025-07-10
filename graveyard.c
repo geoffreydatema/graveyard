@@ -1255,7 +1255,7 @@ static AstNode* parse_primary(Parser* parser) {
         return expr;
     }
 
-    if (match(parser, MINUS) || match(parser, NOT)) {
+    if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF)) {
         Token operator_token = parser->tokens[parser->current - 1];
         AstNode* right = parse_expression(parser, 6);
         if (!right) return NULL;
@@ -2495,9 +2495,18 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 
         case AST_UNARY_OP: {
             get_attribute_string(line, "op=", node->as.unary_op.operator.lexeme, MAX_LEXEME_LEN);
-            if (strlen(node->as.unary_op.operator.lexeme) == 1) {
-                node->as.unary_op.operator.type = identify_single_char_token(node->as.unary_op.operator.lexeme[0]);
+
+            char* op_str = node->as.unary_op.operator.lexeme;
+            size_t op_len = strlen(op_str);
+
+            if (op_len == 2) {
+                node->as.unary_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
+            } else if (op_len == 1) {
+                node->as.unary_op.operator.type = identify_single_char_token(op_str[0]);
+            } else {
+                node->as.unary_op.operator.type = UNKNOWN;
             }
+
             node->as.unary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
@@ -3472,6 +3481,25 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 case NOT:
                     return create_bool_value(is_value_falsy(right));
+
+                case TYPEOF: {
+                    switch (right.type) {
+                        case VAL_BOOL:      return create_string_value("boolean");
+                        case VAL_NULL:      return create_string_value("null");
+                        case VAL_STRING:    return create_string_value("string");
+                        case VAL_ARRAY:     return create_string_value("array");
+                        case VAL_HASHTABLE: return create_string_value("hashtable");
+                        case VAL_FUNCTION:  return create_string_value("function");
+                        case VAL_NUMBER:
+                            if (fmod(right.as.number, 1.0) == 0) {
+                                return create_string_value("integer");
+                            } else {
+                                return create_string_value("float");
+                            }
+                        default:
+                            return create_string_value("unknown");
+                    }
+                }
 
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown unary operator.\n", node->line);
