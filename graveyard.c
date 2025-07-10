@@ -32,6 +32,7 @@ typedef enum {
     AST_IDENTIFIER,
     AST_LITERAL,
     AST_PRINT_STATEMENT,
+    AST_SCAN_STATEMENT,
     AST_FORMATTED_STRING,
     AST_ARRAY_LITERAL,
     AST_SUBSCRIPT,
@@ -92,6 +93,11 @@ typedef struct {
     size_t count;
     size_t capacity;
 } AstNodePrintStmt;
+
+typedef struct {
+    Token variable;
+    AstNode* prompt;
+} AstNodeScanStatement;
 
 typedef enum {
     FMT_PART_LITERAL,
@@ -232,6 +238,7 @@ struct AstNode {
         AstNodeFormattedString      formatted_string;
         AstNodeArrayLiteral         array_literal;
         AstNodePrintStmt            print_stmt;
+        AstNodeScanStatement        scan_statement;
         AstNodeSubscript            subscript;
         AstNodeHashtableLiteral     hashtable_literal;
         AstNodeFunctionDeclaration  function_declaration;
@@ -242,11 +249,11 @@ struct AstNode {
         AstNodeIfStatement          if_statement;
         AstNodeTernaryExpression    ternary_expression;
         AstNodeAssertStatement      assert_statement;
-        AstNodeWhileStatement      while_statement;
-        AstNodeBreakStatement      break_statement;
-        AstNodeContinueStatement   continue_statement;
-        AstNodeForStatement        for_statement;
-        AstNodeForEachStatement    for_each_statement;
+        AstNodeWhileStatement       while_statement;
+        AstNodeBreakStatement       break_statement;
+        AstNodeContinueStatement    continue_statement;
+        AstNodeForStatement         for_statement;
+        AstNodeForEachStatement     for_each_statement;
     } as;
 };
 
@@ -773,6 +780,9 @@ void free_ast(AstNode* node) {
                 free_ast(node->as.print_stmt.expressions[i]);
             }
             free(node->as.print_stmt.expressions);
+            break;
+        case AST_SCAN_STATEMENT:
+            free_ast(node->as.scan_statement.prompt);
             break;
         case AST_LOGICAL_OP:
             free_ast(node->as.logical_op.left);
@@ -1469,6 +1479,16 @@ static AstNode* parse_print_statement(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_scan_statement(Parser* parser) {
+    Token variable = parser->tokens[parser->current - 2];
+    AstNode* node = create_node(parser, AST_SCAN_STATEMENT);
+    node->line = variable.line;
+    node->as.scan_statement.variable = variable;
+    node->as.scan_statement.prompt = parse_expression(parser, 1);
+    
+    return node;
+}
+
 static bool is_compound_assignment(TokenType type) {
     switch (type) {
         case PLUSASSIGNMENT:
@@ -1653,6 +1673,12 @@ static AstNode* parse_statement(Parser* parser) {
         return parse_print_statement(parser);
     }
     
+    if (peek(parser)->type == IDENTIFIER && parser->tokens[parser->current + 1].type == SCAN) {
+        consume(parser);
+        consume(parser);
+        return parse_scan_statement(parser);
+    }
+    
     if (peek(parser)->type == IDENTIFIER &&
        (parser->tokens[parser->current + 1].type == PARAMETER ||
         parser->tokens[parser->current + 1].type == LEFTBRACE)) {
@@ -1794,6 +1820,16 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
+
+        case AST_SCAN_STATEMENT: {
+            fprintf(file, "(SCAN_STATEMENT variable=\"%s\" line=%d\n",
+                node->as.scan_statement.variable.lexeme,
+                node->line);
+            write_ast_node(file, node->as.scan_statement.prompt, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
 
         case AST_LOGICAL_OP:
             fprintf(file, "(LOGICAL_OP op=\"%s\" line=%d\n", node->as.logical_op.operator.lexeme, node->line);
@@ -2206,6 +2242,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "CONTINUE_STATEMENT") == 0) return AST_CONTINUE_STATEMENT;
     if (strcmp(type_str, "FOR_STATEMENT") == 0) return AST_FOR_STATEMENT;
     if (strcmp(type_str, "FOR_EACH_STATEMENT") == 0) return AST_FOR_EACH_STATEMENT;
+    if (strcmp(type_str, "SCAN_STATEMENT") == 0) return AST_SCAN_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -2655,6 +2692,12 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_SCAN_STATEMENT: {
+            get_attribute_string(line, "variable=", node->as.scan_statement.variable.lexeme, MAX_LEXEME_LEN);
+            node->as.scan_statement.prompt = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
             break;
@@ -2687,6 +2730,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_WHILE_STATEMENT:
         case AST_FOR_STATEMENT:
         case AST_FOR_EACH_STATEMENT:
+        case AST_SCAN_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -3163,6 +3207,25 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
             printf("\n");
 
+            return create_null_value();
+        }
+
+        case AST_SCAN_STATEMENT: {
+            GraveyardValue prompt = execute_node(gy, node->as.scan_statement.prompt);
+            print_value(prompt);
+            fflush(stdout);
+
+            char input_buffer[1024];
+            if (fgets(input_buffer, sizeof(input_buffer), stdin)) {
+                input_buffer[strcspn(input_buffer, "\n")] = 0;
+
+                GraveyardValue input_val = create_string_value(input_buffer);
+                const char* var_name = node->as.scan_statement.variable.lexeme;
+
+                if (!environment_assign(gy->environment, var_name, input_val)) {
+                    environment_define(gy->environment, var_name, input_val);
+                }
+            }
             return create_null_value();
         }
 
