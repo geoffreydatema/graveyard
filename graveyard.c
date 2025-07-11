@@ -1255,7 +1255,9 @@ static AstNode* parse_primary(Parser* parser) {
         return expr;
     }
 
-    if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF)) {
+    if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF) ||
+        match(parser, CASTBOOLEAN) || match(parser, CASTINTEGER) || match(parser, CASTFLOAT) ||
+        match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE)) {
         Token operator_token = parser->tokens[parser->current - 1];
         AstNode* right = parse_expression(parser, 6);
         if (!right) return NULL;
@@ -3144,11 +3146,48 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             snprintf(buffer, buffer_size, "%g", value.as.number);
             break;
         case VAL_STRING:
-            strncpy(buffer, value.as.string->chars, buffer_size);
+            snprintf(buffer, buffer_size, "\"%s\"", value.as.string->chars); // Add quotes
             break;
-        default:
-            strncpy(buffer, "", buffer_size);
+        case VAL_FUNCTION:
+            snprintf(buffer, buffer_size, "%s", value.as.function->name->chars);
             break;
+        case VAL_ARRAY: {
+            // Simplified stringification for arrays
+            char temp_buffer[1024] = "[";
+            GraveyardArray* arr = value.as.array;
+            for (size_t i = 0; i < arr->count; i++) {
+                char element_str[256];
+                value_to_string(arr->values[i], element_str, sizeof(element_str));
+                strcat(temp_buffer, element_str);
+                if (i < arr->count - 1) {
+                    strcat(temp_buffer, ", ");
+                }
+            }
+            strcat(temp_buffer, "]");
+            strncpy(buffer, temp_buffer, buffer_size);
+            break;
+        }
+        case VAL_HASHTABLE: {
+            // Simplified stringification for hashtables
+            char temp_buffer[1024] = "{";
+            GraveyardHashtable* ht = value.as.hashtable;
+            int printed = 0;
+            for (int i = 0; i < ht->capacity; i++) {
+                if (ht->entries[i].is_in_use) {
+                    if (printed > 0) strcat(temp_buffer, ", ");
+                    char key_str[256], val_str[256];
+                    value_to_string(ht->entries[i].key, key_str, sizeof(key_str));
+                    value_to_string(ht->entries[i].value, val_str, sizeof(val_str));
+                    strcat(temp_buffer, key_str);
+                    strcat(temp_buffer, ": ");
+                    strcat(temp_buffer, val_str);
+                    printed++;
+                }
+            }
+            strcat(temp_buffer, "}");
+            strncpy(buffer, temp_buffer, buffer_size);
+            break;
+        }
     }
 }
 
@@ -3498,6 +3537,156 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             }
                         default:
                             return create_string_value("unknown");
+                    }
+                }
+
+                case CASTBOOLEAN: {
+                    return create_bool_value(!is_value_falsy(right));
+                }
+
+                case CASTINTEGER: {
+                    switch (right.type) {
+                        case VAL_NUMBER:  return create_number_value((int)right.as.number);
+                        case VAL_BOOL:    return create_number_value(right.as.boolean ? 1 : 0);
+                        case VAL_NULL:    return create_number_value(0);
+                        case VAL_STRING: {
+                            char* end;
+                            long val = strtol(right.as.string->chars, &end, 10);
+                            if (*end != '\0') { // Check if the whole string was consumed
+                                fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to integer.\n", node->line);
+                                return create_null_value();
+                            }
+                            return create_number_value(val);
+                        }
+                        default: // Arrays, Hashtables, Functions
+                            fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to integer.\n", node->line);
+                            return create_null_value();
+                    }
+                }
+
+                case CASTFLOAT: {
+                    switch (right.type) {
+                        case VAL_NUMBER:  return create_number_value((double)right.as.number);
+                        case VAL_BOOL:    return create_number_value(right.as.boolean ? 1.0 : 0.0);
+                        case VAL_NULL:    return create_number_value(0.0);
+                        case VAL_STRING: {
+                            char* end;
+                            double val = strtod(right.as.string->chars, &end);
+                            if (*end != '\0') { // Check if the whole string was consumed
+                                fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to float.\n", node->line);
+                                return create_null_value();
+                            }
+                            return create_number_value(val);
+                        }
+                        default: // Arrays, Hashtables, Functions
+                            fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to float.\n", node->line);
+                            return create_null_value();
+                    }
+                }
+                
+                case CASTSTRING: {
+                    // Reuses the existing value_to_string helper, which already handles all types as specified.
+                    char buffer[1024];
+                    value_to_string(right, buffer, sizeof(buffer));
+                    return create_string_value(buffer);
+                }
+
+                case CASTARRAY: {
+                    switch (right.type) {
+                        case VAL_ARRAY:     return right; // No change
+                        case VAL_NULL:      return create_array_value(); // Empty array
+                        case VAL_HASHTABLE: {
+                            GraveyardValue arr_val = create_array_value();
+                            GraveyardHashtable* ht = right.as.hashtable;
+                            for (int i = 0; i < ht->capacity; i++) {
+                                if (ht->entries[i].is_in_use) {
+                                    array_append(arr_val.as.array, ht->entries[i].value);
+                                }
+                            }
+                            return arr_val;
+                        }
+                        case VAL_STRING: {
+                            GraveyardValue arr_val = create_array_value();
+                            GraveyardString* str = right.as.string;
+                            for (size_t i = 0; i < str->length; i++) {
+                                char char_buf[2] = { str->chars[i], '\0' };
+                                array_append(arr_val.as.array, create_string_value(char_buf));
+                            }
+                            return arr_val;
+                        }
+                        default: { // Single values (number, bool, function)
+                            GraveyardValue arr_val = create_array_value();
+                            array_append(arr_val.as.array, right);
+                            return arr_val;
+                        }
+                    }
+                }
+
+                case CASTHASHTABLE: {
+                    switch (right.type) {
+                        case VAL_HASHTABLE: return right; // No change
+                        case VAL_NULL:      return create_hashtable_value(); // Empty hashtable
+                        case VAL_ARRAY: {
+                            GraveyardValue ht_val = create_hashtable_value();
+                            GraveyardArray* arr = right.as.array;
+                            for (size_t i = 0; i < arr->count; i++) {
+                                GraveyardValue key = arr->values[i];
+                                
+                                // --- Start of Fix ---
+                                // More specific key validation
+                                bool is_valid_key = false;
+                                if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
+                                    is_valid_key = true;
+                                } else if (key.type == VAL_NUMBER) {
+                                    // Allow integers, but not floats
+                                    if (fmod(key.as.number, 1.0) == 0) {
+                                        is_valid_key = true;
+                                    }
+                                }
+
+                                if (!is_valid_key) {
+                                    fprintf(stderr, "Runtime Error [line %d]: Array contains an invalid type for a hashtable key.\n", node->line);
+                                    // Don't forget to free the partially created hashtable
+                                    free(ht_val.as.hashtable->entries);
+                                    free(ht_val.as.hashtable);
+                                    return create_null_value();
+                                }
+                                // --- End of Fix ---
+
+                                // Check for duplicates
+                                if (hashtable_find_entry(ht_val.as.hashtable->entries, ht_val.as.hashtable->capacity, key)->is_in_use) {
+                                     fprintf(stderr, "Runtime Error [line %d]: Duplicate key found when casting array to hashtable.\n", node->line);
+                                     free(ht_val.as.hashtable->entries);
+                                     free(ht_val.as.hashtable);
+                                     return create_null_value();
+                                }
+                                hashtable_set(ht_val.as.hashtable, key, create_null_value());
+                            }
+                            return ht_val;
+                        }
+                        default: { // Single values
+                            GraveyardValue key = right;
+
+                            // --- Start of Fix ---
+                            bool is_valid_key = false;
+                            if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
+                                is_valid_key = true;
+                            } else if (key.type == VAL_NUMBER) {
+                                if (fmod(key.as.number, 1.0) == 0) {
+                                    is_valid_key = true;
+                                }
+                            }
+
+                            if (!is_valid_key) {
+                                fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", node->line);
+                                return create_null_value();
+                            }
+                            // --- End of Fix ---
+
+                            GraveyardValue ht_val = create_hashtable_value();
+                            hashtable_set(ht_val.as.hashtable, key, create_null_value());
+                            return ht_val;
+                        }
                     }
                 }
 
