@@ -10,7 +10,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, LENGTH, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -404,6 +404,7 @@ TokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == '!' && c2 == '>' && c3 == '>') return RAISE;
     if (c1 == ':' && c2 == '<' && c3 == '<') return FILEREAD;
     if (c1 == ':' && c2 == '>' && c3 == '>') return FILEWRITE;
+    if (c1 == '/' && c2 == '%' && c3 == '=') return MODULOASSIGNMENT;
     return UNKNOWN;
 }
 
@@ -437,7 +438,6 @@ TokenType identify_two_char_token(char c1, char c2) {
     if (c1 == ':' && c2 == '=') return EXECUTE;
     if (c1 == ':' && c2 == '3') return CATCONSTANT;
     if (c1 == '?' && c2 == '?') return NULLCOALESCE;
-    if (c1 == '@' && c2 == '?') return LENGTH;
     return UNKNOWN;
 }
 
@@ -1363,12 +1363,10 @@ static AstNode* parse_for_statement(Parser* parser) {
 
     AstNode* first_expr = parse_expression(parser, 1);
 
-    // If a comma follows the first expression, it's a numeric for loop.
     if (peek(parser)->type == COMMA) {
-        consume(parser); // Consume the comma
+        consume(parser);
         return parse_numeric_for_statement(parser, iterator, first_expr);
     } else {
-        // Otherwise, it's a for-each loop over a collection.
         AstNode* node = create_node(parser, AST_FOR_EACH_STATEMENT);
         node->line = iterator.line;
         node->as.for_each_statement.iterator = iterator;
@@ -1516,6 +1514,7 @@ static bool is_compound_assignment(TokenType type) {
         case MULTIPLICATIONASSIGNMENT:
         case DIVISIONASSIGNMENT:
         case EXPONENTIATIONASSIGNMENT:
+        case MODULOASSIGNMENT:
             return true;
         default:
             return false;
@@ -1524,12 +1523,13 @@ static bool is_compound_assignment(TokenType type) {
 
 static TokenType get_base_operator(TokenType compound_type) {
     switch (compound_type) {
-        case PLUSASSIGNMENT:         return PLUS;
-        case SUBTRACTIONASSIGNMENT:      return MINUS;
-        case MULTIPLICATIONASSIGNMENT:   return MULTIPLICATION;
-        case DIVISIONASSIGNMENT:         return DIVISION;
-        case EXPONENTIATIONASSIGNMENT:   return EXPONENTIATION;
-        default:                         return UNKNOWN;
+        case PLUSASSIGNMENT:            return PLUS;
+        case SUBTRACTIONASSIGNMENT:     return MINUS;
+        case MULTIPLICATIONASSIGNMENT:  return MULTIPLICATION;
+        case DIVISIONASSIGNMENT:        return DIVISION;
+        case EXPONENTIATIONASSIGNMENT:  return EXPONENTIATION;
+        case MODULOASSIGNMENT:          return MODULO;
+        default:                        return UNKNOWN;
     }
 }
 
@@ -1554,6 +1554,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
         case MULTIPLICATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
         case DIVISION:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
         case EXPONENTIATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "**"); break;
+        case MODULO:         strcpy(binary_op_node->as.binary_op.operator.lexeme, "/%"); break;
         default:             binary_op_node->as.binary_op.operator.lexeme[0] = '\0'; break;
     }
 
@@ -1652,32 +1653,16 @@ static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* cond
 }
 
 static AstNode* parse_statement(Parser* parser) {
-    if (match(parser, RAISE)) {
-        return parse_raise_statement(parser);
-    }
-
-    if (peek(parser)->type == IDENTIFIER && parser->tokens[parser->current + 1].type == AT) {
-        consume(parser);
-        consume(parser);
-        return parse_for_statement(parser);
-    }
-
-    if (match(parser, WHILE)) {
-        return parse_while_statement(parser);
-    }
-    
-    if (match(parser, BREAK)) {
-        return parse_break_statement(parser);
-    }
-    
-    if (match(parser, CONTINUE)) {
-        return parse_continue_statement(parser);
-    }
+    if (match(parser, RAISE))    return parse_raise_statement(parser);
+    if (match(parser, WHILE))    return parse_while_statement(parser);
+    if (match(parser, BREAK))    return parse_break_statement(parser);
+    if (match(parser, CONTINUE)) return parse_continue_statement(parser);
+    if (match(parser, RETURN))   return parse_return_statement(parser);
+    if (match(parser, PRINT))    return parse_print_statement(parser);
 
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
         AstNode* condition = parse_expression(parser, 1);
-        
         if (peek(parser)->type == LEFTBRACE) {
             return parse_if_statement_after_condition(parser, condition);
         } else {
@@ -1689,27 +1674,36 @@ static AstNode* parse_statement(Parser* parser) {
         }
     }
 
-    if (match(parser, RETURN)) {
-        return parse_return_statement(parser);
+    if (peek(parser)->type == IDENTIFIER) {
+        TokenType next_token = parser->tokens[parser->current + 1].type;
+        if (next_token == AT) {
+            consume(parser); consume(parser);
+            return parse_for_statement(parser);
+        }
+        if (next_token == SCAN) {
+            consume(parser); consume(parser);
+            return parse_scan_statement(parser);
+        }
+        if (next_token == PARAMETER || next_token == LEFTBRACE) {
+            Token name = *consume(parser);
+            return parse_function_declaration(parser, name);
+        }
+        if (is_compound_assignment(next_token)) {
+            AstNode* assignment_node = parse_compound_assignment(parser);
+            AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
+            stmt_node->line = assignment_node->line;
+            stmt_node->as.expression_statement.expression = assignment_node;
+            return stmt_node;
+        }
+        if (next_token == INCREMENT || next_token == DECREMENT) {
+            AstNode* assignment_node = parse_inc_dec_statement(parser);
+            AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
+            stmt_node->line = assignment_node->line;
+            stmt_node->as.expression_statement.expression = assignment_node;
+            return stmt_node;
+        }
     }
     
-    if (match(parser, PRINT)) {
-        return parse_print_statement(parser);
-    }
-    
-    if (peek(parser)->type == IDENTIFIER && parser->tokens[parser->current + 1].type == SCAN) {
-        consume(parser);
-        consume(parser);
-        return parse_scan_statement(parser);
-    }
-    
-    if (peek(parser)->type == IDENTIFIER &&
-       (parser->tokens[parser->current + 1].type == PARAMETER ||
-        parser->tokens[parser->current + 1].type == LEFTBRACE)) {
-        Token name = *consume(parser);
-        return parse_function_declaration(parser, name);
-    }
-
     AstNode* expr = parse_expression(parser, 1);
     if (!expr) {
         return NULL;
@@ -3146,13 +3140,12 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             snprintf(buffer, buffer_size, "%g", value.as.number);
             break;
         case VAL_STRING:
-            snprintf(buffer, buffer_size, "\"%s\"", value.as.string->chars); // Add quotes
+            snprintf(buffer, buffer_size, "\"%s\"", value.as.string->chars);
             break;
         case VAL_FUNCTION:
             snprintf(buffer, buffer_size, "%s", value.as.function->name->chars);
             break;
         case VAL_ARRAY: {
-            // Simplified stringification for arrays
             char temp_buffer[1024] = "[";
             GraveyardArray* arr = value.as.array;
             for (size_t i = 0; i < arr->count; i++) {
@@ -3168,7 +3161,6 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             break;
         }
         case VAL_HASHTABLE: {
-            // Simplified stringification for hashtables
             char temp_buffer[1024] = "{";
             GraveyardHashtable* ht = value.as.hashtable;
             int printed = 0;
@@ -3552,13 +3544,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         case VAL_STRING: {
                             char* end;
                             long val = strtol(right.as.string->chars, &end, 10);
-                            if (*end != '\0') { // Check if the whole string was consumed
+                            if (*end != '\0') {
                                 fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to integer.\n", node->line);
                                 return create_null_value();
                             }
                             return create_number_value(val);
                         }
-                        default: // Arrays, Hashtables, Functions
+                        default:
                             fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to integer.\n", node->line);
                             return create_null_value();
                     }
@@ -3572,20 +3564,19 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         case VAL_STRING: {
                             char* end;
                             double val = strtod(right.as.string->chars, &end);
-                            if (*end != '\0') { // Check if the whole string was consumed
+                            if (*end != '\0') {
                                 fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to float.\n", node->line);
                                 return create_null_value();
                             }
                             return create_number_value(val);
                         }
-                        default: // Arrays, Hashtables, Functions
+                        default:
                             fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to float.\n", node->line);
                             return create_null_value();
                     }
                 }
                 
                 case CASTSTRING: {
-                    // Reuses the existing value_to_string helper, which already handles all types as specified.
                     char buffer[1024];
                     value_to_string(right, buffer, sizeof(buffer));
                     return create_string_value(buffer);
@@ -3593,8 +3584,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 case CASTARRAY: {
                     switch (right.type) {
-                        case VAL_ARRAY:     return right; // No change
-                        case VAL_NULL:      return create_array_value(); // Empty array
+                        case VAL_ARRAY:     return right;
+                        case VAL_NULL:      return create_array_value();
                         case VAL_HASHTABLE: {
                             GraveyardValue arr_val = create_array_value();
                             GraveyardHashtable* ht = right.as.hashtable;
@@ -3614,7 +3605,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             }
                             return arr_val;
                         }
-                        default: { // Single values (number, bool, function)
+                        default: {
                             GraveyardValue arr_val = create_array_value();
                             array_append(arr_val.as.array, right);
                             return arr_val;
@@ -3624,21 +3615,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 case CASTHASHTABLE: {
                     switch (right.type) {
-                        case VAL_HASHTABLE: return right; // No change
-                        case VAL_NULL:      return create_hashtable_value(); // Empty hashtable
+                        case VAL_HASHTABLE: return right;
+                        case VAL_NULL:      return create_hashtable_value();
                         case VAL_ARRAY: {
                             GraveyardValue ht_val = create_hashtable_value();
                             GraveyardArray* arr = right.as.array;
                             for (size_t i = 0; i < arr->count; i++) {
                                 GraveyardValue key = arr->values[i];
                                 
-                                // --- Start of Fix ---
-                                // More specific key validation
                                 bool is_valid_key = false;
                                 if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
                                     is_valid_key = true;
                                 } else if (key.type == VAL_NUMBER) {
-                                    // Allow integers, but not floats
                                     if (fmod(key.as.number, 1.0) == 0) {
                                         is_valid_key = true;
                                     }
@@ -3646,14 +3634,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                                 if (!is_valid_key) {
                                     fprintf(stderr, "Runtime Error [line %d]: Array contains an invalid type for a hashtable key.\n", node->line);
-                                    // Don't forget to free the partially created hashtable
                                     free(ht_val.as.hashtable->entries);
                                     free(ht_val.as.hashtable);
                                     return create_null_value();
                                 }
-                                // --- End of Fix ---
 
-                                // Check for duplicates
                                 if (hashtable_find_entry(ht_val.as.hashtable->entries, ht_val.as.hashtable->capacity, key)->is_in_use) {
                                      fprintf(stderr, "Runtime Error [line %d]: Duplicate key found when casting array to hashtable.\n", node->line);
                                      free(ht_val.as.hashtable->entries);
@@ -3664,10 +3649,9 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             }
                             return ht_val;
                         }
-                        default: { // Single values
+                        default: {
                             GraveyardValue key = right;
 
-                            // --- Start of Fix ---
                             bool is_valid_key = false;
                             if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
                                 is_valid_key = true;
@@ -3681,7 +3665,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                                 fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", node->line);
                                 return create_null_value();
                             }
-                            // --- End of Fix ---
 
                             GraveyardValue ht_val = create_hashtable_value();
                             hashtable_set(ht_val.as.hashtable, key, create_null_value());
@@ -3951,7 +3934,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 execute_block(gy, node->as.while_statement.body, environment_new(gy->environment));
 
                 if (gy->encountered_break) {
-                    break; // Exit the while loop
+                    break;
                 }
 
             }
@@ -4058,7 +4041,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             value_to_string(error_val, error_buffer, sizeof(error_buffer));
             
             fprintf(stderr, "Runtime Error [line %d]: %s\n", node->line, error_buffer);
-            exit(1); // Halt the program
+            exit(1);
         }
     }
 
