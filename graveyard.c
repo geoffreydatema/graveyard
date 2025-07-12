@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 #define MAX_LEXEME_LEN 65
 
@@ -50,7 +51,8 @@ typedef enum {
     AST_CONTINUE_STATEMENT,
     AST_FOR_STATEMENT,
     AST_FOR_EACH_STATEMENT,
-    AST_RAISE_STATEMENT
+    AST_RAISE_STATEMENT,
+    AST_TIME_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -229,6 +231,10 @@ typedef struct {
     AstNode* error_expr;
 } AstNodeRaiseStatement;
 
+typedef struct {
+    Token keyword;
+} AstNodeTimeExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -261,6 +267,7 @@ struct AstNode {
         AstNodeForStatement         for_statement;
         AstNodeForEachStatement     for_each_statement;
         AstNodeRaiseStatement       raise_statement;
+        AstNodeTimeExpression       time_expression;
     } as;
 };
 
@@ -890,6 +897,7 @@ void free_ast(AstNode* node) {
         case AST_RAISE_STATEMENT:
             free_ast(node->as.raise_statement.error_expr);
             break;
+        case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
         case AST_IDENTIFIER:
@@ -1237,6 +1245,13 @@ static AstNode* parse_function_declaration(Parser* parser, Token name) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, TIME)) {
+        AstNode* node = create_node(parser, AST_TIME_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.time_expression.keyword = parser->tokens[parser->current - 1];
+        return node;
+    }
+
     if (match(parser, LEFTBRACE)) {
         return parse_hashtable_literal(parser);
     }
@@ -1936,6 +1951,11 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_TIME_EXPRESSION: {
+            fprintf(file, "(TIME_EXPRESSION line=%d)\n", node->line);
+            break;
+        }
+
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
@@ -2270,6 +2290,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "FOR_EACH_STATEMENT") == 0) return AST_FOR_EACH_STATEMENT;
     if (strcmp(type_str, "SCAN_STATEMENT") == 0) return AST_SCAN_STATEMENT;
     if (strcmp(type_str, "RAISE_STATEMENT") == 0) return AST_RAISE_STATEMENT;
+    if (strcmp(type_str, "TIME_EXPRESSION") == 0) return AST_TIME_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -2739,6 +2760,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
             break;
@@ -3209,9 +3231,28 @@ void print_value(GraveyardValue value) {
         case VAL_NULL:
             printf("|");
             break;
-        case VAL_NUMBER:
-            printf("%g", value.as.number);
+        case VAL_NUMBER: {
+            double num = value.as.number;
+            if (fmod(num, 1.0) == 0) {
+                printf("%.0f", num);
+            } else {
+                char buffer[64];
+                snprintf(buffer, sizeof(buffer), "%.15f", num);
+
+                char* end = buffer + strlen(buffer) - 1;
+
+                while (end > buffer && *end == '0') {
+                    *end = '\0';
+                    end--;
+                }
+                if (end > buffer && *end == '.') {
+                    *end = '\0';
+                }
+                
+                printf("%s", buffer);
+            }
             break;
+        }
         case VAL_STRING:
             printf("%s", value.as.string->chars);
             break;
@@ -4042,6 +4083,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             
             fprintf(stderr, "Runtime Error [line %d]: %s\n", node->line, error_buffer);
             exit(1);
+        }
+
+        case AST_TIME_EXPRESSION: {
+            struct timespec ts;
+            timespec_get(&ts, TIME_UTC);
+            double epoch_time_precise = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+            return create_number_value(epoch_time_precise);
         }
     }
 
