@@ -967,29 +967,31 @@ static int get_operator_precedence(TokenType type) {
     switch (type) {
         case QUESTIONMARK:
             return 2;
-        case OR:
+        case NULLCOALESCE:
             return 3;
-        case XOR:
+        case OR:
             return 4;
-        case AND:
+        case XOR:
             return 5;
+        case AND:
+            return 6;
         case EQUALITY:
         case INEQUALITY:
-            return 6;
+            return 7;
         case LESSTHAN:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
-            return 7;
+            return 8;
         case PLUS:
         case MINUS:
-            return 8;
+            return 9;
         case MULTIPLICATION:
         case DIVISION:
         case MODULO:
-            return 9;
-        case EXPONENTIATION:
             return 10;
+        case EXPONENTIATION:
+            return 11;
         default:
             return 0;
     }
@@ -3722,27 +3724,23 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BINARY_OP: {
-            if (node->as.binary_op.operator.type == REFERENCE) {
-                GraveyardValue ht_val = execute_node(gy, node->as.binary_op.left);
-                if (ht_val.type != VAL_HASHTABLE) {
-                    fprintf(stderr, "Runtime Error [line %d]: Cannot apply '#' lookup to non-hashtable type.\n", node->line);
-                    return create_null_value();
-                }
+            TokenType op_type = node->as.binary_op.operator.type;
 
-                GraveyardValue key_val = execute_node(gy, node->as.binary_op.right);
-                GraveyardHashtable* ht = ht_val.as.hashtable;
-                HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, key_val);
-
-                if (entry->is_in_use) {
-                    return entry->value;
-                } else {
-                    return create_null_value();
+            // --- Handle operators with special evaluation rules (short-circuiting) ---
+            
+            // Null Coalesce (`??`) short-circuits
+            if (op_type == NULLCOALESCE) {
+                GraveyardValue left = execute_node(gy, node->as.binary_op.left);
+                if (left.type != VAL_NULL) {
+                    return left; // Return the left value without evaluating the right.
                 }
+                // If left is null, fall through and evaluate the right side.
+                return execute_node(gy, node->as.binary_op.right);
             }
 
+            // --- Standard evaluation for all other binary operators ---
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
-            TokenType op_type = node->as.binary_op.operator.type;
 
             if (op_type == EQUALITY)   return create_bool_value(are_values_equal(left, right));
             if (op_type == INEQUALITY) return create_bool_value(!are_values_equal(left, right));
@@ -3755,39 +3753,31 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             if (op_type == PLUS) {
                 if (left.type == VAL_ARRAY) {
                     GraveyardValue new_array_val = create_array_value();
-                    
                     GraveyardArray* old_array = left.as.array;
                     for (size_t i = 0; i < old_array->count; i++) {
                         array_append(new_array_val.as.array, old_array->values[i]);
                     }
-
                     array_append(new_array_val.as.array, right);
-
                     return new_array_val;
                 }
-
                 if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
                     return create_number_value(left.as.number + right.as.number);
                 }
-
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    char left_str[256];
-                    char right_str[256];
+                    char left_str[1024];
+                    char right_str[1024];
                     value_to_string(left, left_str, sizeof(left_str));
                     value_to_string(right, right_str, sizeof(right_str));
-
                     size_t total_len = strlen(left_str) + strlen(right_str);
-                    if (total_len >= MAX_LEXEME_LEN) {
+                    if (total_len >= 1024) {
                         fprintf(stderr, "Runtime Error [line %d]: Resulting string from concatenation is too long.\n", node->line);
                         return create_null_value();
                     }
-                    char result_buffer[MAX_LEXEME_LEN];
+                    char result_buffer[1024];
                     strcpy(result_buffer, left_str);
                     strcat(result_buffer, right_str);
-
                     return create_string_value(result_buffer);
                 }
-
                 goto type_error;
             }
 
@@ -3812,10 +3802,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 
                 default:
                     return create_bool_value(
-                        op_type == GREATERTHAN    ? left.as.number > right.as.number :
-                        op_type == LESSTHAN       ? left.as.number < right.as.number :
+                        op_type == GREATERTHAN       ? left.as.number > right.as.number :
+                        op_type == LESSTHAN          ? left.as.number < right.as.number :
                         op_type == GREATERTHANEQUAL ? left.as.number >= right.as.number :
-                                                     left.as.number <= right.as.number
+                                                      left.as.number <= right.as.number
                     );
             }
         type_error:
