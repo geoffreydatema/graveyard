@@ -11,7 +11,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, MULTIPLICATION, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, ASTERISK, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -454,7 +454,7 @@ TokenType identify_single_char_token(char c) {
         case ';': return SEMICOLON;
         case '+': return PLUS;
         case '-': return MINUS;
-        case '*': return MULTIPLICATION;
+        case '*': return ASTERISK;
         case '/': return DIVISION;
         case '(': return LEFTPARENTHESES;
         case ')': return RIGHTPARENTHESES;
@@ -986,7 +986,7 @@ static int get_operator_precedence(TokenType type) {
         case PLUS:
         case MINUS:
             return 9;
-        case MULTIPLICATION:
+        case ASTERISK:
         case DIVISION:
         case MODULO:
             return 10;
@@ -1274,9 +1274,12 @@ static AstNode* parse_primary(Parser* parser) {
 
     if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF) ||
         match(parser, CASTBOOLEAN) || match(parser, CASTINTEGER) || match(parser, CASTFLOAT) ||
-        match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE)) {
+        match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE) ||
+        match(parser, ASTERISK)) {
+        
         Token operator_token = parser->tokens[parser->current - 1];
-        AstNode* right = parse_expression(parser, 6);
+
+        AstNode* right = parse_expression(parser, 12);
         if (!right) return NULL;
 
         AstNode* node = create_node(parser, AST_UNARY_OP);
@@ -1542,7 +1545,7 @@ static TokenType get_base_operator(TokenType compound_type) {
     switch (compound_type) {
         case PLUSASSIGNMENT:            return PLUS;
         case SUBTRACTIONASSIGNMENT:     return MINUS;
-        case MULTIPLICATIONASSIGNMENT:  return MULTIPLICATION;
+        case MULTIPLICATIONASSIGNMENT:  return ASTERISK;
         case DIVISIONASSIGNMENT:        return DIVISION;
         case EXPONENTIATIONASSIGNMENT:  return EXPONENTIATION;
         case MODULOASSIGNMENT:          return MODULO;
@@ -1568,7 +1571,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     switch (base_op_type) {
         case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
         case MINUS:          strcpy(binary_op_node->as.binary_op.operator.lexeme, "-"); break;
-        case MULTIPLICATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
+        case ASTERISK: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
         case DIVISION:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
         case EXPONENTIATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "**"); break;
         case MODULO:         strcpy(binary_op_node->as.binary_op.operator.lexeme, "/%"); break;
@@ -3716,6 +3719,29 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     }
                 }
 
+                case ASTERISK: {
+                    switch (right.type) {
+                        case VAL_STRING:
+                            return create_number_value(right.as.string->length);
+                        case VAL_ARRAY:
+                            return create_number_value(right.as.array->count);
+                        case VAL_HASHTABLE:
+                            return create_number_value(right.as.hashtable->count);
+                        case VAL_NUMBER:
+                            return create_number_value(trunc(right.as.number));
+                        case VAL_BOOL:
+                            return create_number_value(right.as.boolean ? 1 : 0);
+                        case VAL_NULL:
+                            return create_number_value(0);
+                        case VAL_FUNCTION:
+                            fprintf(stderr, "Runtime Error [line %d]: Cannot get the length of a function.\n", node->line);
+                            return create_null_value();
+                        default:
+                            fprintf(stderr, "Runtime Error [line %d]: This type does not have a length.\n", node->line);
+                            return create_null_value();
+                    }
+                }
+
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown unary operator.\n", node->line);
                     return create_null_value();
@@ -3785,7 +3811,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             switch (op_type) {
                 case MINUS:          return create_number_value(left.as.number - right.as.number);
-                case MULTIPLICATION: return create_number_value(left.as.number * right.as.number);
+                case ASTERISK: return create_number_value(left.as.number * right.as.number);
                 case EXPONENTIATION: return create_number_value(pow(left.as.number, right.as.number));
                 case MODULO:
                     if (right.as.number == 0) {
