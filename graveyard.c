@@ -11,7 +11,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, ASTERISK, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LESSTHAN, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CONTINUE, BREAK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
+    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, ASTERISK, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LEFTANGLEBRACKET, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CARET, BACKTICK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -459,7 +459,7 @@ TokenType identify_single_char_token(char c) {
         case '(': return LEFTPARENTHESES;
         case ')': return RIGHTPARENTHESES;
         case '>': return GREATERTHAN;
-        case '<': return LESSTHAN;
+        case '<': return LEFTANGLEBRACKET;
         case '!': return NOT;
         case ',': return COMMA;
         case '$': return TRUEVALUE;
@@ -471,8 +471,8 @@ TokenType identify_single_char_token(char c) {
         case '?': return QUESTIONMARK;
         case ':': return COLON;
         case '~': return WHILE;
-        case '^': return CONTINUE;
-        case '`': return BREAK;
+        case '^': return CARET;
+        case '`': return BACKTICK;
         case '@': return AT;
         case '[': return LEFTBRACKET;
         case ']': return RIGHTBRACKET;
@@ -978,7 +978,7 @@ static int get_operator_precedence(TokenType type) {
         case EQUALITY:
         case INEQUALITY:
             return 7;
-        case LESSTHAN:
+        case LEFTANGLEBRACKET:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
@@ -1275,7 +1275,7 @@ static AstNode* parse_primary(Parser* parser) {
     if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF) ||
         match(parser, CASTBOOLEAN) || match(parser, CASTINTEGER) || match(parser, CASTFLOAT) ||
         match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE) ||
-        match(parser, ASTERISK) || match(parser, CONTINUE) || match(parser, BREAK)) {
+        match(parser, ASTERISK) || match(parser, CARET) || match(parser, BACKTICK)) {
         
         Token operator_token = parser->tokens[parser->current - 1];
 
@@ -1675,8 +1675,8 @@ static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* cond
 static AstNode* parse_statement(Parser* parser) {
     if (match(parser, RAISE))    return parse_raise_statement(parser);
     if (match(parser, WHILE))    return parse_while_statement(parser);
-    if (match(parser, BREAK))    return parse_break_statement(parser);
-    if (match(parser, CONTINUE)) return parse_continue_statement(parser);
+    if (match(parser, BACKTICK))    return parse_break_statement(parser);
+    if (match(parser, CARET)) return parse_continue_statement(parser);
     if (match(parser, RETURN))   return parse_return_statement(parser);
     if (match(parser, PRINT))    return parse_print_statement(parser);
 
@@ -3742,7 +3742,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     }
                 }
 
-                case CONTINUE: {
+                case CARET: {
                     if (right.type != VAL_HASHTABLE) {
                         fprintf(stderr, "Runtime Error [line %d]: The keys-of operator (^) can only be used on a hashtable.\n", node->line);
                         return create_null_value();
@@ -3757,7 +3757,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     return keys_array;
                 }
 
-                case BREAK: {
+                case BACKTICK: {
                     if (right.type != VAL_HASHTABLE) {
                         fprintf(stderr, "Runtime Error [line %d]: The values-of operator (`) can only be used on a hashtable.\n", node->line);
                         return create_null_value();
@@ -3854,7 +3854,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 default:
                     return create_bool_value(
                         op_type == GREATERTHAN       ? left.as.number > right.as.number :
-                        op_type == LESSTHAN          ? left.as.number < right.as.number :
+                        op_type == LEFTANGLEBRACKET          ? left.as.number < right.as.number :
                         op_type == GREATERTHANEQUAL ? left.as.number >= right.as.number :
                                                       left.as.number <= right.as.number
                     );
