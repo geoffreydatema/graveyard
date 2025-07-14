@@ -1275,7 +1275,7 @@ static AstNode* parse_primary(Parser* parser) {
     if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF) ||
         match(parser, CASTBOOLEAN) || match(parser, CASTINTEGER) || match(parser, CASTFLOAT) ||
         match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE) ||
-        match(parser, ASTERISK)) {
+        match(parser, ASTERISK) || match(parser, CONTINUE) || match(parser, BREAK)) {
         
         Token operator_token = parser->tokens[parser->current - 1];
 
@@ -3742,6 +3742,36 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     }
                 }
 
+                case CONTINUE: {
+                    if (right.type != VAL_HASHTABLE) {
+                        fprintf(stderr, "Runtime Error [line %d]: The keys-of operator (^) can only be used on a hashtable.\n", node->line);
+                        return create_null_value();
+                    }
+                    GraveyardValue keys_array = create_array_value();
+                    GraveyardHashtable* ht = right.as.hashtable;
+                    for (int i = 0; i < ht->capacity; i++) {
+                        if (ht->entries[i].is_in_use) {
+                            array_append(keys_array.as.array, ht->entries[i].key);
+                        }
+                    }
+                    return keys_array;
+                }
+
+                case BREAK: {
+                    if (right.type != VAL_HASHTABLE) {
+                        fprintf(stderr, "Runtime Error [line %d]: The values-of operator (`) can only be used on a hashtable.\n", node->line);
+                        return create_null_value();
+                    }
+                    GraveyardValue values_array = create_array_value();
+                    GraveyardHashtable* ht = right.as.hashtable;
+                    for (int i = 0; i < ht->capacity; i++) {
+                        if (ht->entries[i].is_in_use) {
+                            array_append(values_array.as.array, ht->entries[i].value);
+                        }
+                    }
+                    return values_array;
+                }
+
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown unary operator.\n", node->line);
                     return create_null_value();
@@ -3752,19 +3782,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_BINARY_OP: {
             TokenType op_type = node->as.binary_op.operator.type;
 
-            // --- Handle operators with special evaluation rules (short-circuiting) ---
-            
-            // Null Coalesce (`??`) short-circuits
             if (op_type == NULLCOALESCE) {
                 GraveyardValue left = execute_node(gy, node->as.binary_op.left);
                 if (left.type != VAL_NULL) {
-                    return left; // Return the left value without evaluating the right.
-                }
-                // If left is null, fall through and evaluate the right side.
-                return execute_node(gy, node->as.binary_op.right);
+                    return left;                }
+
+                    return execute_node(gy, node->as.binary_op.right);
             }
 
-            // --- Standard evaluation for all other binary operators ---
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
 
