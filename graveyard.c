@@ -52,7 +52,9 @@ typedef enum {
     AST_FOR_STATEMENT,
     AST_FOR_EACH_STATEMENT,
     AST_RAISE_STATEMENT,
-    AST_TIME_EXPRESSION
+    AST_TIME_EXPRESSION,
+    AST_NAMESPACE_DECLARATION,
+    AST_NAMESPACE_ACCESS
 } AstNodeType;
 
 typedef struct {
@@ -235,6 +237,16 @@ typedef struct {
     Token keyword;
 } AstNodeTimeExpression;
 
+typedef struct {
+    Token name;
+    AstNode* body;
+} AstNodeNamespaceDeclaration;
+
+typedef struct {
+    Token namespace_name;
+    Token member_name;
+} AstNodeNamespaceAccess;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -268,6 +280,8 @@ struct AstNode {
         AstNodeForEachStatement     for_each_statement;
         AstNodeRaiseStatement       raise_statement;
         AstNodeTimeExpression       time_expression;
+        AstNodeNamespaceDeclaration  namespace_declaration;
+        AstNodeNamespaceAccess       namespace_access;
     } as;
 };
 
@@ -276,6 +290,7 @@ typedef struct GraveyardValue GraveyardValue;
 typedef struct GraveyardArray GraveyardArray;
 typedef struct GraveyardHashtable GraveyardHashtable;
 typedef struct GraveyardFunction GraveyardFunction;
+typedef struct Environment Environment;
 
 typedef enum {
     VAL_BOOL,
@@ -284,7 +299,8 @@ typedef enum {
     VAL_STRING,
     VAL_ARRAY,
     VAL_HASHTABLE,
-    VAL_FUNCTION
+    VAL_FUNCTION,
+    VAL_ENVIRONMENT
 } ValueType;
 
 struct GraveyardValue {
@@ -296,6 +312,7 @@ struct GraveyardValue {
         GraveyardArray*     array;
         GraveyardHashtable* hashtable;
         GraveyardFunction*  function;
+        Environment* environment;
     } as;
 };
 
@@ -362,6 +379,7 @@ typedef struct {
     Token *tokens;
     size_t token_count;
     AstNode *ast_root;
+    Monolith namespaces;
     Environment* environment;
     GraveyardValue last_executed_value;
     bool is_returning;
@@ -897,6 +915,10 @@ void free_ast(AstNode* node) {
         case AST_RAISE_STATEMENT:
             free_ast(node->as.raise_statement.error_expr);
             break;
+        case AST_NAMESPACE_DECLARATION:
+            free_ast(node->as.namespace_declaration.body);
+            break;
+        case AST_NAMESPACE_ACCESS:
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
@@ -1246,7 +1268,34 @@ static AstNode* parse_function_declaration(Parser* parser, Token name) {
     return node;
 }
 
+static AstNode* parse_namespace_declaration(Parser* parser) {
+    AstNode* node = create_node(parser, AST_NAMESPACE_DECLARATION);
+    node->line = parser->tokens[parser->current - 1].line;
+
+    Token name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
+    node->as.namespace_declaration.name = name;
+
+    expect(parser, LEFTBRACE, "Expected '{' to begin namespace body.");
+    node->as.namespace_declaration.body = parse_block(parser);
+
+    return node;
+}
+
 static AstNode* parse_primary(Parser* parser) {
+
+    if (match(parser, NAMESPACE)) {
+        AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
+        node->line = parser->tokens[parser->current - 1].line;
+
+        Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
+        expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
+        Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
+
+        node->as.namespace_access.namespace_name = namespace_name;
+        node->as.namespace_access.member_name = member_name;
+        return node;
+    }
+    
     if (match(parser, TIME)) {
         AstNode* node = create_node(parser, AST_TIME_EXPRESSION);
         node->line = parser->tokens[parser->current - 1].line;
@@ -1680,6 +1729,10 @@ static AstNode* parse_statement(Parser* parser) {
     if (match(parser, RETURN))   return parse_return_statement(parser);
     if (match(parser, PRINT))    return parse_print_statement(parser);
 
+    if (match(parser, NAMESPACE)) {
+        return parse_namespace_declaration(parser);
+    }
+
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
         AstNode* condition = parse_expression(parser, 1);
@@ -1801,7 +1854,8 @@ bool parse(Graveyard *gy) {
             statement->type != AST_IF_STATEMENT &&
             statement->type != AST_WHILE_STATEMENT &&
             statement->type != AST_FOR_STATEMENT &&
-            statement->type != AST_FOR_EACH_STATEMENT) {
+            statement->type != AST_FOR_EACH_STATEMENT &&
+            statement->type != AST_NAMESPACE_DECLARATION) {
             expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
             if (parser.had_error) goto cleanup;
         }
@@ -2177,6 +2231,23 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_NAMESPACE_DECLARATION: {
+            fprintf(file, "(NAMESPACE_DECLARATION name=\"%s\" line=%d\n",
+                node->as.namespace_declaration.name.lexeme,
+                node->line);
+            write_ast_node(file, node->as.namespace_declaration.body, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+        case AST_NAMESPACE_ACCESS: {
+            fprintf(file, "(NAMESPACE_ACCESS namespace=\"%s\" member=\"%s\" line=%d)\n",
+                node->as.namespace_access.namespace_name.lexeme,
+                node->as.namespace_access.member_name.lexeme,
+                node->line);
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2296,6 +2367,8 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "SCAN_STATEMENT") == 0) return AST_SCAN_STATEMENT;
     if (strcmp(type_str, "RAISE_STATEMENT") == 0) return AST_RAISE_STATEMENT;
     if (strcmp(type_str, "TIME_EXPRESSION") == 0) return AST_TIME_EXPRESSION;
+    if (strcmp(type_str, "NAMESPACE_DECLARATION") == 0) return AST_NAMESPACE_DECLARATION;
+    if (strcmp(type_str, "NAMESPACE_ACCESS") == 0) return AST_NAMESPACE_ACCESS;
     return AST_UNKNOWN;
 }
 
@@ -2765,6 +2838,17 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_NAMESPACE_DECLARATION: {
+            get_attribute_string(line, "name=", node->as.namespace_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.namespace_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+        case AST_NAMESPACE_ACCESS: {
+            get_attribute_string(line, "namespace=", node->as.namespace_access.namespace_name.lexeme, MAX_LEXEME_LEN);
+            get_attribute_string(line, "member=", node->as.namespace_access.member_name.lexeme, MAX_LEXEME_LEN);
+            break;
+        }
+
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
@@ -2800,6 +2884,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_FOR_EACH_STATEMENT:
         case AST_SCAN_STATEMENT:
         case AST_RAISE_STATEMENT:
+        case AST_NAMESPACE_DECLARATION:
             is_block_node = true;
             break;
         default: break;
@@ -2828,6 +2913,14 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 }
 
 //EXECUTE----------------------------------------------------------------------
+
+static Environment* get_global_environment(Graveyard* gy) {
+    Environment* env = gy->environment;
+    while (env->enclosing != NULL) {
+        env = env->enclosing;
+    }
+    return env;
+}
 
 static bool are_values_equal(GraveyardValue a, GraveyardValue b) {
     if (a.type != b.type) {
@@ -4132,6 +4225,48 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             double epoch_time_precise = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
             return create_number_value(epoch_time_precise);
         }
+
+        case AST_NAMESPACE_DECLARATION: {
+            const char* name = node->as.namespace_declaration.name.lexeme;
+            GraveyardValue ns_val;
+            Environment* ns_env;
+
+            if (monolith_get(&gy->namespaces, name, &ns_val)) {
+                ns_env = ns_val.as.environment;
+            } else {
+                Environment* global_env = get_global_environment(gy);
+                ns_env = environment_new(global_env);
+                
+                GraveyardValue new_ns_val;
+                new_ns_val.type = VAL_ENVIRONMENT;
+                new_ns_val.as.environment = ns_env;
+                monolith_set(&gy->namespaces, name, new_ns_val);
+            }
+
+            execute_block(gy, node->as.namespace_declaration.body, ns_env);
+            return create_null_value();
+        }
+
+        case AST_NAMESPACE_ACCESS: {
+            const char* ns_name = node->as.namespace_access.namespace_name.lexeme;
+            const char* member_name = node->as.namespace_access.member_name.lexeme;
+            GraveyardValue ns_val;
+
+            if (!monolith_get(&gy->namespaces, ns_name, &ns_val)) {
+                fprintf(stderr, "Runtime Error [line %d]: Namespace '%s' is not defined.\n", node->line, ns_name);
+                return create_null_value();
+            }
+
+            Environment* ns_env = ns_val.as.environment;
+            GraveyardValue member_val;
+
+            if (!environment_get(ns_env, member_name, &member_val)) {
+                fprintf(stderr, "Runtime Error [line %d]: Member '%s' not found in namespace '%s'.\n", node->line, member_name, ns_name);
+                return create_null_value();
+            }
+            
+            return member_val;
+        }
     }
 
     return create_null_value();
@@ -4163,7 +4298,7 @@ void graveyard_free(Graveyard *gy) {
         free(env);
         env = next;
     }
-
+    monolith_free(&gy->namespaces);
     free(gy);
 }
 
@@ -4183,6 +4318,7 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->environment = malloc(sizeof(Environment));
     gy->environment->enclosing = NULL;
     monolith_init(&gy->environment->values);
+    monolith_init(&gy->namespaces);
     gy->is_returning = false;
     gy->return_value = create_null_value();
     gy->encountered_break = false;
