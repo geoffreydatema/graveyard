@@ -3190,20 +3190,6 @@ bool environment_get(Environment* env, const char* name, GraveyardValue* out_val
     return false;
 }
 
-bool environment_assign(Environment* env, const char* name, GraveyardValue value) {
-    MonolithEntry* entry = find_entry(env->values.entries, env->values.capacity, name);
-    if (entry->key != NULL) {
-        entry->value = value;
-        return true;
-    }
-
-    if (env->enclosing != NULL) {
-        return environment_assign(env->enclosing, name, value);
-    }
-    
-    return false;
-}
-
 static GraveyardValue create_bool_value(bool value) {
     GraveyardValue val;
     val.type = VAL_BOOL;
@@ -3438,9 +3424,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue input_val = create_string_value(input_buffer);
                 const char* var_name = node->as.scan_statement.variable.lexeme;
 
-                if (!environment_assign(gy->environment, var_name, input_val)) {
-                    environment_define(gy->environment, var_name, input_val);
-                }
+                environment_define(gy->environment, var_name, input_val);
             }
             return create_null_value();
         }
@@ -3555,9 +3539,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (target_node->type == AST_IDENTIFIER) {
                 const char* name = target_node->as.identifier.name.lexeme;
-                if (!environment_assign(gy->environment, name, value_to_assign)) {
-                    environment_define(gy->environment, name, value_to_assign);
-                }
+                environment_define(gy->environment, name, value_to_assign);
                 return value_to_assign;
 
             } else if (target_node->type == AST_SUBSCRIPT) {
