@@ -999,31 +999,33 @@ static int get_operator_precedence(TokenType type) {
     switch (type) {
         case QUESTIONMARK:
             return 2;
-        case NULLCOALESCE:
+        case FILEWRITE:
             return 3;
-        case OR:
+        case NULLCOALESCE:
             return 4;
-        case XOR:
+        case OR:
             return 5;
-        case AND:
+        case XOR:
             return 6;
+        case AND:
+            return 7;
         case EQUALITY:
         case INEQUALITY:
-            return 7;
+            return 8;
         case LEFTANGLEBRACKET:
         case GREATERTHAN:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
-            return 8;
+            return 9;
         case PLUS:
         case MINUS:
-            return 9;
+            return 10;
         case ASTERISK:
         case DIVISION:
         case MODULO:
-            return 10;
-        case EXPONENTIATION:
             return 11;
+        case EXPONENTIATION:
+            return 12;
         default:
             return 0;
     }
@@ -1292,7 +1294,7 @@ static AstNode* parse_namespace_declaration(Parser* parser) {
 }
 
 static AstNode* parse_fileread_statement(Parser* parser) {
-    Token variable = parser->tokens[parser->current - 2]; // The identifier we already saw
+    Token variable = parser->tokens[parser->current - 2];
     AstNode* node = create_node(parser, AST_FILEREAD_STATEMENT);
     node->line = variable.line;
     node->as.fileread_statement.variable = variable;
@@ -1833,7 +1835,7 @@ static AstNode* parse_statement(Parser* parser) {
         return stmt_node;
     }
     
-    if (expr->type == AST_CALL_EXPRESSION) {
+    if (expr->type == AST_CALL_EXPRESSION || (expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == FILEWRITE)) {
         AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
         stmt_node->line = expr->line;
         stmt_node->as.expression_statement.expression = expr;
@@ -3901,6 +3903,31 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_BINARY_OP: {
             TokenType op_type = node->as.binary_op.operator.type;
 
+            if (op_type == FILEWRITE) {
+                GraveyardValue content = execute_node(gy, node->as.binary_op.left);
+                GraveyardValue path_val = execute_node(gy, node->as.binary_op.right);
+
+                if (content.type != VAL_STRING) {
+                    fprintf(stderr, "Runtime Error [line %d]: Content for file write operation must be a string.\n", node->line);
+                    return create_null_value();
+                }
+                if (path_val.type != VAL_STRING) {
+                    fprintf(stderr, "Runtime Error [line %d]: File path for write operation must be a string.\n", node->line);
+                    return create_null_value();
+                }
+
+                FILE* file = fopen(path_val.as.string->chars, "w");
+                if (!file) {
+                    fprintf(stderr, "Runtime Error [line %d]: Cannot open or create file '%s' for writing.\n", node->line, path_val.as.string->chars);
+                    return create_null_value();
+                }
+
+                fprintf(file, "%s", content.as.string->chars);
+                fclose(file);
+
+                return create_null_value();
+            }
+
             if (op_type == NULLCOALESCE) {
                 GraveyardValue left = execute_node(gy, node->as.binary_op.left);
                 if (left.type != VAL_NULL) {
@@ -4301,7 +4328,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
             
-            FILE* file = fopen(path_val.as.string->chars, "rb"); // Use "rb" for robust binary reading
+            FILE* file = fopen(path_val.as.string->chars, "rb");
             if (!file) {
                 fprintf(stderr, "Runtime Error [line %d]: Cannot open file '%s'.\n", node->line, path_val.as.string->chars);
                 return create_null_value();
