@@ -11,7 +11,7 @@
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
-    IDENTIFIER, TYPE, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, ASTERISK, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LEFTANGLEBRACKET, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CARET, BACKTICK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, UNKNOWN
+    IDENTIFIER, NUMBER, SEMICOLON, ASSIGNMENT, PLUS, MINUS, ASTERISK, DIVISION, EXPONENTIATION, LEFTPARENTHESES, RIGHTPARENTHESES, EQUALITY, INEQUALITY, GREATERTHAN, LEFTANGLEBRACKET, GREATERTHANEQUAL, LESSTHANEQUAL, NOT, AND, OR, XOR, COMMA, TRUEVALUE, FALSEVALUE, NULLVALUE, STRING, LEFTBRACE, RIGHTBRACE, PARAMETER, RETURN, QUESTIONMARK, COLON, WHILE, CARET, BACKTICK, AT, FORMATTEDSTRING, LEFTBRACKET, RIGHTBRACKET, PLUSASSIGNMENT, SUBTRACTIONASSIGNMENT, MULTIPLICATIONASSIGNMENT, DIVISIONASSIGNMENT, EXPONENTIATIONASSIGNMENT, INCREMENT, DECREMENT, REFERENCE, PERIOD, NAMESPACE, PRINT, SCAN, RAISE, CASTBOOLEAN, CASTINTEGER, CASTFLOAT, CASTSTRING, CASTARRAY, CASTHASHTABLE, TYPEOF, MODULO, FILEREAD, FILEWRITE, TIME, EXECUTE, CATCONSTANT, NULLCOALESCE, PLACEHOLDER, TOKENEOF, FORMATTEDSTART, FORMATTEDEND, FORMATTEDPART, MODULOASSIGNMENT, TYPE, UNKNOWN
 } TokenType;
 
 typedef struct {
@@ -55,7 +55,10 @@ typedef enum {
     AST_TIME_EXPRESSION,
     AST_NAMESPACE_DECLARATION,
     AST_NAMESPACE_ACCESS,
-    AST_FILEREAD_STATEMENT
+    AST_FILEREAD_STATEMENT,
+    AST_TYPE_DECLARATION,
+    AST_MEMBER_ACCESS,
+    AST_THIS_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -253,6 +256,20 @@ typedef struct {
     AstNode* path_expr;
 } AstNodeFilereadStatement;
 
+typedef struct {
+    Token name;
+    AstNode* body;
+} AstNodeTypeDeclaration;
+
+typedef struct {
+    AstNode* object;
+    Token member;
+} AstNodeMemberAccess;
+
+typedef struct {
+    Token keyword;
+} AstNodeThisExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -286,9 +303,12 @@ struct AstNode {
         AstNodeForEachStatement     for_each_statement;
         AstNodeRaiseStatement       raise_statement;
         AstNodeTimeExpression       time_expression;
-        AstNodeNamespaceDeclaration  namespace_declaration;
-        AstNodeNamespaceAccess       namespace_access;
+        AstNodeNamespaceDeclaration namespace_declaration;
+        AstNodeNamespaceAccess      namespace_access;
         AstNodeFilereadStatement    fileread_statement;
+        AstNodeTypeDeclaration      type_declaration;
+        AstNodeMemberAccess         member_access;
+        AstNodeThisExpression       this_expression;
     } as;
 };
 
@@ -298,6 +318,9 @@ typedef struct GraveyardArray GraveyardArray;
 typedef struct GraveyardHashtable GraveyardHashtable;
 typedef struct GraveyardFunction GraveyardFunction;
 typedef struct Environment Environment;
+typedef struct GraveyardType GraveyardType;
+typedef struct GraveyardInstance GraveyardInstance;
+typedef struct GraveyardBoundMethod GraveyardBoundMethod;
 
 typedef enum {
     VAL_BOOL,
@@ -307,19 +330,25 @@ typedef enum {
     VAL_ARRAY,
     VAL_HASHTABLE,
     VAL_FUNCTION,
-    VAL_ENVIRONMENT
+    VAL_ENVIRONMENT,
+    VAL_TYPE,
+    VAL_INSTANCE,
+    VAL_BOUND_METHOD
 } ValueType;
 
 struct GraveyardValue {
     ValueType type;
     union {
-        bool                boolean;
-        double              number;
-        GraveyardString*    string;
-        GraveyardArray*     array;
-        GraveyardHashtable* hashtable;
-        GraveyardFunction*  function;
-        Environment* environment;
+        bool                  boolean;
+        double                number;
+        GraveyardString*      string;
+        GraveyardArray*       array;
+        GraveyardHashtable*   hashtable;
+        GraveyardFunction*    function;
+        Environment*          environment;
+        GraveyardType*        type;
+        GraveyardInstance*    instance;
+        GraveyardBoundMethod* bound_method;
     } as;
 };
 
@@ -372,6 +401,22 @@ struct GraveyardFunction {
     GraveyardString* name;
     AstNode* body;
     Token* params;
+};
+
+struct GraveyardType {
+    GraveyardString* name;
+    Monolith fields;
+    Monolith methods;
+};
+
+struct GraveyardInstance {
+    GraveyardType* type;
+    Monolith fields;
+};
+
+struct GraveyardBoundMethod {
+    GraveyardValue receiver;
+    GraveyardValue function;
 };
 
 typedef struct {
@@ -928,6 +973,13 @@ void free_ast(AstNode* node) {
         case AST_FILEREAD_STATEMENT:
             free_ast(node->as.fileread_statement.path_expr);
             break;
+        case AST_TYPE_DECLARATION:
+            free_ast(node->as.type_declaration.body);
+            break;
+        case AST_MEMBER_ACCESS:
+            free_ast(node->as.member_access.object);
+            break;
+        case AST_THIS_EXPRESSION:
         case AST_NAMESPACE_ACCESS:
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
@@ -997,11 +1049,13 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
 
 static int get_operator_precedence(TokenType type) {
     switch (type) {
+        case ASSIGNMENT:
+            return 1;
         case QUESTIONMARK:
             return 2;
-        case FILEWRITE:
-            return 3;
         case NULLCOALESCE:
+            return 3;
+        case FILEWRITE:
             return 4;
         case OR:
             return 5;
@@ -1304,55 +1358,50 @@ static AstNode* parse_fileread_statement(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
-
-    if (match(parser, NAMESPACE)) {
-        AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
-        node->line = parser->tokens[parser->current - 1].line;
-
-        Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
-        expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
-        Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
-
-        node->as.namespace_access.namespace_name = namespace_name;
-        node->as.namespace_access.member_name = member_name;
-        return node;
-    }
-    
-    if (match(parser, TIME)) {
-        AstNode* node = create_node(parser, AST_TIME_EXPRESSION);
-        node->line = parser->tokens[parser->current - 1].line;
-        node->as.time_expression.keyword = parser->tokens[parser->current - 1];
+    if (match(parser, TYPE)) {
+        Token type_token = parser->tokens[parser->current - 1];
+        AstNode* node = create_node(parser, AST_LITERAL);
+        if (!node) return NULL;
+        node->line = type_token.line;
+        node->as.literal.value = type_token;
         return node;
     }
 
-    if (match(parser, LEFTBRACE)) {
-        return parse_hashtable_literal(parser);
+    if (match(parser, PERIOD)) {
+        Token dot_token = parser->tokens[parser->current - 1];
+        
+        AstNode* this_node = create_node(parser, AST_THIS_EXPRESSION);
+        if (!this_node) return NULL;
+        this_node->line = dot_token.line;
+        this_node->as.this_expression.keyword = dot_token;
+
+        Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '.'.");
+        
+        AstNode* access_node = create_node(parser, AST_MEMBER_ACCESS);
+        if (!access_node) { free_ast(this_node); return NULL; }
+
+        access_node->line = member_name.line;
+        access_node->as.member_access.object = this_node;
+        access_node->as.member_access.member = member_name;
+        
+        return access_node;
     }
 
-    if (match(parser, LEFTBRACKET)) {
-        return parse_array_literal(parser);
-    }
-
-    if (match(parser, FORMATTEDSTART)) {
-        return parse_formatted_string(parser);
-    }
-
+    if (match(parser, LEFTBRACE)) return parse_hashtable_literal(parser);
+    if (match(parser, LEFTBRACKET)) return parse_array_literal(parser);
+    if (match(parser, FORMATTEDSTART)) return parse_formatted_string(parser);
     if (match(parser, LEFTPARENTHESES)) {
         AstNode* expr = parse_expression(parser, 1);
         expect(parser, RIGHTPARENTHESES, "Expected ')' after expression.");
         return expr;
     }
-
     if (match(parser, MINUS) || match(parser, NOT) || match(parser, TYPEOF) ||
         match(parser, CASTBOOLEAN) || match(parser, CASTINTEGER) || match(parser, CASTFLOAT) ||
         match(parser, CASTSTRING) || match(parser, CASTARRAY) || match(parser, CASTHASHTABLE) ||
         match(parser, ASTERISK) || match(parser, CARET) || match(parser, BACKTICK)) {
-        
         Token operator_token = parser->tokens[parser->current - 1];
-
         AstNode* right = parse_expression(parser, 12);
         if (!right) return NULL;
-
         AstNode* node = create_node(parser, AST_UNARY_OP);
         if (!node) { free_ast(right); return NULL; }
         node->line = operator_token.line;
@@ -1360,10 +1409,14 @@ static AstNode* parse_primary(Parser* parser) {
         node->as.unary_op.right = right;
         return node;
     }
-
+    if (match(parser, TIME)) {
+        AstNode* node = create_node(parser, AST_TIME_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.time_expression.keyword = parser->tokens[parser->current - 1];
+        return node;
+    }
     if (match(parser, STRING) || match(parser, NUMBER) || 
-        match(parser, TRUEVALUE) || match(parser, FALSEVALUE) || match(parser, NULLVALUE)) 
-    {
+        match(parser, TRUEVALUE) || match(parser, FALSEVALUE) || match(parser, NULLVALUE)) {
         Token literal_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_LITERAL);
         if (!node) return NULL;
@@ -1371,7 +1424,6 @@ static AstNode* parse_primary(Parser* parser) {
         node->as.literal.value = literal_token;
         return node;
     }
-    
     if (match(parser, IDENTIFIER)) {
         Token identifier_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_IDENTIFIER);
@@ -1393,29 +1445,39 @@ static AstNode* parse_postfix(Parser* parser) {
         if (match(parser, LEFTBRACKET)) {
             AstNode* index = parse_expression(parser, 1);
             expect(parser, RIGHTBRACKET, "Expected ']' after subscript index.");
-
             AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
             if (!subscript_node) { free_ast(expr); free_ast(index); return NULL; }
             subscript_node->line = expr->line;
             subscript_node->as.subscript.array = expr;
             subscript_node->as.subscript.index = index;
-
             expr = subscript_node;
+
         } else if (match(parser, REFERENCE)) {
             Token op = parser->tokens[parser->current - 1];
             AstNode* key = parse_primary(parser);
-
             AstNode* lookup_node = create_node(parser, AST_BINARY_OP);
             if (!lookup_node) { free_ast(expr); free_ast(key); return NULL; }
-            
             lookup_node->line = op.line;
             lookup_node->as.binary_op.operator = op;
             lookup_node->as.binary_op.left = expr;
             lookup_node->as.binary_op.right = key;
-
             expr = lookup_node;
+
         } else if (match(parser, LEFTPARENTHESES)) {
             expr = parse_call_expression(parser, expr);
+
+        } else if (match(parser, PERIOD)) {
+            Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '.'.");
+            
+            AstNode* access_node = create_node(parser, AST_MEMBER_ACCESS);
+            if (!access_node) { free_ast(expr); return NULL; }
+
+            access_node->line = member_name.line;
+            access_node->as.member_access.object = expr;
+            access_node->as.member_access.member = member_name;
+            
+            expr = access_node;
+
         } else {
             break;
         }
@@ -1504,11 +1566,30 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
             break;
         }
 
+        if (op_type == ASSIGNMENT) {
+            consume(parser);
+            
+            if (left->type != AST_IDENTIFIER && left->type != AST_SUBSCRIPT && left->type != AST_MEMBER_ACCESS &&
+                !(left->type == AST_BINARY_OP && left->as.binary_op.operator.type == REFERENCE)) {
+                error_at_token(parser, &parser->tokens[parser->current - 2], "Invalid assignment target.");
+                free_ast(left);
+                return NULL;
+            }
+
+            AstNode* value = parse_expression(parser, current_precedence);
+            
+            AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
+            assignment_node->line = left->line;
+            assignment_node->as.assignment.left = left;
+            assignment_node->as.assignment.value = value;
+            left = assignment_node;
+            continue;
+        }
+        
         if (op_type == QUESTIONMARK) {
             consume(parser);
             AstNode* then_expr = parse_expression(parser, 1);
             expect(parser, COLON, "Expected ':' for ternary operator.");
-            
             AstNode* else_expr = parse_expression(parser, current_precedence - 1);
 
             AstNode* ternary_node = create_node(parser, AST_TERNARY_EXPRESSION);
@@ -1525,7 +1606,7 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
         if (!right) { free_ast(left); return NULL; }
 
         AstNode* node;
-        if (operator_token.type == AND || operator_token.type == OR) {
+        if (op_type == AND || op_type == OR) {
             node = create_node(parser, AST_LOGICAL_OP);
             node->as.logical_op.operator = operator_token;
             node->as.logical_op.left = left;
@@ -1743,6 +1824,21 @@ static AstNode* parse_if_statement_after_condition(Parser* parser, AstNode* cond
     return node;
 }
 
+static AstNode* parse_type_declaration(Parser* parser) {
+    Token type_name_token = *consume(parser);
+
+    AstNode* node = create_node(parser, AST_TYPE_DECLARATION);
+    if (!node) return NULL;
+    
+    node->line = type_name_token.line;
+    node->as.type_declaration.name = type_name_token;
+
+    expect(parser, LEFTBRACE, "Expected '{' to begin type body.");
+    node->as.type_declaration.body = parse_block(parser);
+
+    return node;
+}
+
 static AstNode* parse_statement(Parser* parser) {
     if (match(parser, RAISE))    return parse_raise_statement(parser);
     if (match(parser, WHILE))    return parse_while_statement(parser);
@@ -1750,11 +1846,10 @@ static AstNode* parse_statement(Parser* parser) {
     if (match(parser, CARET)) return parse_continue_statement(parser);
     if (match(parser, RETURN))   return parse_return_statement(parser);
     if (match(parser, PRINT))    return parse_print_statement(parser);
-
-    if (match(parser, NAMESPACE)) {
-        return parse_namespace_declaration(parser);
+    if (match(parser, NAMESPACE))return parse_namespace_declaration(parser);
+    if (peek(parser)->type == TYPE && parser->tokens[parser->current + 1].type == LEFTBRACE) {
+        return parse_type_declaration(parser);
     }
-
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
         AstNode* condition = parse_expression(parser, 1);
@@ -1771,9 +1866,9 @@ static AstNode* parse_statement(Parser* parser) {
 
     if (peek(parser)->type == IDENTIFIER) {
         TokenType next_token = parser->tokens[parser->current + 1].type;
+        
         if (next_token == FILEREAD) {
-            consume(parser);
-            consume(parser);
+            consume(parser); consume(parser);
             return parse_fileread_statement(parser);
         }
         if (next_token == AT) {
@@ -1809,33 +1904,8 @@ static AstNode* parse_statement(Parser* parser) {
         return NULL;
     }
 
-    if (match(parser, ASSIGNMENT)) {
-        if (expr->type != AST_IDENTIFIER &&
-            expr->type != AST_SUBSCRIPT &&
-            !(expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == REFERENCE)) {
-            error_at_token(parser, &parser->tokens[parser->current - 1], "Invalid assignment target.");
-            free_ast(expr);
-            return NULL;
-        }
-
-        AstNode* value = parse_expression(parser, 1);
-        if (!value) {
-            free_ast(expr);
-            return NULL;
-        }
-        
-        AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
-        assignment_node->line = expr->line;
-        assignment_node->as.assignment.left = expr;
-        assignment_node->as.assignment.value = value;
-        
-        AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
-        stmt_node->line = assignment_node->line;
-        stmt_node->as.expression_statement.expression = assignment_node;
-        return stmt_node;
-    }
-    
-    if (expr->type == AST_CALL_EXPRESSION || (expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == FILEWRITE)) {
+    if (expr->type == AST_ASSIGNMENT || expr->type == AST_CALL_EXPRESSION ||
+       (expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == FILEWRITE)) {
         AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
         stmt_node->line = expr->line;
         stmt_node->as.expression_statement.expression = expr;
@@ -1882,7 +1952,8 @@ bool parse(Graveyard *gy) {
             statement->type != AST_WHILE_STATEMENT &&
             statement->type != AST_FOR_STATEMENT &&
             statement->type != AST_FOR_EACH_STATEMENT &&
-            statement->type != AST_NAMESPACE_DECLARATION) {
+            statement->type != AST_NAMESPACE_DECLARATION &&
+            statement->type != AST_TYPE_DECLARATION) {
             expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
             if (parser.had_error) goto cleanup;
         }
@@ -2045,6 +2116,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
+                case TYPE:
+                    fprintf(file, "(LITERAL_TYPE value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    break;
                 case STRING:
                     fprintf(file, "(LITERAL_STR value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
                     break;
@@ -2285,6 +2359,25 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_TYPE_DECLARATION: {
+            fprintf(file, "(TYPE_DECLARATION name=\"%s\" line=%d\n", node->as.type_declaration.name.lexeme, node->line);
+            write_ast_node(file, node->as.type_declaration.body, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+        case AST_MEMBER_ACCESS: {
+            fprintf(file, "(MEMBER_ACCESS member=\"%s\" line=%d\n", node->as.member_access.member.lexeme, node->line);
+            write_ast_node(file, node->as.member_access.object, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+        case AST_THIS_EXPRESSION: {
+            fprintf(file, "(THIS_EXPRESSION line=%d)\n", node->line);
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2407,6 +2500,10 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "NAMESPACE_DECLARATION") == 0) return AST_NAMESPACE_DECLARATION;
     if (strcmp(type_str, "NAMESPACE_ACCESS") == 0) return AST_NAMESPACE_ACCESS;
     if (strcmp(type_str, "FILEREAD_STATEMENT") == 0) return AST_FILEREAD_STATEMENT;
+    if (strcmp(type_str, "TYPE_DECLARATION") == 0) return AST_TYPE_DECLARATION;
+    if (strcmp(type_str, "MEMBER_ACCESS") == 0) return AST_MEMBER_ACCESS;
+    if (strcmp(type_str, "THIS_EXPRESSION") == 0) return AST_THIS_EXPRESSION;
+    if (strcmp(type_str, "LITERAL_TYPE") == 0) return AST_LITERAL;
     return AST_UNKNOWN;
 }
 
@@ -2655,6 +2752,8 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 else node->as.literal.value.type = FALSEVALUE;
             } else if (strcmp(type_str, "LITERAL_NULL") == 0) {
                 node->as.literal.value.type = NULLVALUE;
+            } else if (strcmp(type_str, "LITERAL_TYPE") == 0) {
+                node->as.literal.value.type = TYPE;
             }
             break;
         }
@@ -2894,6 +2993,18 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_TYPE_DECLARATION: {
+            get_attribute_string(line, "name=", node->as.type_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.type_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+        case AST_MEMBER_ACCESS: {
+            get_attribute_string(line, "member=", node->as.member_access.member.lexeme, MAX_LEXEME_LEN);
+            node->as.member_access.object = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_THIS_EXPRESSION:
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
@@ -2931,6 +3042,8 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_RAISE_STATEMENT:
         case AST_NAMESPACE_DECLARATION:
         case AST_FILEREAD_STATEMENT:
+        case AST_TYPE_DECLARATION:
+        case AST_MEMBER_ACCESS:
             is_block_node = true;
             break;
         default: break;
@@ -3213,6 +3326,27 @@ bool monolith_get(Monolith* monolith, const char* key, GraveyardValue* out_value
     return true;
 }
 
+static GraveyardValue create_type_value(GraveyardString* name) {
+    GraveyardValue val;
+    val.type = VAL_TYPE;
+    GraveyardType* type = malloc(sizeof(GraveyardType));
+    type->name = name;
+    monolith_init(&type->fields);
+    monolith_init(&type->methods);
+    val.as.type = type;
+    return val;
+}
+
+static GraveyardValue create_instance_value(GraveyardValue type_value) {
+    GraveyardValue val;
+    val.type = VAL_INSTANCE;
+    GraveyardInstance* instance = malloc(sizeof(GraveyardInstance));
+    instance->type = type_value.as.type;
+    monolith_init(&instance->fields);
+    val.as.instance = instance;
+    return val;
+}
+
 Environment* environment_new(Environment* enclosing) {
     Environment* env = malloc(sizeof(Environment));
     env->enclosing = enclosing;
@@ -3411,6 +3545,12 @@ void print_value(GraveyardValue value) {
             }
             printf("}");
             break;
+        case VAL_TYPE:
+            printf("<type: %s>", value.as.type->name->chars);
+            break;
+        case VAL_INSTANCE:
+            printf("<instance of %s>", value.as.instance->type->name->chars);
+            break;
     }
 }
 
@@ -3478,6 +3618,34 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_LITERAL: {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
+                case TYPE: {
+                    char* name_str = literal_token.lexeme;
+                    name_str[strlen(name_str) - 1] = '\0';
+                    const char* type_name = name_str + 1;
+
+                    GraveyardValue type_val;
+                    if (!environment_get(gy->environment, type_name, &type_val)) {
+                        fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", node->line, type_name);
+                        return create_null_value();
+                    }
+                    if (type_val.type != VAL_TYPE) {
+                        fprintf(stderr, "Runtime Error [line %d]: <%s> is not a type.\n", node->line, type_name);
+                        return create_null_value();
+                    }
+                    
+                    GraveyardValue instance_val = create_instance_value(type_val);
+                    
+                    GraveyardType* type = type_val.as.type;
+                    GraveyardInstance* instance = instance_val.as.instance;
+                    for (int i = 0; i < type->fields.capacity; i++) {
+                        MonolithEntry* entry = &type->fields.entries[i];
+                        if (entry->key != NULL) {
+                            monolith_set(&instance->fields, entry->key, entry->value);
+                        }
+                    }
+                    
+                    return instance_val;
+                }
                 case STRING:
                     return create_string_value(literal_token.lexeme);
                 case NUMBER:
@@ -3643,6 +3811,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
 
                 hashtable_set(ht_val.as.hashtable, key_val, value_to_assign);
+                return value_to_assign;
+            } else if (target_node->type == AST_MEMBER_ACCESS) {
+                GraveyardValue object = execute_node(gy, target_node->as.member_access.object);
+                if (object.type != VAL_INSTANCE) {
+                    fprintf(stderr, "Runtime Error [line %d]: Can only assign to members of an instance.\n", target_node->line);
+                    return create_null_value();
+                }
+                
+                monolith_set(&object.as.instance->fields, target_node->as.member_access.member.lexeme, value_to_assign);
                 return value_to_assign;
             }
             
@@ -4076,12 +4253,23 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_CALL_EXPRESSION: {
             GraveyardValue callee = execute_node(gy, node->as.call_expression.callee);
 
-            if (callee.type != VAL_FUNCTION) {
-                fprintf(stderr, "Runtime Error [line %d]: Can only call functions.\n", node->line);
+            GraveyardFunction* function;
+            Environment* call_environment;
+
+            if (callee.type == VAL_FUNCTION) {
+                function = callee.as.function;
+                call_environment = environment_new(function->closure);
+            } else if (callee.type == VAL_BOUND_METHOD) {
+                GraveyardBoundMethod* bound = callee.as.bound_method;
+                function = bound->function.as.function;
+                
+                call_environment = environment_new(function->closure);
+                environment_define(call_environment, "this", bound->receiver);
+            } else {
+                fprintf(stderr, "Runtime Error [line %d]: Can only call functions and methods.\n", node->line);
                 return create_null_value();
             }
 
-            GraveyardFunction* function = callee.as.function;
             int arg_count = node->as.call_expression.arg_count;
 
             if (arg_count != function->arity) {
@@ -4090,7 +4278,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
             
-            Environment* new_env = environment_new(function->closure);
+            Environment* new_env = call_environment;
             
             for (int i = 0; i < function->arity; i++) {
                 GraveyardValue arg_value = execute_node(gy, node->as.call_expression.arguments[i]);
@@ -4348,6 +4536,72 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             environment_define(gy->environment, var_name, file_contents);
             
             return file_contents;
+        }
+
+        case AST_TYPE_DECLARATION: {
+            char* name_str = node->as.type_declaration.name.lexeme;
+            name_str[strlen(name_str) - 1] = '\0';
+            GraveyardValue type_val = create_type_value(create_string_value(name_str + 1).as.string);
+            
+            environment_define(gy->environment, name_str + 1, type_val);
+
+            Environment* type_env = environment_new(gy->environment);
+            execute_block(gy, node->as.type_declaration.body, type_env);
+            
+            GraveyardType* type = type_val.as.type;
+            for (int i = 0; i < type_env->values.capacity; i++) {
+                MonolithEntry* entry = &type_env->values.entries[i];
+                if (entry->key == NULL) continue;
+
+                if (entry->value.type == VAL_FUNCTION) {
+                    monolith_set(&type->methods, entry->key, entry->value);
+                } else {
+                    monolith_set(&type->fields, entry->key, entry->value);
+                }
+            }
+            monolith_free(&type_env->values);
+            free(type_env);
+
+            return type_val;
+        }
+
+        case AST_THIS_EXPRESSION: {
+            GraveyardValue this_val;
+            if (!environment_get(gy->environment, "this", &this_val)) {
+                fprintf(stderr, "Runtime Error [line %d]: Cannot use '.' outside of a type's method.\n", node->line);
+                return create_null_value();
+            }
+            return this_val;
+        }
+
+        case AST_MEMBER_ACCESS: {
+            GraveyardValue object = execute_node(gy, node->as.member_access.object);
+            const char* member_name = node->as.member_access.member.lexeme;
+
+            if (object.type != VAL_INSTANCE) {
+                fprintf(stderr, "Runtime Error [line %d]: Can only access members on an instance of a type.\n", node->line);
+                return create_null_value();
+            }
+
+            GraveyardInstance* instance = object.as.instance;
+            GraveyardValue member_val;
+
+            if (monolith_get(&instance->fields, member_name, &member_val)) {
+                return member_val;
+            }
+
+            if (monolith_get(&instance->type->methods, member_name, &member_val)) {
+                GraveyardValue bound_method_val;
+                bound_method_val.type = VAL_BOUND_METHOD;
+                GraveyardBoundMethod* bound = malloc(sizeof(GraveyardBoundMethod));
+                bound->receiver = object;
+                bound->function = member_val;
+                bound_method_val.as.bound_method = bound;
+                return bound_method_val;
+            }
+
+            fprintf(stderr, "Runtime Error [line %d]: Member '%s' not found on instance.\n", node->line, member_name);
+            return create_null_value();
         }
     }
 
