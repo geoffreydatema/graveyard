@@ -54,7 +54,8 @@ typedef enum {
     AST_RAISE_STATEMENT,
     AST_TIME_EXPRESSION,
     AST_NAMESPACE_DECLARATION,
-    AST_NAMESPACE_ACCESS
+    AST_NAMESPACE_ACCESS,
+    AST_FILEREAD_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -247,6 +248,11 @@ typedef struct {
     Token member_name;
 } AstNodeNamespaceAccess;
 
+typedef struct {
+    Token variable;
+    AstNode* path_expr;
+} AstNodeFilereadStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -282,6 +288,7 @@ struct AstNode {
         AstNodeTimeExpression       time_expression;
         AstNodeNamespaceDeclaration  namespace_declaration;
         AstNodeNamespaceAccess       namespace_access;
+        AstNodeFilereadStatement    fileread_statement;
     } as;
 };
 
@@ -918,6 +925,9 @@ void free_ast(AstNode* node) {
         case AST_NAMESPACE_DECLARATION:
             free_ast(node->as.namespace_declaration.body);
             break;
+        case AST_FILEREAD_STATEMENT:
+            free_ast(node->as.fileread_statement.path_expr);
+            break;
         case AST_NAMESPACE_ACCESS:
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
@@ -1278,6 +1288,16 @@ static AstNode* parse_namespace_declaration(Parser* parser) {
     expect(parser, LEFTBRACE, "Expected '{' to begin namespace body.");
     node->as.namespace_declaration.body = parse_block(parser);
 
+    return node;
+}
+
+static AstNode* parse_fileread_statement(Parser* parser) {
+    Token variable = parser->tokens[parser->current - 2]; // The identifier we already saw
+    AstNode* node = create_node(parser, AST_FILEREAD_STATEMENT);
+    node->line = variable.line;
+    node->as.fileread_statement.variable = variable;
+    node->as.fileread_statement.path_expr = parse_expression(parser, 1);
+    
     return node;
 }
 
@@ -1749,6 +1769,11 @@ static AstNode* parse_statement(Parser* parser) {
 
     if (peek(parser)->type == IDENTIFIER) {
         TokenType next_token = parser->tokens[parser->current + 1].type;
+        if (next_token == FILEREAD) {
+            consume(parser);
+            consume(parser);
+            return parse_fileread_statement(parser);
+        }
         if (next_token == AT) {
             consume(parser); consume(parser);
             return parse_for_statement(parser);
@@ -2248,6 +2273,16 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
         }
 
+        case AST_FILEREAD_STATEMENT: {
+            fprintf(file, "(FILEREAD_STATEMENT variable=\"%s\" line=%d\n",
+                node->as.fileread_statement.variable.lexeme,
+                node->line);
+            write_ast_node(file, node->as.fileread_statement.path_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2369,6 +2404,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "TIME_EXPRESSION") == 0) return AST_TIME_EXPRESSION;
     if (strcmp(type_str, "NAMESPACE_DECLARATION") == 0) return AST_NAMESPACE_DECLARATION;
     if (strcmp(type_str, "NAMESPACE_ACCESS") == 0) return AST_NAMESPACE_ACCESS;
+    if (strcmp(type_str, "FILEREAD_STATEMENT") == 0) return AST_FILEREAD_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -2849,6 +2885,13 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_FILEREAD_STATEMENT: {
+            get_attribute_string(line, "variable=", node->as.fileread_statement.variable.lexeme, MAX_LEXEME_LEN);
+            node->as.fileread_statement.variable.type = IDENTIFIER;
+            node->as.fileread_statement.path_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
         case AST_CONTINUE_STATEMENT:
@@ -2885,6 +2928,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_SCAN_STATEMENT:
         case AST_RAISE_STATEMENT:
         case AST_NAMESPACE_DECLARATION:
+        case AST_FILEREAD_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -4248,6 +4292,35 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
             
             return member_val;
+        }
+
+        case AST_FILEREAD_STATEMENT: {
+            GraveyardValue path_val = execute_node(gy, node->as.fileread_statement.path_expr);
+            if (path_val.type != VAL_STRING) {
+                fprintf(stderr, "Runtime Error [line %d]: File path for read operation must be a string.\n", node->line);
+                return create_null_value();
+            }
+            
+            FILE* file = fopen(path_val.as.string->chars, "rb"); // Use "rb" for robust binary reading
+            if (!file) {
+                fprintf(stderr, "Runtime Error [line %d]: Cannot open file '%s'.\n", node->line, path_val.as.string->chars);
+                return create_null_value();
+            }
+
+            char* buffer = load(file, NULL);
+            fclose(file);
+            if (!buffer) {
+                fprintf(stderr, "Runtime Error [line %d]: Failed to read file '%s'.\n", node->line, path_val.as.string->chars);
+                return create_null_value();
+            }
+
+            GraveyardValue file_contents = create_string_value(buffer);
+            free(buffer);
+            
+            const char* var_name = node->as.fileread_statement.variable.lexeme;
+            environment_define(gy->environment, var_name, file_contents);
+            
+            return file_contents;
         }
     }
 
