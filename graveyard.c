@@ -7,6 +7,9 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #define MAX_LEXEME_LEN 65
 
@@ -58,7 +61,8 @@ typedef enum {
     AST_FILEREAD_STATEMENT,
     AST_TYPE_DECLARATION,
     AST_MEMBER_ACCESS,
-    AST_THIS_EXPRESSION
+    AST_THIS_EXPRESSION,
+    AST_EXECUTE_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -270,6 +274,10 @@ typedef struct {
     Token keyword;
 } AstNodeThisExpression;
 
+typedef struct {
+    AstNode* command_expr;
+} AstNodeExecuteExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -309,6 +317,7 @@ struct AstNode {
         AstNodeTypeDeclaration      type_declaration;
         AstNodeMemberAccess         member_access;
         AstNodeThisExpression       this_expression;
+        AstNodeExecuteExpression    execute_expression;
     } as;
 };
 
@@ -482,6 +491,7 @@ TokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == ':' && c2 == '<' && c3 == '<') return FILEREAD;
     if (c1 == ':' && c2 == '>' && c3 == '>') return FILEWRITE;
     if (c1 == '/' && c2 == '%' && c3 == '=') return MODULOASSIGNMENT;
+    if (c1 == '$' && c2 == '>' && c3 == '>') return EXECUTE;
     return UNKNOWN;
 }
 
@@ -512,7 +522,6 @@ TokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '@' && c2 == '@') return TYPEOF;
     if (c1 == '/' && c2 == '%') return MODULO;
     if (c1 == ':' && c2 == '@') return TIME;
-    if (c1 == ':' && c2 == '=') return EXECUTE;
     if (c1 == ':' && c2 == '3') return CATCONSTANT;
     if (c1 == '?' && c2 == '?') return NULLCOALESCE;
     return UNKNOWN;
@@ -979,6 +988,9 @@ void free_ast(AstNode* node) {
         case AST_MEMBER_ACCESS:
             free_ast(node->as.member_access.object);
             break;
+        case AST_EXECUTE_EXPRESSION:
+            free_ast(node->as.execute_expression.command_expr);
+            break;
         case AST_THIS_EXPRESSION:
         case AST_NAMESPACE_ACCESS:
         case AST_TIME_EXPRESSION:
@@ -1357,7 +1369,18 @@ static AstNode* parse_fileread_statement(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_execute_expression(Parser* parser) {
+    AstNode* node = create_node(parser, AST_EXECUTE_EXPRESSION);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.execute_expression.command_expr = parse_expression(parser, 1);
+    return node;
+}
+
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, EXECUTE)) {
+        return parse_execute_expression(parser);
+    }
+
     if (match(parser, TYPE)) {
         Token type_token = parser->tokens[parser->current - 1];
         AstNode* node = create_node(parser, AST_LITERAL);
@@ -2377,6 +2400,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, "(THIS_EXPRESSION line=%d)\n", node->line);
             break;
         }
+        case AST_EXECUTE_EXPRESSION: {
+            fprintf(file, "(EXECUTE_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.execute_expression.command_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
 
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
@@ -2504,6 +2534,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "MEMBER_ACCESS") == 0) return AST_MEMBER_ACCESS;
     if (strcmp(type_str, "THIS_EXPRESSION") == 0) return AST_THIS_EXPRESSION;
     if (strcmp(type_str, "LITERAL_TYPE") == 0) return AST_LITERAL;
+    if (strcmp(type_str, "EXECUTE_EXPRESSION") == 0) return AST_EXECUTE_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -2998,9 +3029,15 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             node->as.type_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
+
         case AST_MEMBER_ACCESS: {
             get_attribute_string(line, "member=", node->as.member_access.member.lexeme, MAX_LEXEME_LEN);
             node->as.member_access.object = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_EXECUTE_EXPRESSION: {
+            node->as.execute_expression.command_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
@@ -3044,6 +3081,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_FILEREAD_STATEMENT:
         case AST_TYPE_DECLARATION:
         case AST_MEMBER_ACCESS:
+        case AST_EXECUTE_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -4602,6 +4640,61 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             fprintf(stderr, "Runtime Error [line %d]: Member '%s' not found on instance.\n", node->line, member_name);
             return create_null_value();
+        }
+
+        case AST_EXECUTE_EXPRESSION: {
+            GraveyardValue command_val = execute_node(gy, node->as.execute_expression.command_expr);
+            if (command_val.type != VAL_STRING) {
+                fprintf(stderr, "Runtime Error [line %d]: Command for execute operation must be a string.\n", node->line);
+                return create_null_value();
+            }
+
+            char full_command[2048];
+            snprintf(full_command, sizeof(full_command), "%s 2>&1", command_val.as.string->chars);
+
+            #ifdef _WIN32
+                FILE* pipe = _popen(full_command, "r");
+            #else
+                FILE* pipe = popen(full_command, "r");
+            #endif
+
+            if (!pipe) {
+                fprintf(stderr, "Runtime Error [line %d]: Failed to execute command.\n", node->line);
+                return create_null_value();
+            }
+
+            char buffer[128];
+            size_t output_capacity = 256;
+            size_t output_len = 0;
+            char* output_str = malloc(output_capacity);
+            output_str[0] = '\0';
+
+            while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+                size_t buffer_len = strlen(buffer);
+                if (output_len + buffer_len + 1 > output_capacity) {
+                    output_capacity *= 2;
+                    output_str = realloc(output_str, output_capacity);
+                }
+                strcat(output_str, buffer);
+                output_len += buffer_len;
+            }
+
+            int exit_code;
+            #ifdef _WIN32
+                exit_code = _pclose(pipe);
+            #else
+                int status = pclose(pipe);
+                exit_code = WEXITSTATUS(status);
+            #endif
+
+            GraveyardValue result_ht = create_hashtable_value();
+            hashtable_set(result_ht.as.hashtable, create_string_value("stdout"), create_string_value(output_str));
+            hashtable_set(result_ht.as.hashtable, create_string_value("stderr"), create_string_value(""));
+            hashtable_set(result_ht.as.hashtable, create_string_value("exit_code"), create_number_value(exit_code));
+
+            free(output_str);
+
+            return result_ht;
         }
     }
 
