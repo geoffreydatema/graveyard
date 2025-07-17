@@ -62,7 +62,8 @@ typedef enum {
     AST_TYPE_DECLARATION,
     AST_MEMBER_ACCESS,
     AST_THIS_EXPRESSION,
-    AST_EXECUTE_EXPRESSION
+    AST_EXECUTE_EXPRESSION,
+    AST_CAT_CONSTANT_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -278,46 +279,51 @@ typedef struct {
     AstNode* command_expr;
 } AstNodeExecuteExpression;
 
+typedef struct {
+    Token keyword;
+} AstNodeCatConstantExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
 
     union {
-        AstNodeProgram              program;
-        AstNodeBinaryOp             binary_op;
-        AstNodeUnaryOp              unary_op;
-        AstNodeLogicalOp            logical_op;
-        AstNodeAssignment           assignment;
-        AstNodeIdentifier           identifier;
-        AstNodeLiteral              literal;
-        AstNodeFormattedString      formatted_string;
-        AstNodeArrayLiteral         array_literal;
-        AstNodePrintStmt            print_stmt;
-        AstNodeScanStatement        scan_statement;
-        AstNodeSubscript            subscript;
-        AstNodeHashtableLiteral     hashtable_literal;
-        AstNodeFunctionDeclaration  function_declaration;
-        AstNodeCallExpression       call_expression;
-        AstNodeReturnStatement      return_statement;
-        AstNodeBlock                block;
-        AstNodeExpressionStatement  expression_statement;
-        AstNodeIfStatement          if_statement;
-        AstNodeTernaryExpression    ternary_expression;
-        AstNodeAssertStatement      assert_statement;
-        AstNodeWhileStatement       while_statement;
-        AstNodeBreakStatement       break_statement;
-        AstNodeContinueStatement    continue_statement;
-        AstNodeForStatement         for_statement;
-        AstNodeForEachStatement     for_each_statement;
-        AstNodeRaiseStatement       raise_statement;
-        AstNodeTimeExpression       time_expression;
-        AstNodeNamespaceDeclaration namespace_declaration;
-        AstNodeNamespaceAccess      namespace_access;
-        AstNodeFilereadStatement    fileread_statement;
-        AstNodeTypeDeclaration      type_declaration;
-        AstNodeMemberAccess         member_access;
-        AstNodeThisExpression       this_expression;
-        AstNodeExecuteExpression    execute_expression;
+        AstNodeProgram               program;
+        AstNodeBinaryOp              binary_op;
+        AstNodeUnaryOp               unary_op;
+        AstNodeLogicalOp             logical_op;
+        AstNodeAssignment            assignment;
+        AstNodeIdentifier            identifier;
+        AstNodeLiteral               literal;
+        AstNodeFormattedString       formatted_string;
+        AstNodeArrayLiteral          array_literal;
+        AstNodePrintStmt             print_stmt;
+        AstNodeScanStatement         scan_statement;
+        AstNodeSubscript             subscript;
+        AstNodeHashtableLiteral      hashtable_literal;
+        AstNodeFunctionDeclaration   function_declaration;
+        AstNodeCallExpression        call_expression;
+        AstNodeReturnStatement       return_statement;
+        AstNodeBlock                 block;
+        AstNodeExpressionStatement   expression_statement;
+        AstNodeIfStatement           if_statement;
+        AstNodeTernaryExpression     ternary_expression;
+        AstNodeAssertStatement       assert_statement;
+        AstNodeWhileStatement        while_statement;
+        AstNodeBreakStatement        break_statement;
+        AstNodeContinueStatement     continue_statement;
+        AstNodeForStatement          for_statement;
+        AstNodeForEachStatement      for_each_statement;
+        AstNodeRaiseStatement        raise_statement;
+        AstNodeTimeExpression        time_expression;
+        AstNodeNamespaceDeclaration  namespace_declaration;
+        AstNodeNamespaceAccess       namespace_access;
+        AstNodeFilereadStatement     fileread_statement;
+        AstNodeTypeDeclaration       type_declaration;
+        AstNodeMemberAccess          member_access;
+        AstNodeThisExpression        this_expression;
+        AstNodeExecuteExpression     execute_expression;
+        AstNodeCatConstantExpression cat_constant_expression;
     } as;
 };
 
@@ -991,6 +997,7 @@ void free_ast(AstNode* node) {
         case AST_EXECUTE_EXPRESSION:
             free_ast(node->as.execute_expression.command_expr);
             break;
+        case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_NAMESPACE_ACCESS:
         case AST_TIME_EXPRESSION:
@@ -1377,6 +1384,13 @@ static AstNode* parse_execute_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, CATCONSTANT)) {
+        AstNode* node = create_node(parser, AST_CAT_CONSTANT_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.cat_constant_expression.keyword = parser->tokens[parser->current - 1];
+        return node;
+    }
+
     if (match(parser, EXECUTE)) {
         return parse_execute_expression(parser);
     }
@@ -2407,7 +2421,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
-
+        case AST_CAT_CONSTANT_EXPRESSION: {
+            fprintf(file, "(CAT_CONSTANT_EXPRESSION line=%d)\n", node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2535,6 +2552,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "THIS_EXPRESSION") == 0) return AST_THIS_EXPRESSION;
     if (strcmp(type_str, "LITERAL_TYPE") == 0) return AST_LITERAL;
     if (strcmp(type_str, "EXECUTE_EXPRESSION") == 0) return AST_EXECUTE_EXPRESSION;
+    if (strcmp(type_str, "CAT_CONSTANT_EXPRESSION") == 0) return AST_CAT_CONSTANT_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3041,6 +3059,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_TIME_EXPRESSION:
         case AST_BREAK_STATEMENT:
@@ -4695,6 +4714,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             free(output_str);
 
             return result_ht;
+        }
+
+        case AST_CAT_CONSTANT_EXPRESSION: {
+            return create_number_value(65458655);
         }
     }
 
