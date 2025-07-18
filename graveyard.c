@@ -3688,7 +3688,6 @@ static void array_append(GraveyardArray* array, GraveyardValue value) {
     array->values[array->count++] = value;
 }
 
-// Forward-declare monolith_print so print_value can call it recursively for instances.
 void monolith_print(Monolith* monolith, int indent);
 
 void print_value(GraveyardValue value) {
@@ -3714,8 +3713,7 @@ void print_value(GraveyardValue value) {
             break;
         }
         case VAL_STRING:
-            // Print strings with quotes to distinguish them from identifiers
-            printf("\"%s\"", value.as.string->chars);
+            printf("%s", value.as.string->chars);
             break;
         case VAL_ARRAY:
             printf("[");
@@ -4334,6 +4332,25 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_BINARY_OP: {
             GraveyardTokenType op_type = node->as.binary_op.operator.type;
+
+            if (op_type == REFERENCE) {
+                GraveyardValue collection = execute_node(gy, node->as.binary_op.left);
+                GraveyardValue key = execute_node(gy, node->as.binary_op.right);
+
+                if (collection.type != VAL_HASHTABLE) {
+                    fprintf(stderr, "Runtime Error [line %d]: The '#' operator can only be used on a hashtable.\n", node->line);
+                    return create_null_value();
+                }
+                
+                GraveyardHashtable* ht = collection.as.hashtable;
+                HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, key);
+
+                if (entry->is_in_use) {
+                    return entry->value;
+                } else {
+                    return create_null_value();
+                }
+            }
 
             if (op_type == FILEWRITE) {
                 GraveyardValue content = execute_node(gy, node->as.binary_op.left);
