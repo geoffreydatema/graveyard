@@ -96,10 +96,10 @@ typedef enum {
     FORMATTEDPART,
     TYPE,
     UNKNOWN
-} UniqueTokenType;
+} GraveyardTokenType;
 
 typedef struct {
-    UniqueTokenType type;
+    GraveyardTokenType type;
     char lexeme[MAX_LEXEME_LEN];
     int line;
     int column;
@@ -145,7 +145,8 @@ typedef enum {
     AST_THIS_EXPRESSION,
     AST_EXECUTE_EXPRESSION,
     AST_CAT_CONSTANT_EXPRESSION,
-    AST_WAIT_STATEMENT
+    AST_WAIT_STATEMENT,
+    AST_RANDOM_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -369,6 +370,10 @@ typedef struct {
     AstNode* duration_expr;
 } AstNodeWaitStatement;
 
+typedef struct {
+    Token keyword;
+} AstNodeRandomExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -411,6 +416,7 @@ struct AstNode {
         AstNodeExecuteExpression     execute_expression;
         AstNodeCatConstantExpression cat_constant_expression;
         AstNodeWaitStatement         wait_statement;
+        AstNodeRandomExpression      random_expression;
     } as;
 };
 
@@ -577,7 +583,7 @@ char *load(FILE *file, long *out_length) {
 
 //TOKENIZE-----------------------------------------------------------------------------------
 
-UniqueTokenType identify_three_char_token(char c1, char c2, char c3) {
+GraveyardTokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == '*' && c2 == '*' && c3 == '=') return EXPONENTIATIONASSIGNMENT;
     if (c1 == '!' && c2 == '|' && c3 == '|') return XOR;
     if (c1 == '!' && c2 == '>' && c3 == '>') return RAISE;
@@ -588,7 +594,7 @@ UniqueTokenType identify_three_char_token(char c1, char c2, char c3) {
     return UNKNOWN;
 }
 
-UniqueTokenType identify_two_char_token(char c1, char c2) {
+GraveyardTokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '*' && c2 == '*') return EXPONENTIATION;
     if (c1 == '=' && c2 == '=') return EQUALITY;
     if (c1 == '!' && c2 == '=') return INEQUALITY;
@@ -622,7 +628,7 @@ UniqueTokenType identify_two_char_token(char c1, char c2) {
     return UNKNOWN;
 }
 
-UniqueTokenType identify_single_char_token(char c) {
+GraveyardTokenType identify_single_char_token(char c) {
     switch (c) {
         case '=': return ASSIGNMENT;
         case ';': return SEMICOLON;
@@ -891,7 +897,7 @@ bool tokenize(Graveyard *gy) {
                 }
             }
 
-            UniqueTokenType ttype = UNKNOWN;
+            GraveyardTokenType ttype = UNKNOWN;
 
             if (current_ptr + 2 < end_ptr) {
                 ttype = identify_three_char_token(start[0], start[1], start[2]);
@@ -1089,6 +1095,7 @@ void free_ast(AstNode* node) {
         case AST_WAIT_STATEMENT:
             free_ast(node->as.wait_statement.duration_expr);
             break;
+        case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_NAMESPACE_ACCESS:
@@ -1130,7 +1137,7 @@ static void error_at_token(Parser* parser, Token* token, const char* message) {
     fprintf(stderr, "%s\n", message);
 }
 
-static Token* expect(Parser* parser, UniqueTokenType type, const char* message) {
+static Token* expect(Parser* parser, GraveyardTokenType type, const char* message) {
     if (peek(parser)->type == type) {
         return consume(parser);
     }
@@ -1138,7 +1145,7 @@ static Token* expect(Parser* parser, UniqueTokenType type, const char* message) 
     return NULL;
 }
 
-static bool match(Parser* parser, UniqueTokenType type) {
+static bool match(Parser* parser, GraveyardTokenType type) {
     if (is_at_end(parser)) return false;
     if (peek(parser)->type == type) {
         consume(parser);
@@ -1158,7 +1165,7 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
     return node;
 }
 
-static int get_operator_precedence(UniqueTokenType type) {
+static int get_operator_precedence(GraveyardTokenType type) {
     switch (type) {
         case ASSIGNMENT:
             return 1;
@@ -1476,6 +1483,13 @@ static AstNode* parse_execute_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, RANDOM)) {
+        AstNode* node = create_node(parser, AST_RANDOM_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.random_expression.keyword = parser->tokens[parser->current - 1];
+        return node;
+    }
+    
     if (match(parser, CATCONSTANT)) {
         AstNode* node = create_node(parser, AST_CAT_CONSTANT_EXPRESSION);
         node->line = parser->tokens[parser->current - 1].line;
@@ -1688,7 +1702,7 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
     if (!left) return NULL;
 
     while (true) {
-        UniqueTokenType op_type = peek(parser)->type;
+        GraveyardTokenType op_type = peek(parser)->type;
         int current_precedence = get_operator_precedence(op_type);
 
         if (current_precedence == 0 || current_precedence < min_precedence) {
@@ -1808,7 +1822,7 @@ static AstNode* parse_raise_statement(Parser* parser) {
     return node;
 }
 
-static bool is_compound_assignment(UniqueTokenType type) {
+static bool is_compound_assignment(GraveyardTokenType type) {
     switch (type) {
         case PLUSASSIGNMENT:
         case SUBTRACTIONASSIGNMENT:
@@ -1822,7 +1836,7 @@ static bool is_compound_assignment(UniqueTokenType type) {
     }
 }
 
-static UniqueTokenType get_base_operator(UniqueTokenType compound_type) {
+static GraveyardTokenType get_base_operator(GraveyardTokenType compound_type) {
     switch (compound_type) {
         case PLUSASSIGNMENT:            return PLUS;
         case SUBTRACTIONASSIGNMENT:     return MINUS;
@@ -1847,7 +1861,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     binary_op_node->line = compound_op.line;
 
-    UniqueTokenType base_op_type = get_base_operator(compound_op.type);
+    GraveyardTokenType base_op_type = get_base_operator(compound_op.type);
     binary_op_node->as.binary_op.operator.type = base_op_type;
     switch (base_op_type) {
         case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
@@ -2002,7 +2016,7 @@ static AstNode* parse_statement(Parser* parser) {
     }
 
     if (peek(parser)->type == IDENTIFIER) {
-        UniqueTokenType next_token = parser->tokens[parser->current + 1].type;
+        GraveyardTokenType next_token = parser->tokens[parser->current + 1].type;
         
         if (next_token == FILEREAD) {
             consume(parser); consume(parser);
@@ -2532,6 +2546,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_RANDOM_EXPRESSION: {
+            fprintf(file, "(RANDOM_EXPRESSION line=%d)\n", node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2661,6 +2679,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "EXECUTE_EXPRESSION") == 0) return AST_EXECUTE_EXPRESSION;
     if (strcmp(type_str, "CAT_CONSTANT_EXPRESSION") == 0) return AST_CAT_CONSTANT_EXPRESSION;
     if (strcmp(type_str, "WAIT_STATEMENT") == 0) return AST_WAIT_STATEMENT;
+    if (strcmp(type_str, "RANDOM_EXPRESSION") == 0) return AST_RANDOM_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3172,6 +3191,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_TIME_EXPRESSION:
@@ -3999,7 +4019,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         
         case AST_LOGICAL_OP: {
             GraveyardValue left = execute_node(gy, node->as.logical_op.left);
-            UniqueTokenType op_type = node->as.logical_op.operator.type;
+            GraveyardTokenType op_type = node->as.logical_op.operator.type;
 
             if (op_type == AND) {
                 if (is_value_falsy(left)) {
@@ -4249,7 +4269,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BINARY_OP: {
-            UniqueTokenType op_type = node->as.binary_op.operator.type;
+            GraveyardTokenType op_type = node->as.binary_op.operator.type;
 
             if (op_type == FILEWRITE) {
                 GraveyardValue content = execute_node(gy, node->as.binary_op.left);
@@ -4854,6 +4874,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             return create_null_value();
         }
+
+        case AST_RANDOM_EXPRESSION: {
+            double random_val = (double)rand() / (double)RAND_MAX;
+            return create_number_value(random_val);
+        }
     }
 
     return create_null_value();
@@ -4910,6 +4935,9 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->return_value = create_null_value();
     gy->encountered_break = false;
     gy->encountered_continue = false;
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    srand((unsigned int)ts.tv_sec ^ (unsigned int)ts.tv_nsec);
     return gy;
 }
 
