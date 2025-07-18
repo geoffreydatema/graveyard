@@ -3688,6 +3688,9 @@ static void array_append(GraveyardArray* array, GraveyardValue value) {
     array->values[array->count++] = value;
 }
 
+// Forward-declare monolith_print so print_value can call it recursively for instances.
+void monolith_print(Monolith* monolith, int indent);
+
 void print_value(GraveyardValue value) {
     switch (value.type) {
         case VAL_BOOL:
@@ -3703,23 +3706,16 @@ void print_value(GraveyardValue value) {
             } else {
                 char buffer[64];
                 snprintf(buffer, sizeof(buffer), "%.15f", num);
-
                 char* end = buffer + strlen(buffer) - 1;
-
-                while (end > buffer && *end == '0') {
-                    *end = '\0';
-                    end--;
-                }
-                if (end > buffer && *end == '.') {
-                    *end = '\0';
-                }
-                
+                while (end > buffer && *end == '0') { *end = '\0'; end--; }
+                if (end > buffer && *end == '.') { *end = '\0'; }
                 printf("%s", buffer);
             }
             break;
         }
         case VAL_STRING:
-            printf("%s", value.as.string->chars);
+            // Print strings with quotes to distinguish them from identifiers
+            printf("\"%s\"", value.as.string->chars);
             break;
         case VAL_ARRAY:
             printf("[");
@@ -3750,28 +3746,86 @@ void print_value(GraveyardValue value) {
             printf("<type: %s>", value.as.type->name->chars);
             break;
         case VAL_INSTANCE:
-            printf("<instance of %s>", value.as.instance->type->name->chars);
+            printf("<instance of %s> {\n", value.as.instance->type->name->chars);
+            monolith_print(&value.as.instance->fields, 2); // Recursively print fields
+            printf("  }");
             break;
+        case VAL_FUNCTION:
+            printf("<function: %s>", value.as.function->name->chars);
+            break;
+        case VAL_BOUND_METHOD:
+            printf("<method: %s bound to instance>", value.as.bound_method->function.as.function->name->chars);
+            break;
+        case VAL_ENVIRONMENT:
+             printf("<namespace>");
+             break;
     }
 }
 
-void monolith_print(Monolith* monolith) {
-    printf("--- Monolith Contents ---\n");
+void monolith_print(Monolith* monolith, int indent) {
+    char indent_str[32] = "";
+    for (int i = 0; i < indent; i++) {
+        strcat(indent_str, "  ");
+    }
+
     if (monolith->count == 0) {
-        printf("  (empty)\n");
-        printf("-------------------------\n");
+        printf("%s(empty)\n", indent_str);
         return;
     }
 
     for (int i = 0; i < monolith->capacity; i++) {
         MonolithEntry* entry = &monolith->entries[i];
         if (entry->key != NULL) {
-            printf("  %s = ", entry->key);
+            printf("%s%s = ", indent_str, entry->key);
             print_value(entry->value);
             printf("\n");
         }
     }
-    printf("-------------------------\n");
+}
+
+// This function recursively prints an environment and its parents.
+void print_environment_recursive(Environment* env, int depth) {
+    if (env == NULL) return;
+
+    printf("\n--- Scope Level %d ", depth);
+    if (depth == 0) {
+        printf("(Global) ---\n");
+    } else {
+        printf("---\n");
+    }
+    
+    monolith_print(&env->values, 1);
+    
+    // Recurse to the parent scope
+    print_environment_recursive(env->enclosing, depth + 1);
+}
+
+// This is the new main entry point for the --debug mode.
+void graveyard_debug_print(Graveyard* gy) {
+    printf("========================================\n");
+    printf("        GRAVEYARD DEBUG DUMP\n");
+    printf("========================================\n");
+    
+    printf("\n--- Defined Namespaces ---\n");
+    monolith_print(&gy->namespaces, 1);
+    
+    // Find the global environment to print defined types
+    Environment* global_env = get_global_environment(gy);
+    printf("\n--- Defined Types ---\n");
+    bool has_types = false;
+    for (int i = 0; i < global_env->values.capacity; i++) {
+        MonolithEntry* entry = &global_env->values.entries[i];
+        if (entry->key != NULL && entry->value.type == VAL_TYPE) {
+            printf("  %s\n", entry->key);
+            has_types = true;
+        }
+    }
+    if (!has_types) printf("  (none)\n");
+
+    printf("\n--- Final Environment Chain ---\n");
+    print_environment_recursive(gy->environment, 0);
+    
+    printf("\n========================================\n");
 }
 
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
@@ -5059,7 +5113,7 @@ int main(int argc, char *argv[]) {
                     if (!compile_source(gy) || !execute(gy)) { success = false; }
                 } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
                     if (compile_source(gy) && execute(gy)) {
-                        monolith_print(&gy->environment->values);
+                        graveyard_debug_print(gy);
                     } else { success = false; }
                 } else {
                     fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
