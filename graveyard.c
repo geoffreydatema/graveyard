@@ -7,8 +7,15 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+
 #ifndef _WIN32
 #include <sys/wait.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 #define MAX_LEXEME_LEN 65
@@ -89,10 +96,10 @@ typedef enum {
     FORMATTEDPART,
     TYPE,
     UNKNOWN
-} TokenType;
+} UniqueTokenType;
 
 typedef struct {
-    TokenType type;
+    UniqueTokenType type;
     char lexeme[MAX_LEXEME_LEN];
     int line;
     int column;
@@ -137,7 +144,8 @@ typedef enum {
     AST_MEMBER_ACCESS,
     AST_THIS_EXPRESSION,
     AST_EXECUTE_EXPRESSION,
-    AST_CAT_CONSTANT_EXPRESSION
+    AST_CAT_CONSTANT_EXPRESSION,
+    AST_WAIT_STATEMENT
 } AstNodeType;
 
 typedef struct {
@@ -357,6 +365,10 @@ typedef struct {
     Token keyword;
 } AstNodeCatConstantExpression;
 
+typedef struct {
+    AstNode* duration_expr;
+} AstNodeWaitStatement;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -398,6 +410,7 @@ struct AstNode {
         AstNodeThisExpression        this_expression;
         AstNodeExecuteExpression     execute_expression;
         AstNodeCatConstantExpression cat_constant_expression;
+        AstNodeWaitStatement         wait_statement;
     } as;
 };
 
@@ -564,7 +577,7 @@ char *load(FILE *file, long *out_length) {
 
 //TOKENIZE-----------------------------------------------------------------------------------
 
-TokenType identify_three_char_token(char c1, char c2, char c3) {
+UniqueTokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == '*' && c2 == '*' && c3 == '=') return EXPONENTIATIONASSIGNMENT;
     if (c1 == '!' && c2 == '|' && c3 == '|') return XOR;
     if (c1 == '!' && c2 == '>' && c3 == '>') return RAISE;
@@ -575,7 +588,7 @@ TokenType identify_three_char_token(char c1, char c2, char c3) {
     return UNKNOWN;
 }
 
-TokenType identify_two_char_token(char c1, char c2) {
+UniqueTokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '*' && c2 == '*') return EXPONENTIATION;
     if (c1 == '=' && c2 == '=') return EQUALITY;
     if (c1 == '!' && c2 == '=') return INEQUALITY;
@@ -609,7 +622,7 @@ TokenType identify_two_char_token(char c1, char c2) {
     return UNKNOWN;
 }
 
-TokenType identify_single_char_token(char c) {
+UniqueTokenType identify_single_char_token(char c) {
     switch (c) {
         case '=': return ASSIGNMENT;
         case ';': return SEMICOLON;
@@ -878,7 +891,7 @@ bool tokenize(Graveyard *gy) {
                 }
             }
 
-            TokenType ttype = UNKNOWN;
+            UniqueTokenType ttype = UNKNOWN;
 
             if (current_ptr + 2 < end_ptr) {
                 ttype = identify_three_char_token(start[0], start[1], start[2]);
@@ -1073,6 +1086,9 @@ void free_ast(AstNode* node) {
         case AST_EXECUTE_EXPRESSION:
             free_ast(node->as.execute_expression.command_expr);
             break;
+        case AST_WAIT_STATEMENT:
+            free_ast(node->as.wait_statement.duration_expr);
+            break;
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_NAMESPACE_ACCESS:
@@ -1114,7 +1130,7 @@ static void error_at_token(Parser* parser, Token* token, const char* message) {
     fprintf(stderr, "%s\n", message);
 }
 
-static Token* expect(Parser* parser, TokenType type, const char* message) {
+static Token* expect(Parser* parser, UniqueTokenType type, const char* message) {
     if (peek(parser)->type == type) {
         return consume(parser);
     }
@@ -1122,7 +1138,7 @@ static Token* expect(Parser* parser, TokenType type, const char* message) {
     return NULL;
 }
 
-static bool match(Parser* parser, TokenType type) {
+static bool match(Parser* parser, UniqueTokenType type) {
     if (is_at_end(parser)) return false;
     if (peek(parser)->type == type) {
         consume(parser);
@@ -1142,7 +1158,7 @@ static AstNode* create_node(Parser* parser, AstNodeType type) {
     return node;
 }
 
-static int get_operator_precedence(TokenType type) {
+static int get_operator_precedence(UniqueTokenType type) {
     switch (type) {
         case ASSIGNMENT:
             return 1;
@@ -1672,7 +1688,7 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
     if (!left) return NULL;
 
     while (true) {
-        TokenType op_type = peek(parser)->type;
+        UniqueTokenType op_type = peek(parser)->type;
         int current_precedence = get_operator_precedence(op_type);
 
         if (current_precedence == 0 || current_precedence < min_precedence) {
@@ -1792,7 +1808,7 @@ static AstNode* parse_raise_statement(Parser* parser) {
     return node;
 }
 
-static bool is_compound_assignment(TokenType type) {
+static bool is_compound_assignment(UniqueTokenType type) {
     switch (type) {
         case PLUSASSIGNMENT:
         case SUBTRACTIONASSIGNMENT:
@@ -1806,7 +1822,7 @@ static bool is_compound_assignment(TokenType type) {
     }
 }
 
-static TokenType get_base_operator(TokenType compound_type) {
+static UniqueTokenType get_base_operator(UniqueTokenType compound_type) {
     switch (compound_type) {
         case PLUSASSIGNMENT:            return PLUS;
         case SUBTRACTIONASSIGNMENT:     return MINUS;
@@ -1831,7 +1847,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     binary_op_node->line = compound_op.line;
 
-    TokenType base_op_type = get_base_operator(compound_op.type);
+    UniqueTokenType base_op_type = get_base_operator(compound_op.type);
     binary_op_node->as.binary_op.operator.type = base_op_type;
     switch (base_op_type) {
         case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
@@ -1952,14 +1968,22 @@ static AstNode* parse_type_declaration(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_wait_statement(Parser* parser) {
+    AstNode* node = create_node(parser, AST_WAIT_STATEMENT);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.wait_statement.duration_expr = parse_expression(parser, 1);
+    return node;
+}
+
 static AstNode* parse_statement(Parser* parser) {
-    if (match(parser, RAISE))    return parse_raise_statement(parser);
-    if (match(parser, WHILE))    return parse_while_statement(parser);
-    if (match(parser, BACKTICK))    return parse_break_statement(parser);
-    if (match(parser, CARET)) return parse_continue_statement(parser);
-    if (match(parser, RETURN))   return parse_return_statement(parser);
-    if (match(parser, PRINT))    return parse_print_statement(parser);
-    if (match(parser, NAMESPACE))return parse_namespace_declaration(parser);
+    if (match(parser, WAIT))      return parse_wait_statement(parser);
+    if (match(parser, RAISE))     return parse_raise_statement(parser);
+    if (match(parser, WHILE))     return parse_while_statement(parser);
+    if (match(parser, BACKTICK))  return parse_break_statement(parser);
+    if (match(parser, CARET))     return parse_continue_statement(parser);
+    if (match(parser, RETURN))    return parse_return_statement(parser);
+    if (match(parser, PRINT))     return parse_print_statement(parser);
+    if (match(parser, NAMESPACE)) return parse_namespace_declaration(parser);
     if (peek(parser)->type == TYPE && parser->tokens[parser->current + 1].type == LEFTBRACE) {
         return parse_type_declaration(parser);
     }
@@ -1978,7 +2002,7 @@ static AstNode* parse_statement(Parser* parser) {
     }
 
     if (peek(parser)->type == IDENTIFIER) {
-        TokenType next_token = parser->tokens[parser->current + 1].type;
+        UniqueTokenType next_token = parser->tokens[parser->current + 1].type;
         
         if (next_token == FILEREAD) {
             consume(parser); consume(parser);
@@ -2501,6 +2525,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, "(CAT_CONSTANT_EXPRESSION line=%d)\n", node->line);
             break;
         }
+        case AST_WAIT_STATEMENT: {
+            fprintf(file, "(WAIT_STATEMENT line=%d\n", node->line);
+            write_ast_node(file, node->as.wait_statement.duration_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2629,6 +2660,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "LITERAL_TYPE") == 0) return AST_LITERAL;
     if (strcmp(type_str, "EXECUTE_EXPRESSION") == 0) return AST_EXECUTE_EXPRESSION;
     if (strcmp(type_str, "CAT_CONSTANT_EXPRESSION") == 0) return AST_CAT_CONSTANT_EXPRESSION;
+    if (strcmp(type_str, "WAIT_STATEMENT") == 0) return AST_WAIT_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -3135,6 +3167,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_WAIT_STATEMENT: {
+            node->as.wait_statement.duration_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
         case AST_TIME_EXPRESSION:
@@ -3177,6 +3214,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_TYPE_DECLARATION:
         case AST_MEMBER_ACCESS:
         case AST_EXECUTE_EXPRESSION:
+        case AST_WAIT_STATEMENT:
             is_block_node = true;
             break;
         default: break;
@@ -3961,7 +3999,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         
         case AST_LOGICAL_OP: {
             GraveyardValue left = execute_node(gy, node->as.logical_op.left);
-            TokenType op_type = node->as.logical_op.operator.type;
+            UniqueTokenType op_type = node->as.logical_op.operator.type;
 
             if (op_type == AND) {
                 if (is_value_falsy(left)) {
@@ -4211,7 +4249,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BINARY_OP: {
-            TokenType op_type = node->as.binary_op.operator.type;
+            UniqueTokenType op_type = node->as.binary_op.operator.type;
 
             if (op_type == FILEWRITE) {
                 GraveyardValue content = execute_node(gy, node->as.binary_op.left);
@@ -4794,6 +4832,27 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_CAT_CONSTANT_EXPRESSION: {
             return create_number_value(65458655);
+        }
+
+        case AST_WAIT_STATEMENT: {
+            GraveyardValue duration_val = execute_node(gy, node->as.wait_statement.duration_expr);
+            if (duration_val.type != VAL_NUMBER) {
+                fprintf(stderr, "Runtime Error [line %d]: Duration for wait operation must be a number.\n", node->line);
+                return create_null_value();
+            }
+
+            long milliseconds = (long)duration_val.as.number;
+            if (milliseconds < 0) {
+                milliseconds = 0;
+            }
+
+            #ifdef _WIN32
+                Sleep(milliseconds);
+            #else
+                usleep(milliseconds * 1000);
+            #endif
+
+            return create_null_value();
         }
     }
 
