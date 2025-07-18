@@ -134,7 +134,6 @@ typedef enum {
     AST_BREAK_STATEMENT,
     AST_CONTINUE_STATEMENT,
     AST_FOR_STATEMENT,
-    AST_FOR_EACH_STATEMENT,
     AST_RAISE_STATEMENT,
     AST_TIME_EXPRESSION,
     AST_NAMESPACE_DECLARATION,
@@ -308,17 +307,10 @@ typedef struct {
 
 typedef struct {
     Token iterator;
-    AstNode* start_expr;
-    AstNode* stop_expr;
-    AstNode* step_expr;
+    AstNode** range_expressions;
+    size_t range_count;
     AstNode* body;
 } AstNodeForStatement;
-
-typedef struct {
-    Token iterator;
-    AstNode* collection;
-    AstNode* body;
-} AstNodeForEachStatement;
 
 typedef struct {
     Token keyword;
@@ -404,7 +396,6 @@ struct AstNode {
         AstNodeBreakStatement        break_statement;
         AstNodeContinueStatement     continue_statement;
         AstNodeForStatement          for_statement;
-        AstNodeForEachStatement      for_each_statement;
         AstNodeRaiseStatement        raise_statement;
         AstNodeTimeExpression        time_expression;
         AstNodeNamespaceDeclaration  namespace_declaration;
@@ -1065,14 +1056,11 @@ void free_ast(AstNode* node) {
             free_ast(node->as.while_statement.body);
             break;
         case AST_FOR_STATEMENT:
-            free_ast(node->as.for_statement.start_expr);
-            free_ast(node->as.for_statement.stop_expr);
-            free_ast(node->as.for_statement.step_expr);
+            for (size_t i = 0; i < node->as.for_statement.range_count; i++) {
+                free_ast(node->as.for_statement.range_expressions[i]);
+            }
+            free(node->as.for_statement.range_expressions);
             free_ast(node->as.for_statement.body);
-            break;
-        case AST_FOR_EACH_STATEMENT:
-            free_ast(node->as.for_each_statement.collection);
-            free_ast(node->as.for_each_statement.body);
             break;
         case AST_RAISE_STATEMENT:
             free_ast(node->as.raise_statement.error_expr);
@@ -1651,49 +1639,29 @@ static AstNode* parse_postfix(Parser* parser) {
     return expr;
 }
 
-static AstNode* parse_numeric_for_statement(Parser* parser, Token iterator, AstNode* start_expr) {
+static AstNode* parse_for_statement(Parser* parser) {
+    Token iterator = parser->tokens[parser->current - 2];
     AstNode* node = create_node(parser, AST_FOR_STATEMENT);
-    if (!node) {
-        free_ast(start_expr);
-        return NULL;
-    }
     node->line = iterator.line;
     node->as.for_statement.iterator = iterator;
-
-    node->as.for_statement.start_expr = start_expr;
+    node->as.for_statement.body = NULL;
     
-    node->as.for_statement.stop_expr = parse_expression(parser, 1);
+    node->as.for_statement.range_expressions = malloc(3 * sizeof(AstNode*));
+    node->as.for_statement.range_count = 0;
 
-    if (match(parser, COMMA)) {
-        node->as.for_statement.step_expr = parse_expression(parser, 1);
-    } else {
-        node->as.for_statement.step_expr = NULL;
-    }
+    do {
+        if (node->as.for_statement.range_count >= 3) {
+            error_at_token(parser, peek(parser), "For loop can have at most 3 range arguments.");
+            free_ast(node);
+            return NULL;
+        }
+        node->as.for_statement.range_expressions[node->as.for_statement.range_count++] = parse_expression(parser, 1);
+    } while (match(parser, COMMA));
 
     expect(parser, LEFTBRACE, "Expected '{' to begin for loop body.");
     node->as.for_statement.body = parse_block(parser);
 
     return node;
-}
-
-static AstNode* parse_for_statement(Parser* parser) {
-    Token iterator = parser->tokens[parser->current - 2];
-
-    AstNode* first_expr = parse_expression(parser, 1);
-
-    if (peek(parser)->type == COMMA) {
-        consume(parser);
-        return parse_numeric_for_statement(parser, iterator, first_expr);
-    } else {
-        AstNode* node = create_node(parser, AST_FOR_EACH_STATEMENT);
-        node->line = iterator.line;
-        node->as.for_each_statement.iterator = iterator;
-        node->as.for_each_statement.collection = first_expr;
-
-        expect(parser, LEFTBRACE, "Expected '{' to begin for-each loop body.");
-        node->as.for_each_statement.body = parse_block(parser);
-        return node;
-    }
 }
 
 static AstNode* parse_while_statement(Parser* parser) {
@@ -2129,7 +2097,6 @@ bool parse(Graveyard *gy) {
             statement->type != AST_IF_STATEMENT &&
             statement->type != AST_WHILE_STATEMENT &&
             statement->type != AST_FOR_STATEMENT &&
-            statement->type != AST_FOR_EACH_STATEMENT &&
             statement->type != AST_NAMESPACE_DECLARATION &&
             statement->type != AST_TYPE_DECLARATION) {
             expect(&parser, SEMICOLON, "Expected ';' at the end of the statement.");
@@ -2454,49 +2421,14 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         }
 
         case AST_FOR_STATEMENT: {
-            fprintf(file, "(FOR_STATEMENT iterator=\"%s\" line=%d\n",
+            fprintf(file, "(FOR_STATEMENT iterator=\"%s\" range_count=%zu line=%d\n",
                 node->as.for_statement.iterator.lexeme,
+                node->as.for_statement.range_count,
                 node->line);
-
-            if (node->as.for_statement.start_expr) {
-                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-                fprintf(file, "(START_EXPR\n");
-                write_ast_node(file, node->as.for_statement.start_expr, indent + 2);
-                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-                fprintf(file, ")\n");
+            for (size_t i = 0; i < node->as.for_statement.range_count; i++) {
+                write_ast_node(file, node->as.for_statement.range_expressions[i], indent + 1);
             }
-
-            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-            fprintf(file, "(STOP_EXPR\n");
-            write_ast_node(file, node->as.for_statement.stop_expr, indent + 2);
-            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-            fprintf(file, ")\n");
-
-            if (node->as.for_statement.step_expr) {
-                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-                fprintf(file, "(STEP_EXPR\n");
-                write_ast_node(file, node->as.for_statement.step_expr, indent + 2);
-                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-                fprintf(file, ")\n");
-            }
-
-            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-            fprintf(file, "(BODY\n");
-            write_ast_node(file, node->as.for_statement.body, indent + 2);
-            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
-            fprintf(file, ")\n");
-            
-            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
-            fprintf(file, ")\n");
-            break;
-        }
-
-        case AST_FOR_EACH_STATEMENT: {
-            fprintf(file, "(FOR_EACH_STATEMENT iterator=\"%s\" line=%d\n",
-                node->as.for_each_statement.iterator.lexeme,
-                node->line);
-            write_ast_node(file, node->as.for_each_statement.collection, indent + 1);
-            write_ast_node(file, node->as.for_each_statement.body, indent + 1);
+            write_ast_node(file, node->as.for_statement.body, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
@@ -2692,7 +2624,6 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "BREAK_STATEMENT") == 0) return AST_BREAK_STATEMENT;
     if (strcmp(type_str, "CONTINUE_STATEMENT") == 0) return AST_CONTINUE_STATEMENT;
     if (strcmp(type_str, "FOR_STATEMENT") == 0) return AST_FOR_STATEMENT;
-    if (strcmp(type_str, "FOR_EACH_STATEMENT") == 0) return AST_FOR_EACH_STATEMENT;
     if (strcmp(type_str, "SCAN_STATEMENT") == 0) return AST_SCAN_STATEMENT;
     if (strcmp(type_str, "RAISE_STATEMENT") == 0) return AST_RAISE_STATEMENT;
     if (strcmp(type_str, "TIME_EXPRESSION") == 0) return AST_TIME_EXPRESSION;
@@ -3134,36 +3065,15 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_FOR_STATEMENT: {
-            node->as.for_statement.start_expr = NULL;
-            node->as.for_statement.step_expr = NULL;
-
             get_attribute_string(line, "iterator=", node->as.for_statement.iterator.lexeme, MAX_LEXEME_LEN);
-            node->as.for_statement.iterator.type = IDENTIFIER;
+            size_t range_count = get_attribute_int(line, "range_count=");
+            node->as.for_statement.range_count = range_count;
+            node->as.for_statement.range_expressions = malloc(range_count * sizeof(AstNode*));
 
-            while (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
-                const char* part_line = lines->lines[*current_line_idx];
-                char part_type_str[64];
-                get_node_type_from_line(part_line, part_type_str, sizeof(part_type_str));
-                (*current_line_idx)++;
-
-                if (strcmp(part_type_str, "START_EXPR") == 0) {
-                    node->as.for_statement.start_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
-                } else if (strcmp(part_type_str, "STOP_EXPR") == 0) {
-                    node->as.for_statement.stop_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
-                } else if (strcmp(part_type_str, "STEP_EXPR") == 0) {
-                    node->as.for_statement.step_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
-                } else if (strcmp(part_type_str, "BODY") == 0) {
-                    node->as.for_statement.body = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
-                }
-                (*current_line_idx)++;
+            for (size_t i = 0; i < range_count; i++) {
+                node->as.for_statement.range_expressions[i] = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             }
-            break;
-        }
-
-        case AST_FOR_EACH_STATEMENT: {
-            get_attribute_string(line, "iterator=", node->as.for_each_statement.iterator.lexeme, MAX_LEXEME_LEN);
-            node->as.for_each_statement.collection = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
-            node->as.for_each_statement.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.for_statement.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
@@ -3253,7 +3163,6 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_ASSERT_STATEMENT:
         case AST_WHILE_STATEMENT:
         case AST_FOR_STATEMENT:
-        case AST_FOR_EACH_STATEMENT:
         case AST_SCAN_STATEMENT:
         case AST_RAISE_STATEMENT:
         case AST_NAMESPACE_DECLARATION:
@@ -3762,7 +3671,7 @@ void print_value(GraveyardValue value) {
             break;
         case VAL_INSTANCE:
             printf("<instance of %s> {\n", value.as.instance->type->name->chars);
-            monolith_print(&value.as.instance->fields, 2); // Recursively print fields
+            monolith_print(&value.as.instance->fields, 2);
             printf("  }");
             break;
         case VAL_FUNCTION:
@@ -3798,7 +3707,6 @@ void monolith_print(Monolith* monolith, int indent) {
     }
 }
 
-// This function recursively prints an environment and its parents.
 void print_environment_recursive(Environment* env, int depth) {
     if (env == NULL) return;
 
@@ -3811,11 +3719,9 @@ void print_environment_recursive(Environment* env, int depth) {
     
     monolith_print(&env->values, 1);
     
-    // Recurse to the parent scope
     print_environment_recursive(env->enclosing, depth + 1);
 }
 
-// This is the new main entry point for the --debug mode.
 void graveyard_debug_print(Graveyard* gy) {
     printf("========================================\n");
     printf("        GRAVEYARD DEBUG DUMP\n");
@@ -3824,7 +3730,6 @@ void graveyard_debug_print(Graveyard* gy) {
     printf("\n--- Defined Namespaces ---\n");
     monolith_print(&gy->namespaces, 1);
     
-    // Find the global environment to print defined types
     Environment* global_env = get_global_environment(gy);
     printf("\n--- Defined Types ---\n");
     bool has_types = false;
@@ -4659,82 +4564,57 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_FOR_STATEMENT: {
-            Environment* loop_env = environment_new(gy->environment);
-
-            double start_val = 0;
-            if (node->as.for_statement.start_expr) {
-                GraveyardValue start_gv = execute_node(gy, node->as.for_statement.start_expr);
-                if (start_gv.type != VAL_NUMBER) { return create_null_value(); }
-                start_val = start_gv.as.number;
-            }
-
-            double stop_val = 0;
-            if (node->as.for_statement.stop_expr) {
-                GraveyardValue stop_gv = execute_node(gy, node->as.for_statement.stop_expr);
-                if (stop_gv.type != VAL_NUMBER) { return create_null_value(); }
-                stop_val = stop_gv.as.number;
-            }
-
-            double step_val = 1;
-            if (node->as.for_statement.step_expr) {
-                GraveyardValue step_gv = execute_node(gy, node->as.for_statement.step_expr);
-                if (step_gv.type != VAL_NUMBER) { return create_null_value(); }
-                step_val = step_gv.as.number;
-            }
-            if (step_val == 0) { return create_null_value(); }
-
             const char* iterator_name = node->as.for_statement.iterator.lexeme;
+            size_t range_count = node->as.for_statement.range_count;
+            AstNode** range_exprs = node->as.for_statement.range_expressions;
 
-            for (double i = start_val; (step_val > 0) ? (i < stop_val) : (i > stop_val); i += step_val) {
-                environment_define(loop_env, iterator_name, create_number_value(i));
-
-                gy->encountered_break = false;
-                gy->encountered_continue = false;
-
-                execute_block(gy, node->as.for_statement.body, loop_env);
-
-                if (gy->encountered_break) {
-                    break;
-                }
-            }
-            
-            gy->encountered_break = false;
-            gy->encountered_continue = false;
-            return create_null_value();
-        }
-
-        case AST_FOR_EACH_STATEMENT: {
-            GraveyardValue collection = execute_node(gy, node->as.for_each_statement.collection);
-            const char* iterator_name = node->as.for_each_statement.iterator.lexeme;
-            
-            if (collection.type == VAL_ARRAY) {
-                GraveyardArray* array = collection.as.array;
-                for (size_t i = 0; i < array->count; i++) {
-                    Environment* loop_env = environment_new(gy->environment);
-                    environment_define(loop_env, iterator_name, array->values[i]);
-                    
-                    gy->encountered_break = false;
-                    gy->encountered_continue = false;
-                    execute_block(gy, node->as.for_each_statement.body, loop_env);
-                    if (gy->encountered_break) break;
-                }
-            } else if (collection.type == VAL_HASHTABLE) {
-                GraveyardHashtable* ht = collection.as.hashtable;
-                for (int i = 0; i < ht->capacity; i++) {
-                    if (!ht->entries[i].is_in_use) continue;
-                    
-                    Environment* loop_env = environment_new(gy->environment);
-                    environment_define(loop_env, iterator_name, ht->entries[i].key);
-
-                    gy->encountered_break = false;
-                    gy->encountered_continue = false;
-                    execute_block(gy, node->as.for_each_statement.body, loop_env);
-                    if (gy->encountered_break) break;
+            if (range_count == 1) {
+                GraveyardValue collection_or_stop = execute_node(gy, range_exprs[0]);
+                
+                if (collection_or_stop.type == VAL_ARRAY) {
+                    GraveyardArray* array = collection_or_stop.as.array;
+                    for (size_t i = 0; i < array->count; i++) {
+                        Environment* loop_env = environment_new(gy->environment);
+                        environment_define(loop_env, iterator_name, array->values[i]);
+                        execute_block(gy, node->as.for_statement.body, loop_env);
+                        if (gy->encountered_break) break;
+                    }
+                } else if (collection_or_stop.type == VAL_HASHTABLE) {
+                    GraveyardHashtable* ht = collection_or_stop.as.hashtable;
+                    for (int i = 0; i < ht->capacity; i++) {
+                        if (!ht->entries[i].is_in_use) continue;
+                        Environment* loop_env = environment_new(gy->environment);
+                        environment_define(loop_env, iterator_name, ht->entries[i].key);
+                        execute_block(gy, node->as.for_statement.body, loop_env);
+                        if (gy->encountered_break) break;
+                    }
+                } else if (collection_or_stop.type == VAL_NUMBER) {
+                    double stop_val = collection_or_stop.as.number;
+                    for (double i = 0; i < stop_val; i += 1) {
+                        Environment* loop_env = environment_new(gy->environment);
+                        environment_define(loop_env, iterator_name, create_number_value(i));
+                        execute_block(gy, node->as.for_statement.body, loop_env);
+                        if (gy->encountered_break) break;
+                    }
+                } else {
+                    fprintf(stderr, "Runtime Error [line %d]: Invalid type for single-argument for loop.\n", node->line);
                 }
             } else {
-                fprintf(stderr, "Runtime Error [line %d]: Can only iterate over arrays or hashtables.\n", node->line);
+                double start_val = execute_node(gy, range_exprs[0]).as.number;
+                double stop_val = execute_node(gy, range_exprs[1]).as.number;
+                double step_val = 1.0;
+                if (range_count == 3) {
+                    step_val = execute_node(gy, range_exprs[2]).as.number;
+                }
+                
+                for (double i = start_val; (step_val > 0) ? (i < stop_val) : (i > stop_val); i += step_val) {
+                    Environment* loop_env = environment_new(gy->environment);
+                    environment_define(loop_env, iterator_name, create_number_value(i));
+                    execute_block(gy, node->as.for_statement.body, loop_env);
+                    if (gy->encountered_break) break;
+                }
             }
-
+            
             gy->encountered_break = false;
             gy->encountered_continue = false;
             return create_null_value();
