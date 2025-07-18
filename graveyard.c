@@ -1493,6 +1493,18 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, NAMESPACE)) {
+        AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
+        node->line = parser->tokens[parser->current - 1].line;
+
+        Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
+        expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
+        Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
+
+        node->as.namespace_access.namespace_name = namespace_name;
+        node->as.namespace_access.member_name = member_name;
+        return node;
+    }
     if (match(parser, RANDOM)) {
         AstNode* node = create_node(parser, AST_RANDOM_EXPRESSION);
         node->line = parser->tokens[parser->current - 1].line;
@@ -2007,9 +2019,14 @@ static AstNode* parse_statement(Parser* parser) {
     if (match(parser, CARET))     return parse_continue_statement(parser);
     if (match(parser, RETURN))    return parse_return_statement(parser);
     if (match(parser, PRINT))     return parse_print_statement(parser);
-    if (match(parser, NAMESPACE)) return parse_namespace_declaration(parser);
     if (peek(parser)->type == TYPE && parser->tokens[parser->current + 1].type == LEFTBRACE) {
         return parse_type_declaration(parser);
+    }
+    if (peek(parser)->type == NAMESPACE &&
+        parser->tokens[parser->current + 1].type == IDENTIFIER &&
+        parser->tokens[parser->current + 2].type == LEFTBRACE) {
+        consume(parser);
+        return parse_namespace_declaration(parser);
     }
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
