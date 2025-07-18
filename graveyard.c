@@ -1475,11 +1475,21 @@ static AstNode* parse_fileread_statement(Parser* parser) {
     return node;
 }
 
-static AstNode* parse_execute_expression(Parser* parser) {
-    AstNode* node = create_node(parser, AST_EXECUTE_EXPRESSION);
-    node->line = parser->tokens[parser->current - 1].line;
-    node->as.execute_expression.command_expr = parse_expression(parser, 1);
-    return node;
+
+static AstNode* parse_execute_or_eval_expression(Parser* parser) {
+    Token execute_token = parser->tokens[parser->current - 1];
+
+    if (match(parser, AT)) {
+        AstNode* node = create_node(parser, AST_EXECUTE_EXPRESSION);
+        node->line = execute_token.line;
+        node->as.execute_expression.command_expr = parse_expression(parser, 1);
+        return node;
+    } else {
+        // --- This will be an EVAL expression ---
+        // For now, we can throw a parser error since EVAL is not yet implemented.
+        error_at_token(parser, peek(parser), "EVAL feature not yet implemented. EXECUTE requires an '@' symbol after '$>>'.");
+        return NULL;
+    }
 }
 
 static AstNode* parse_primary(Parser* parser) {
@@ -1498,7 +1508,7 @@ static AstNode* parse_primary(Parser* parser) {
     }
 
     if (match(parser, EXECUTE)) {
-        return parse_execute_expression(parser);
+        return parse_execute_or_eval_expression(parser);
     }
 
     if (match(parser, TYPE)) {
