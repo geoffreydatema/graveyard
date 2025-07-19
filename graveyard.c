@@ -146,7 +146,8 @@ typedef enum {
     AST_CAT_CONSTANT_EXPRESSION,
     AST_WAIT_STATEMENT,
     AST_RANDOM_EXPRESSION,
-    AST_GLOBAL_ACCESS
+    AST_GLOBAL_ACCESS,
+    AST_STATIC_ACCESS
 } AstNodeType;
 
 typedef struct {
@@ -371,6 +372,11 @@ typedef struct {
     Token member_name;
 } AstNodeGlobalAccess;
 
+typedef struct {
+    Token type_name;
+    Token member_name;
+} AstNodeStaticAccess;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -414,6 +420,7 @@ struct AstNode {
         AstNodeWaitStatement         wait_statement;
         AstNodeRandomExpression      random_expression;
         AstNodeGlobalAccess          global_access;
+        AstNodeStaticAccess          static_access;
     } as;
 };
 
@@ -1089,6 +1096,7 @@ void free_ast(AstNode* node) {
         case AST_WAIT_STATEMENT:
             free_ast(node->as.wait_statement.duration_expr);
             break;
+        case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
@@ -1494,21 +1502,30 @@ static AstNode* parse_primary(Parser* parser) {
             // --- It's a Global Access expression (::#name) ---
             consume(parser); // Consume '#'
             Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '::#'.");
-            
             AstNode* node = create_node(parser, AST_GLOBAL_ACCESS);
             node->line = member_name.line;
             node->as.global_access.member_name = member_name;
+            return node;
+
+        } else if (peek(parser)->type == TYPE) {
+            // --- It's a Static Access expression (::<type>#name) ---
+            Token type_name = *consume(parser); // Consume '<type>'
+            expect(parser, REFERENCE, "Expected '#' after type name for static member access.");
+            Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
+
+            AstNode* node = create_node(parser, AST_STATIC_ACCESS);
+            node->line = type_name.line;
+            node->as.static_access.type_name = type_name;
+            node->as.static_access.member_name = member_name;
             return node;
 
         } else {
             // --- It's a regular Namespace Access expression (::ns#name) ---
             AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
             node->line = parser->tokens[parser->current - 1].line;
-
             Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
             expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
             Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
-
             node->as.namespace_access.namespace_name = namespace_name;
             node->as.namespace_access.member_name = member_name;
             return node;
@@ -2536,6 +2553,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 node->line);
             break;
         }
+        case AST_STATIC_ACCESS: {
+            fprintf(file, "(STATIC_ACCESS type=\"%s\" member=\"%s\" line=%d)\n",
+                node->as.static_access.type_name.lexeme,
+                node->as.static_access.member_name.lexeme,
+                node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2666,6 +2690,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "WAIT_STATEMENT") == 0) return AST_WAIT_STATEMENT;
     if (strcmp(type_str, "RANDOM_EXPRESSION") == 0) return AST_RANDOM_EXPRESSION;
     if (strcmp(type_str, "GLOBAL_ACCESS") == 0) return AST_GLOBAL_ACCESS;
+    if (strcmp(type_str, "STATIC_ACCESS") == 0) return AST_STATIC_ACCESS;
     return AST_UNKNOWN;
 }
 
@@ -3159,6 +3184,14 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_GLOBAL_ACCESS: {
             get_attribute_string(line, "member=", node->as.global_access.member_name.lexeme, MAX_LEXEME_LEN);
             node->as.global_access.member_name.type = IDENTIFIER;
+            break;
+        }
+
+        case AST_STATIC_ACCESS: {
+            get_attribute_string(line, "type=", node->as.static_access.type_name.lexeme, MAX_LEXEME_LEN);
+            get_attribute_string(line, "member=", node->as.static_access.member_name.lexeme, MAX_LEXEME_LEN);
+            node->as.static_access.type_name.type = TYPE;
+            node->as.static_access.member_name.type = IDENTIFIER;
             break;
         }
 
@@ -4038,6 +4071,22 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 // Define or update the variable in the global scope.
                 environment_define(global_env, member_name, value_to_assign);
                 return value_to_assign;
+            } else if (target_node->type == AST_STATIC_ACCESS) {
+                // This is a static field assignment: ::<type>#x = ...
+                char* name_str = target_node->as.static_access.type_name.lexeme;
+                name_str[strlen(name_str) - 1] = '\0';
+                const char* type_name = name_str + 1;
+                const char* member_name = target_node->as.static_access.member_name.lexeme;
+
+                GraveyardValue type_val;
+                if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
+                    fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", target_node->line, type_name);
+                    return create_null_value();
+                }
+
+                // Set the field in the type's own fields table.
+                monolith_set(&type_val.as.type->fields, member_name, value_to_assign);
+                return value_to_assign;
             }
             
             return create_null_value();
@@ -4910,6 +4959,36 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
             return member_val;
+        }
+
+        case AST_STATIC_ACCESS: {
+            // 1. Get the type name from the token
+            char* name_str = node->as.static_access.type_name.lexeme;
+            name_str[strlen(name_str) - 1] = '\0'; // Remove '>'
+            const char* type_name = name_str + 1;   // Remove '<'
+            const char* member_name = node->as.static_access.member_name.lexeme;
+
+            // 2. Find the type's definition
+            GraveyardValue type_val;
+            if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
+                fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", node->line, type_name);
+                return create_null_value();
+            }
+            GraveyardType* type = type_val.as.type;
+            GraveyardValue member_val;
+
+            // 3. Check if the member is a static method.
+            if (monolith_get(&type->methods, member_name, &member_val)) {
+                return member_val; // Return the raw, unbound function
+            }
+
+            // 4. Check if the member is a static field.
+            if (monolith_get(&type->fields, member_name, &member_val)) {
+                return member_val;
+            }
+            
+            fprintf(stderr, "Runtime Error [line %d]: Static member '%s' not found on type <%s>.\n", node->line, member_name, type_name);
+            return create_null_value();
         }
     }
 
