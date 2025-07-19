@@ -18,6 +18,10 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+#include <wincrypt.h>
+#endif
+
 #define MAX_LEXEME_LEN 65
 
 typedef enum {
@@ -147,7 +151,8 @@ typedef enum {
     AST_WAIT_STATEMENT,
     AST_RANDOM_EXPRESSION,
     AST_GLOBAL_ACCESS,
-    AST_STATIC_ACCESS
+    AST_STATIC_ACCESS,
+    AST_UID_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -377,6 +382,10 @@ typedef struct {
     Token member_name;
 } AstNodeStaticAccess;
 
+typedef struct {
+    AstNode* length_expr;
+} AstNodeUidExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -421,6 +430,7 @@ struct AstNode {
         AstNodeRandomExpression      random_expression;
         AstNodeGlobalAccess          global_access;
         AstNodeStaticAccess          static_access;
+        AstNodeUidExpression         uid_expression;
     } as;
 };
 
@@ -1136,6 +1146,9 @@ void free_ast(AstNode* node) {
         case AST_WAIT_STATEMENT:
             free_ast(node->as.wait_statement.duration_expr);
             break;
+        case AST_UID_EXPRESSION:
+            free_ast(node->as.uid_expression.length_expr);
+            break;
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
         case AST_RANDOM_EXPRESSION:
@@ -1518,6 +1531,12 @@ static AstNode* parse_fileread_statement(Parser* parser) {
     return node;
 }
 
+static AstNode* parse_uid_expression(Parser* parser) {
+    AstNode* node = create_node(parser, AST_UID_EXPRESSION);
+    node->line = parser->tokens[parser->current - 1].line;
+    node->as.uid_expression.length_expr = parse_expression(parser, 1);
+    return node;
+}
 
 static AstNode* parse_execute_or_eval_expression(Parser* parser) {
     Token execute_token = parser->tokens[parser->current - 1];
@@ -1536,6 +1555,10 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, REFERENCE)) {
+        return parse_uid_expression(parser);
+    }
+
     if (match(parser, NAMESPACE)) {
         if (peek(parser)->type == REFERENCE) {
             consume(parser);
@@ -2602,6 +2625,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 node->line);
             break;
         }
+        case AST_UID_EXPRESSION: {
+            fprintf(file, "(UID_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.uid_expression.length_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2733,6 +2763,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "RANDOM_EXPRESSION") == 0) return AST_RANDOM_EXPRESSION;
     if (strcmp(type_str, "GLOBAL_ACCESS") == 0) return AST_GLOBAL_ACCESS;
     if (strcmp(type_str, "STATIC_ACCESS") == 0) return AST_STATIC_ACCESS;
+    if (strcmp(type_str, "UID_EXPRESSION") == 0) return AST_UID_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3237,6 +3268,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_UID_EXPRESSION: {
+            node->as.uid_expression.length_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -3280,6 +3316,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_MEMBER_ACCESS:
         case AST_EXECUTE_EXPRESSION:
         case AST_WAIT_STATEMENT:
+        case AST_UID_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -3307,7 +3344,55 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     return node;
 }
 
-//EXECUTE----------------------------------------------------------------------
+//EXECUTE-------------------------------------------------------
+// Helper function to generate a random hex string of a given length.
+// Returns a malloc'd string that the caller must free.
+static char* generate_random_hex_string(int length) {
+    if (length <= 0) return NULL;
+
+    // We need length/2 bytes of random data, rounded up.
+    int num_bytes = (length + 1) / 2;
+    unsigned char* random_bytes = malloc(num_bytes);
+    if (!random_bytes) return NULL;
+
+    // Get cryptographically secure random bytes from the OS.
+#ifdef _WIN32
+    HCRYPTPROV hCryptProv;
+    if (!CryptAcquireContext(&hCryptProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        free(random_bytes);
+        return NULL;
+    }
+    if (!CryptGenRandom(hCryptProv, num_bytes, random_bytes)) {
+        CryptReleaseContext(hCryptProv, 0);
+        free(random_bytes);
+        return NULL;
+    }
+    CryptReleaseContext(hCryptProv, 0);
+#else
+    FILE* urandom = fopen("/dev/urandom", "r");
+    if (!urandom) {
+        free(random_bytes);
+        return NULL;
+    }
+    fread(random_bytes, 1, num_bytes, urandom);
+    fclose(urandom);
+#endif
+
+    // Convert the random bytes to a hex string.
+    char* hex_string = malloc(length + 1);
+    if (!hex_string) {
+        free(random_bytes);
+        return NULL;
+    }
+
+    for (int i = 0; i < num_bytes; i++) {
+        sprintf(hex_string + (i * 2), "%02x", random_bytes[i]);
+    }
+    hex_string[length] = '\0'; // Ensure it's the correct length if length is odd.
+    
+    free(random_bytes);
+    return hex_string;
+}
 
 static Environment* get_global_environment(Graveyard* gy) {
     Environment* env = gy->environment;
@@ -5029,6 +5114,32 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             
             fprintf(stderr, "Runtime Error [line %d]: Static member '%s' not found on type <%s>.\n", node->line, member_name, type_name);
             return create_null_value();
+        }
+
+        case AST_UID_EXPRESSION: {
+            // 1. Evaluate the length expression.
+            GraveyardValue length_val = execute_node(gy, node->as.uid_expression.length_expr);
+            if (length_val.type != VAL_NUMBER) {
+                fprintf(stderr, "Runtime Error [line %d]: Length for UID operation must be a number.\n", node->line);
+                return create_null_value();
+            }
+            int length = (int)length_val.as.number;
+            if (length <= 0) {
+                 fprintf(stderr, "Runtime Error [line %d]: UID length must be a positive number.\n", node->line);
+                return create_null_value();
+            }
+
+            // 2. Generate the UID.
+            char* uid_str = generate_random_hex_string(length);
+            if (!uid_str) {
+                fprintf(stderr, "Runtime Error [line %d]: Failed to generate random UID.\n", node->line);
+                return create_null_value();
+            }
+
+            // 3. Return it as a Graveyard string.
+            GraveyardValue result = create_string_value(uid_str);
+            free(uid_str); // create_string_value makes its own copy
+            return result;
         }
     }
 
