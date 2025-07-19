@@ -594,7 +594,6 @@ GraveyardTokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == ':' && c2 == '<' && c3 == '<') return FILEREAD;
     if (c1 == ':' && c2 == '>' && c3 == '>') return FILEWRITE;
     if (c1 == '/' && c2 == '%' && c3 == '=') return MODULOASSIGNMENT;
-    if (c1 == '$' && c2 == '>' && c3 == '>') return EXECUTE;
     return UNKNOWN;
 }
 
@@ -629,6 +628,7 @@ GraveyardTokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '?' && c2 == '?') return NULLCOALESCE;
     if (c1 == ':' && c2 == '~') return WAIT;
     if (c1 == ':' && c2 == '?') return RANDOM;
+    if (c1 == '!' && c2 == '!') return EXECUTE;
     return UNKNOWN;
 }
 
