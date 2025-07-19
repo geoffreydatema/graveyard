@@ -4130,7 +4130,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         case VAL_STRING:    return create_string_value("string");
                         case VAL_ARRAY:     return create_string_value("array");
                         case VAL_HASHTABLE: return create_string_value("hashtable");
-                        case VAL_FUNCTION:  return create_string_value("function");
+                        case VAL_FUNCTION:
+                        case VAL_BOUND_METHOD:
+                            return create_string_value("function");
+                        case VAL_TYPE:
+                            return create_string_value("type");
+                        case VAL_INSTANCE:
+                            return create_string_value(right.as.instance->type->name->chars);
                         case VAL_NUMBER:
                             if (fmod(right.as.number, 1.0) == 0) {
                                 return create_string_value("integer");
