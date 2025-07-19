@@ -668,16 +668,56 @@ GraveyardTokenType identify_single_char_token(char c) {
 
 bool tokenize(Graveyard *gy) {
     const char* source = gy->source_code;
-    const char* start_ptr = strstr(source, "::{");
-    if (!start_ptr) {
+    const char* scope_start_marker = strstr(source, "::{");
+    if (!scope_start_marker) {
         fprintf(stderr, "Fatal error: Could not find global scope start '::{'.\n");
         return false;
     }
-    start_ptr += 3;
+    const char* start_ptr = scope_start_marker + 3;
 
-    const char* end_ptr = strrchr(start_ptr, '}');
-    if (!end_ptr) {
-        fprintf(stderr, "Fatal error: Could not find global scope end '}'.\n");
+    const char* scanner = start_ptr;
+    int brace_depth = 1;
+    const char* end_ptr = NULL;
+
+    while (*scanner != '\0') {
+        if (*scanner == '"') {
+            scanner++;
+            while (*scanner != '\0' && (*scanner != '"' || *(scanner - 1) == '\\')) {
+                scanner++;
+            }
+        } else if (*scanner == '\'') {
+            scanner++;
+            while (*scanner != '\0' && (*scanner != '\'' || *(scanner - 1) == '\\')) {
+                scanner++;
+            }
+        } else if (*scanner == '/' && *(scanner + 1) == '/') {
+            scanner += 2;
+            while (*scanner != '\0' && *scanner != '\n') {
+                scanner++;
+            }
+        } else if (*scanner == '/' && *(scanner + 1) == '*') {
+            scanner += 2;
+            while (*scanner != '\0' && !(*scanner == '*' && *(scanner + 1) == '/')) {
+                scanner++;
+            }
+            if (*scanner != '\0') scanner += 2;
+        }
+        if (*scanner == '{') {
+            brace_depth++;
+        } else if (*scanner == '}') {
+            brace_depth--;
+            if (brace_depth == 0) {
+                end_ptr = scanner;
+                break;
+            }
+        }
+        if (*scanner != '\0') {
+            scanner++;
+        }
+    }
+
+    if (end_ptr == NULL) {
+        fprintf(stderr, "Fatal error: Could not find matching '}' for global scope.\n");
         return false;
     }
     
@@ -1497,10 +1537,8 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 
 static AstNode* parse_primary(Parser* parser) {
     if (match(parser, NAMESPACE)) {
-        // After seeing '::', look at the next token to decide what to parse.
         if (peek(parser)->type == REFERENCE) {
-            // --- It's a Global Access expression (::#name) ---
-            consume(parser); // Consume '#'
+            consume(parser);
             Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '::#'.");
             AstNode* node = create_node(parser, AST_GLOBAL_ACCESS);
             node->line = member_name.line;
@@ -1508,8 +1546,7 @@ static AstNode* parse_primary(Parser* parser) {
             return node;
 
         } else if (peek(parser)->type == TYPE) {
-            // --- It's a Static Access expression (::<type>#name) ---
-            Token type_name = *consume(parser); // Consume '<type>'
+            Token type_name = *consume(parser);
             expect(parser, REFERENCE, "Expected '#' after type name for static member access.");
             Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
 
@@ -1520,7 +1557,6 @@ static AstNode* parse_primary(Parser* parser) {
             return node;
 
         } else {
-            // --- It's a regular Namespace Access expression (::ns#name) ---
             AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
             node->line = parser->tokens[parser->current - 1].line;
             Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
@@ -2033,6 +2069,12 @@ static AstNode* parse_statement(Parser* parser) {
         parser->tokens[parser->current + 2].type == LEFTBRACE) {
         consume(parser);
         return parse_namespace_declaration(parser);
+    }
+    if (peek(parser)->type == NAMESPACE &&
+        parser->tokens[parser->current + 1].type == LEFTBRACE) {
+        consume(parser);
+        error_at_token(parser, peek(parser), "Cannot declare a nested global scope. Use a named namespace instead.");
+        return NULL;
     }
     if (match(parser, QUESTIONMARK)) {
         Token keyword = parser->tokens[parser->current - 1];
@@ -4064,15 +4106,12 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 monolith_set(&object.as.instance->fields, target_node->as.member_access.member.lexeme, value_to_assign);
                 return value_to_assign;
             } else if (target_node->type == AST_GLOBAL_ACCESS) {
-                // This is a global variable assignment: ::#x = ...
                 const char* member_name = target_node->as.global_access.member_name.lexeme;
                 Environment* global_env = get_global_environment(gy);
                 
-                // Define or update the variable in the global scope.
                 environment_define(global_env, member_name, value_to_assign);
                 return value_to_assign;
             } else if (target_node->type == AST_STATIC_ACCESS) {
-                // This is a static field assignment: ::<type>#x = ...
                 char* name_str = target_node->as.static_access.type_name.lexeme;
                 name_str[strlen(name_str) - 1] = '\0';
                 const char* type_name = name_str + 1;
@@ -4084,7 +4123,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     return create_null_value();
                 }
 
-                // Set the field in the type's own fields table.
                 monolith_set(&type_val.as.type->fields, member_name, value_to_assign);
                 return value_to_assign;
             }
@@ -4968,13 +5006,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_STATIC_ACCESS: {
-            // 1. Get the type name from the token
             char* name_str = node->as.static_access.type_name.lexeme;
-            name_str[strlen(name_str) - 1] = '\0'; // Remove '>'
-            const char* type_name = name_str + 1;   // Remove '<'
+            name_str[strlen(name_str) - 1] = '\0';
+            const char* type_name = name_str + 1;
             const char* member_name = node->as.static_access.member_name.lexeme;
 
-            // 2. Find the type's definition
             GraveyardValue type_val;
             if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
                 fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", node->line, type_name);
@@ -4983,12 +5019,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardType* type = type_val.as.type;
             GraveyardValue member_val;
 
-            // 3. Check if the member is a static method.
             if (monolith_get(&type->methods, member_name, &member_val)) {
-                return member_val; // Return the raw, unbound function
+                return member_val;
             }
 
-            // 4. Check if the member is a static field.
             if (monolith_get(&type->fields, member_name, &member_val)) {
                 return member_val;
             }
