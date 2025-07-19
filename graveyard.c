@@ -145,7 +145,8 @@ typedef enum {
     AST_EXECUTE_EXPRESSION,
     AST_CAT_CONSTANT_EXPRESSION,
     AST_WAIT_STATEMENT,
-    AST_RANDOM_EXPRESSION
+    AST_RANDOM_EXPRESSION,
+    AST_GLOBAL_ACCESS
 } AstNodeType;
 
 typedef struct {
@@ -366,6 +367,10 @@ typedef struct {
     Token keyword;
 } AstNodeRandomExpression;
 
+typedef struct {
+    Token member_name;
+} AstNodeGlobalAccess;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -408,6 +413,7 @@ struct AstNode {
         AstNodeCatConstantExpression cat_constant_expression;
         AstNodeWaitStatement         wait_statement;
         AstNodeRandomExpression      random_expression;
+        AstNodeGlobalAccess          global_access;
     } as;
 };
 
@@ -1083,6 +1089,7 @@ void free_ast(AstNode* node) {
         case AST_WAIT_STATEMENT:
             free_ast(node->as.wait_statement.duration_expr);
             break;
+        case AST_GLOBAL_ACCESS:
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -1482,16 +1489,30 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 
 static AstNode* parse_primary(Parser* parser) {
     if (match(parser, NAMESPACE)) {
-        AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
-        node->line = parser->tokens[parser->current - 1].line;
+        // After seeing '::', look at the next token to decide what to parse.
+        if (peek(parser)->type == REFERENCE) {
+            // --- It's a Global Access expression (::#name) ---
+            consume(parser); // Consume '#'
+            Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '::#'.");
+            
+            AstNode* node = create_node(parser, AST_GLOBAL_ACCESS);
+            node->line = member_name.line;
+            node->as.global_access.member_name = member_name;
+            return node;
 
-        Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
-        expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
-        Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
+        } else {
+            // --- It's a regular Namespace Access expression (::ns#name) ---
+            AstNode* node = create_node(parser, AST_NAMESPACE_ACCESS);
+            node->line = parser->tokens[parser->current - 1].line;
 
-        node->as.namespace_access.namespace_name = namespace_name;
-        node->as.namespace_access.member_name = member_name;
-        return node;
+            Token namespace_name = *expect(parser, IDENTIFIER, "Expected namespace name after '::'.");
+            expect(parser, REFERENCE, "Expected '#' after namespace name for member access.");
+            Token member_name = *expect(parser, IDENTIFIER, "Expected member name after '#'.");
+
+            node->as.namespace_access.namespace_name = namespace_name;
+            node->as.namespace_access.member_name = member_name;
+            return node;
+        }
     }
     if (match(parser, RANDOM)) {
         AstNode* node = create_node(parser, AST_RANDOM_EXPRESSION);
@@ -2509,6 +2530,12 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, "(RANDOM_EXPRESSION line=%d)\n", node->line);
             break;
         }
+        case AST_GLOBAL_ACCESS: {
+            fprintf(file, "(GLOBAL_ACCESS member=\"%s\" line=%d)\n",
+                node->as.global_access.member_name.lexeme,
+                node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2638,6 +2665,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "CAT_CONSTANT_EXPRESSION") == 0) return AST_CAT_CONSTANT_EXPRESSION;
     if (strcmp(type_str, "WAIT_STATEMENT") == 0) return AST_WAIT_STATEMENT;
     if (strcmp(type_str, "RANDOM_EXPRESSION") == 0) return AST_RANDOM_EXPRESSION;
+    if (strcmp(type_str, "GLOBAL_ACCESS") == 0) return AST_GLOBAL_ACCESS;
     return AST_UNKNOWN;
 }
 
@@ -3125,6 +3153,12 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 
         case AST_WAIT_STATEMENT: {
             node->as.wait_statement.duration_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
+        case AST_GLOBAL_ACCESS: {
+            get_attribute_string(line, "member=", node->as.global_access.member_name.lexeme, MAX_LEXEME_LEN);
+            node->as.global_access.member_name.type = IDENTIFIER;
             break;
         }
 
@@ -3996,6 +4030,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 
                 monolith_set(&object.as.instance->fields, target_node->as.member_access.member.lexeme, value_to_assign);
                 return value_to_assign;
+            } else if (target_node->type == AST_GLOBAL_ACCESS) {
+                // This is a global variable assignment: ::#x = ...
+                const char* member_name = target_node->as.global_access.member_name.lexeme;
+                Environment* global_env = get_global_environment(gy);
+                
+                // Define or update the variable in the global scope.
+                environment_define(global_env, member_name, value_to_assign);
+                return value_to_assign;
             }
             
             return create_null_value();
@@ -4856,6 +4898,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_RANDOM_EXPRESSION: {
             double random_val = (double)rand() / (double)RAND_MAX;
             return create_number_value(random_val);
+        }
+
+        case AST_GLOBAL_ACCESS: {
+            const char* member_name = node->as.global_access.member_name.lexeme;
+            Environment* global_env = get_global_environment(gy);
+            GraveyardValue member_val;
+
+            if (!environment_get(global_env, member_name, &member_val)) {
+                fprintf(stderr, "Runtime Error [line %d]: Global variable '%s' not found.\n", node->line, member_name);
+                return create_null_value();
+            }
+            return member_val;
         }
     }
 
