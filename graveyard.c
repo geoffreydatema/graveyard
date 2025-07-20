@@ -153,7 +153,8 @@ typedef enum {
     AST_GLOBAL_ACCESS,
     AST_STATIC_ACCESS,
     AST_UID_EXPRESSION,
-    AST_SLICE_EXPRESSION
+    AST_SLICE_EXPRESSION,
+    AST_ARGV_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -394,6 +395,10 @@ typedef struct {
     AstNode* step_expr;
 } AstNodeSliceExpression;
 
+typedef struct {
+    Token keyword;
+} AstNodeArgvExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -440,6 +445,7 @@ struct AstNode {
         AstNodeStaticAccess          static_access;
         AstNodeUidExpression         uid_expression;
         AstNodeSliceExpression       slice_expression;
+        AstNodeArgvExpression        argv_expression;
     } as;
 };
 
@@ -563,6 +569,7 @@ typedef struct {
     size_t token_count;
     AstNode *ast_root;
     Monolith namespaces;
+    GraveyardValue arguments;
     Environment* environment;
     GraveyardValue last_executed_value;
     bool is_returning;
@@ -1164,6 +1171,7 @@ void free_ast(AstNode* node) {
             free_ast(node->as.slice_expression.stop_expr);
             free_ast(node->as.slice_expression.step_expr);
             break;
+        case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
         case AST_RANDOM_EXPRESSION:
@@ -1570,6 +1578,13 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (match(parser, COLON)) {
+        AstNode* node = create_node(parser, AST_ARGV_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.argv_expression.keyword = parser->tokens[parser->current - 1];
+        return node;
+    }
+
     if (match(parser, REFERENCE)) {
         return parse_uid_expression(parser);
     }
@@ -5315,6 +5330,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
         }
+
+        case AST_ARGV_EXPRESSION: {
+            return gy->arguments;
+        }
     }
 
     return create_null_value();
@@ -5411,7 +5430,7 @@ static bool compile_source(Graveyard* gy) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
+    if (argc < 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file>\n");
         fprintf(stderr, "Modes:\n");
         fprintf(stderr, "  --tokenize, -t          Tokenize source and print tokens\n");
@@ -5424,6 +5443,34 @@ int main(int argc, char *argv[]) {
 
     Graveyard *gy = graveyard_init(argv[1], argv[2]);
     if (!gy) { return 1; }
+
+    gy->arguments = create_hashtable_value();
+    GraveyardValue args_list = create_array_value();
+    GraveyardValue kwargs_ht = create_hashtable_value();
+
+    for (int i = 3; i < argc; i++) {
+        char* arg = argv[i];
+        if (strncmp(arg, "--", 2) == 0) {
+            char* key = arg + 2;
+            char* value_ptr = strchr(key, '=');
+            
+            if (value_ptr != NULL) {
+                *value_ptr = '\0';
+                char* value = value_ptr + 1;
+                hashtable_set(kwargs_ht.as.hashtable, create_string_value(key), create_string_value(value));
+            } else {
+                hashtable_set(kwargs_ht.as.hashtable, create_string_value(key), create_bool_value(true));
+            }
+        } else if (strncmp(arg, "-", 1) == 0) {
+            char* key = arg + 1;
+            hashtable_set(kwargs_ht.as.hashtable, create_string_value(key), create_bool_value(true));
+        } else {
+            array_append(args_list.as.array, create_string_value(arg));
+        }
+    }
+    
+    hashtable_set(gy->arguments.as.hashtable, create_string_value("args"), args_list);
+    hashtable_set(gy->arguments.as.hashtable, create_string_value("kwargs"), kwargs_ht);
 
     bool success = true;
 
