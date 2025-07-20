@@ -152,7 +152,8 @@ typedef enum {
     AST_RANDOM_EXPRESSION,
     AST_GLOBAL_ACCESS,
     AST_STATIC_ACCESS,
-    AST_UID_EXPRESSION
+    AST_UID_EXPRESSION,
+    AST_SLICE_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -386,6 +387,13 @@ typedef struct {
     AstNode* length_expr;
 } AstNodeUidExpression;
 
+typedef struct {
+    AstNode* collection;
+    AstNode* start_expr;
+    AstNode* stop_expr;
+    AstNode* step_expr;
+} AstNodeSliceExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -431,6 +439,7 @@ struct AstNode {
         AstNodeGlobalAccess          global_access;
         AstNodeStaticAccess          static_access;
         AstNodeUidExpression         uid_expression;
+        AstNodeSliceExpression       slice_expression;
     } as;
 };
 
@@ -1149,6 +1158,12 @@ void free_ast(AstNode* node) {
         case AST_UID_EXPRESSION:
             free_ast(node->as.uid_expression.length_expr);
             break;
+        case AST_SLICE_EXPRESSION:
+            free_ast(node->as.slice_expression.collection);
+            free_ast(node->as.slice_expression.start_expr);
+            free_ast(node->as.slice_expression.stop_expr);
+            free_ast(node->as.slice_expression.step_expr);
+            break;
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
         case AST_RANDOM_EXPRESSION:
@@ -1693,14 +1708,52 @@ static AstNode* parse_postfix(Parser* parser) {
 
     while (true) {
         if (match(parser, LEFTBRACKET)) {
-            AstNode* index = parse_expression(parser, 1);
-            expect(parser, RIGHTBRACKET, "Expected ']' after subscript index.");
-            AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
-            if (!subscript_node) { free_ast(expr); free_ast(index); return NULL; }
-            subscript_node->line = expr->line;
-            subscript_node->as.subscript.array = expr;
-            subscript_node->as.subscript.index = index;
-            expr = subscript_node;
+            AstNode* start_expr = NULL;
+            AstNode* stop_expr = NULL;
+            AstNode* step_expr = NULL;
+            bool is_slice = false;
+
+            if (peek(parser)->type == NAMESPACE) {
+                consume(parser);
+                is_slice = true;
+                if (peek(parser)->type != RIGHTBRACKET) {
+                    step_expr = parse_expression(parser, 1);
+                }
+            } else {
+                if (peek(parser)->type != COLON) {
+                    start_expr = parse_expression(parser, 1);
+                }
+
+                if (match(parser, COLON)) {
+                    is_slice = true;
+                    if (peek(parser)->type != COLON && peek(parser)->type != RIGHTBRACKET) {
+                        stop_expr = parse_expression(parser, 1);
+                    }
+                    if (match(parser, COLON)) {
+                        if (peek(parser)->type != RIGHTBRACKET) {
+                            step_expr = parse_expression(parser, 1);
+                        }
+                    }
+                }
+            }
+
+            expect(parser, RIGHTBRACKET, "Expected ']' to close subscript or slice.");
+
+            if (is_slice) {
+                AstNode* slice_node = create_node(parser, AST_SLICE_EXPRESSION);
+                slice_node->line = expr->line;
+                slice_node->as.slice_expression.collection = expr;
+                slice_node->as.slice_expression.start_expr = start_expr;
+                slice_node->as.slice_expression.stop_expr = stop_expr;
+                slice_node->as.slice_expression.step_expr = step_expr;
+                expr = slice_node;
+            } else {
+                AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
+                subscript_node->line = expr->line;
+                subscript_node->as.subscript.array = expr;
+                subscript_node->as.subscript.index = start_expr;
+                expr = subscript_node;
+            }
 
         } else if (match(parser, REFERENCE)) {
             Token op = parser->tokens[parser->current - 1];
@@ -2632,6 +2685,22 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_SLICE_EXPRESSION: {
+            fprintf(file, "(SLICE_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.slice_expression.collection, indent + 1);
+            if (node->as.slice_expression.start_expr) write_ast_node(file, node->as.slice_expression.start_expr, indent + 1);
+            else { for (int i=0; i<indent+1; ++i) fprintf(file, "  "); fprintf(file, "(NULL_EXPR)\n"); }
+            
+            if (node->as.slice_expression.stop_expr) write_ast_node(file, node->as.slice_expression.stop_expr, indent + 1);
+            else { for (int i=0; i<indent+1; ++i) fprintf(file, "  "); fprintf(file, "(NULL_EXPR)\n"); }
+
+            if (node->as.slice_expression.step_expr) write_ast_node(file, node->as.slice_expression.step_expr, indent + 1);
+            else { for (int i=0; i<indent+1; ++i) fprintf(file, "  "); fprintf(file, "(NULL_EXPR)\n"); }
+
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2764,6 +2833,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "GLOBAL_ACCESS") == 0) return AST_GLOBAL_ACCESS;
     if (strcmp(type_str, "STATIC_ACCESS") == 0) return AST_STATIC_ACCESS;
     if (strcmp(type_str, "UID_EXPRESSION") == 0) return AST_UID_EXPRESSION;
+    if (strcmp(type_str, "SLICE_EXPRESSION") == 0) return AST_SLICE_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -2809,6 +2879,14 @@ bool load_ast_from_file(Graveyard* gy, const char* filename) {
     }
 
     return gy->ast_root != NULL;
+}
+
+static AstNode* parse_optional_expr(Lines* lines, int* idx, int indent, Parser* p) {
+    if (*idx < lines->count && strstr(lines->lines[*idx], "(NULL_EXPR)")) {
+        (*idx)++;
+        return NULL;
+    }
+    return parse_node_recursive(lines, idx, indent, p);
 }
 
 static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int expected_indent, Parser* parser) {
@@ -3272,6 +3350,14 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             node->as.uid_expression.length_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
+        
+        case AST_SLICE_EXPRESSION: {
+            node->as.slice_expression.collection = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.slice_expression.start_expr = parse_optional_expr(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.slice_expression.stop_expr = parse_optional_expr(lines, current_line_idx, expected_indent + 1, parser);
+            node->as.slice_expression.step_expr = parse_optional_expr(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
 
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
@@ -3317,6 +3403,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_EXECUTE_EXPRESSION:
         case AST_WAIT_STATEMENT:
         case AST_UID_EXPRESSION:
+        case AST_SLICE_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -3345,17 +3432,13 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 }
 
 //EXECUTE-------------------------------------------------------
-// Helper function to generate a random hex string of a given length.
-// Returns a malloc'd string that the caller must free.
 static char* generate_random_hex_string(int length) {
     if (length <= 0) return NULL;
 
-    // We need length/2 bytes of random data, rounded up.
     int num_bytes = (length + 1) / 2;
     unsigned char* random_bytes = malloc(num_bytes);
     if (!random_bytes) return NULL;
 
-    // Get cryptographically secure random bytes from the OS.
 #ifdef _WIN32
     HCRYPTPROV hCryptProv;
     if (!CryptAcquireContext(&hCryptProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
@@ -3378,7 +3461,6 @@ static char* generate_random_hex_string(int length) {
     fclose(urandom);
 #endif
 
-    // Convert the random bytes to a hex string.
     char* hex_string = malloc(length + 1);
     if (!hex_string) {
         free(random_bytes);
@@ -3388,7 +3470,7 @@ static char* generate_random_hex_string(int length) {
     for (int i = 0; i < num_bytes; i++) {
         sprintf(hex_string + (i * 2), "%02x", random_bytes[i]);
     }
-    hex_string[length] = '\0'; // Ensure it's the correct length if length is odd.
+    hex_string[length] = '\0';
     
     free(random_bytes);
     return hex_string;
@@ -3553,6 +3635,45 @@ static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
 }
 
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node);
+
+static bool calculate_slice_bounds(long length, AstNode* start_expr, AstNode* stop_expr, AstNode* step_expr,
+                                   long* out_start, long* out_stop, long* out_step, Graveyard* gy) {
+
+    *out_step = 1;
+    if (step_expr) {
+        GraveyardValue step_val = execute_node(gy, step_expr);
+        if (step_val.type != VAL_NUMBER) {
+            return false; 
+        }
+        *out_step = (long)step_val.as.number;
+    }
+    if (*out_step == 0) {
+        return false;
+    }
+    *out_start = (*out_step > 0) ? 0 : length - 1;
+    if (start_expr) {
+        GraveyardValue start_val = execute_node(gy, start_expr);
+        if (start_val.type == VAL_NUMBER) {
+            *out_start = (long)start_val.as.number;
+            if (*out_start < 0) *out_start += length;
+        }
+    }
+
+    *out_stop = (*out_step > 0) ? length : -1;
+    if (stop_expr) {
+        GraveyardValue stop_val = execute_node(gy, stop_expr);
+        if (stop_val.type == VAL_NUMBER) {
+            *out_stop = (long)stop_val.as.number;
+            if (*out_stop < 0) *out_stop += length;
+        }
+    }
+
+    if (*out_start < 0) *out_start = 0;
+    if (*out_start > length) *out_start = length;
+    if (*out_stop > length) *out_stop = length;
+
+    return true;
+}
 
 static GraveyardValue execute_block(Graveyard* gy, AstNode* block_node, Environment* environment) {
     Environment* previous = gy->environment;
@@ -5117,7 +5238,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_UID_EXPRESSION: {
-            // 1. Evaluate the length expression.
             GraveyardValue length_val = execute_node(gy, node->as.uid_expression.length_expr);
             if (length_val.type != VAL_NUMBER) {
                 fprintf(stderr, "Runtime Error [line %d]: Length for UID operation must be a number.\n", node->line);
@@ -5129,17 +5249,71 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
 
-            // 2. Generate the UID.
             char* uid_str = generate_random_hex_string(length);
             if (!uid_str) {
                 fprintf(stderr, "Runtime Error [line %d]: Failed to generate random UID.\n", node->line);
                 return create_null_value();
             }
 
-            // 3. Return it as a Graveyard string.
             GraveyardValue result = create_string_value(uid_str);
-            free(uid_str); // create_string_value makes its own copy
+            free(uid_str);
             return result;
+        }
+
+        case AST_SLICE_EXPRESSION: {
+            GraveyardValue collection = execute_node(gy, node->as.slice_expression.collection);
+
+            if (collection.type == VAL_ARRAY) {
+                GraveyardArray* arr = collection.as.array;
+                long start, stop, step;
+                
+                if (!calculate_slice_bounds(arr->count, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
+                    fprintf(stderr, "Runtime Error [line %d]: Slice step cannot be zero.\n", node->line);
+                    return create_null_value();
+                }
+
+                GraveyardValue result_array = create_array_value();
+                if (step > 0) {
+                    for (long i = start; i < stop; i += step) {
+                        array_append(result_array.as.array, arr->values[i]);
+                    }
+                } else {
+                    for (long i = start; i > stop; i += step) {
+                        array_append(result_array.as.array, arr->values[i]);
+                    }
+                }
+                return result_array;
+
+            } else if (collection.type == VAL_STRING) {
+                GraveyardString* str = collection.as.string;
+                long start, stop, step;
+
+                if (!calculate_slice_bounds(str->length, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
+                    fprintf(stderr, "Runtime Error [line %d]: Slice step cannot be zero.\n", node->line);
+                    return create_null_value();
+                }
+
+                size_t new_len = 0;
+                char* new_chars = malloc(str->length + 1);
+                if (step > 0) {
+                    for (long i = start; i < stop; i += step) {
+                        new_chars[new_len++] = str->chars[i];
+                    }
+                } else {
+                    for (long i = start; i > stop; i += step) {
+                        new_chars[new_len++] = str->chars[i];
+                    }
+                }
+                new_chars[new_len] = '\0';
+                
+                GraveyardValue result_string = create_string_value(new_chars);
+                free(new_chars);
+                return result_string;
+
+            } else {
+                fprintf(stderr, "Runtime Error [line %d]: Slicing can only be applied to arrays and strings.\n", node->line);
+                return create_null_value();
+            }
         }
     }
 
