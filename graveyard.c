@@ -4773,6 +4773,33 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
                 goto type_error;
             }
+            
+            if (op_type == DIVISION) {
+                if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                    char left_str[1024];
+                    char right_str[1024];
+                    if (left.type == VAL_STRING) strncpy(left_str, left.as.string->chars, sizeof(left_str));
+                    else value_to_string(left, left_str, sizeof(left_str));
+                    
+                    if (right.type == VAL_STRING) strncpy(right_str, right.as.string->chars, sizeof(right_str));
+                    else value_to_string(right, right_str, sizeof(right_str));
+
+                    size_t left_len = strlen(left_str);
+                    while (left_len > 0 && (left_str[left_len - 1] == '/' || left_str[left_len - 1] == '\\')) {
+                        left_str[--left_len] = '\0';
+                    }
+
+                    size_t right_offset = 0;
+                    while (right_str[right_offset] == '/' || right_str[right_offset] == '\\') {
+                        right_offset++;
+                    }
+
+                    char result_buffer[2048];
+                    snprintf(result_buffer, sizeof(result_buffer), "%s/%s", left_str, right_str + right_offset);
+                    
+                    return create_string_value(result_buffer);
+                }
+            }
 
             if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
 
