@@ -4759,8 +4759,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
                     char left_str[1024];
                     char right_str[1024];
-                    value_to_string(left, left_str, sizeof(left_str));
-                    value_to_string(right, right_str, sizeof(right_str));
+
+                    if (left.type == VAL_STRING) strncpy(left_str, left.as.string->chars, sizeof(left_str));
+                    else value_to_string(left, left_str, sizeof(left_str));
+                    
+                    if (right.type == VAL_STRING) strncpy(right_str, right.as.string->chars, sizeof(right_str));
+                    else value_to_string(right, right_str, sizeof(right_str));
+
                     size_t total_len = strlen(left_str) + strlen(right_str);
                     if (total_len >= 1024) {
                         fprintf(stderr, "Runtime Error [line %d]: Resulting string from concatenation is too long.\n", node->line);
