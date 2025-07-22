@@ -9,10 +9,6 @@
 #include <time.h>
 #include <sys/stat.h>
 
-#ifndef _WIN32
-#include <sys/wait.h>
-#endif
-
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -21,6 +17,14 @@
 
 #ifdef _WIN32
 #include <wincrypt.h>
+#endif
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+
+#ifndef _WIN32
+#include <dirent.h>
 #endif
 
 #define MAX_LEXEME_LEN 65
@@ -157,7 +161,8 @@ typedef enum {
     AST_SLICE_EXPRESSION,
     AST_ARGV_EXPRESSION,
     AST_EVAL_EXPRESSION,
-    AST_EXISTS_EXPRESSION
+    AST_EXISTS_EXPRESSION,
+    AST_LISTDIR_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -410,6 +415,10 @@ typedef struct {
     AstNode* path_expr;
 } AstNodeExistsExpression;
 
+typedef struct {
+    AstNode* path_expr;
+} AstNodeListdirExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -458,7 +467,8 @@ struct AstNode {
         AstNodeSliceExpression       slice_expression;
         AstNodeArgvExpression        argv_expression;
         AstNodeEvalExpression        eval_expression;
-        AstNodeExistsExpression     exists_expression;
+        AstNodeExistsExpression      exists_expression;
+        AstNodeListdirExpression     listdir_expression;
     } as;
 };
 
@@ -1190,6 +1200,9 @@ void free_ast(AstNode* node) {
         case AST_EXISTS_EXPRESSION:
             free_ast(node->as.exists_expression.path_expr);
             break;
+        case AST_LISTDIR_EXPRESSION:
+            free_ast(node->as.listdir_expression.path_expr);
+            break;
         case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
@@ -1597,6 +1610,16 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (peek(parser)->type == FILEREAD && parser->tokens[parser->current + 1].type == AT) {
+        consume(parser);
+        consume(parser);
+        
+        AstNode* node = create_node(parser, AST_LISTDIR_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.listdir_expression.path_expr = parse_expression(parser, 1);
+        return node;
+    }
+
     if (peek(parser)->type == NULLCOALESCE && parser->tokens[parser->current + 1].type == AT) {
         consume(parser);
         consume(parser);
@@ -2759,6 +2782,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_LISTDIR_EXPRESSION: {
+            fprintf(file, "(LISTDIR_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.listdir_expression.path_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2894,6 +2924,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "SLICE_EXPRESSION") == 0) return AST_SLICE_EXPRESSION;
     if (strcmp(type_str, "EVAL_EXPRESSION") == 0) return AST_EVAL_EXPRESSION;
     if (strcmp(type_str, "EXISTS_EXPRESSION") == 0) return AST_EXISTS_EXPRESSION;
+    if (strcmp(type_str, "LISTDIR_EXPRESSION") == 0) return AST_LISTDIR_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3429,6 +3460,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_LISTDIR_EXPRESSION: {
+            node->as.listdir_expression.path_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -3476,6 +3512,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_SLICE_EXPRESSION:
         case AST_EVAL_EXPRESSION:
         case AST_EXISTS_EXPRESSION:
+        case AST_LISTDIR_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -5523,6 +5560,53 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             bool exists = (stat(path_val.as.string->chars, &buffer) == 0);
             
             return create_bool_value(exists);
+        }
+
+        case AST_LISTDIR_EXPRESSION: {
+            GraveyardValue path_val = execute_node(gy, node->as.listdir_expression.path_expr);
+            if (path_val.type != VAL_STRING) {
+                fprintf(stderr, "Runtime Error [line %d]: Path for list directory must be a string.\n", node->line);
+                return create_null_value();
+            }
+            const char* path = path_val.as.string->chars;
+
+            GraveyardValue result_array = create_array_value();
+
+        #ifdef _WIN32
+            char search_path[1024];
+            snprintf(search_path, sizeof(search_path), "%s\\*", path);
+            WIN32_FIND_DATA find_data;
+            HANDLE find_handle = FindFirstFile(search_path, &find_data);
+
+            if (find_handle == INVALID_HANDLE_VALUE) {
+                fprintf(stderr, "Runtime Error [line %d]: Cannot open directory '%s'.\n", node->line, path);
+                return create_null_value();
+            }
+
+            do {
+                if (strcmp(find_data.cFileName, ".") != 0 && strcmp(find_data.cFileName, "..") != 0) {
+                    array_append(result_array.as.array, create_string_value(find_data.cFileName));
+                }
+            } while (FindNextFile(find_handle, &find_data) != 0);
+
+            FindClose(find_handle);
+        #else
+            DIR* dir = opendir(path);
+            if (!dir) {
+                fprintf(stderr, "Runtime Error [line %d]: Cannot open directory '%s'.\n", node->line, path);
+                return create_null_value();
+            }
+
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                    array_append(result_array.as.array, create_string_value(entry->d_name));
+                }
+            }
+            closedir(dir);
+        #endif
+
+            return result_array;
         }
     }
 
