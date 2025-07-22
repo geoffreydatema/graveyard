@@ -38,7 +38,7 @@ typedef enum {
     PLUS,
     MINUS,
     ASTERISK,
-    DIVISION,
+    FORWARDSLASH,
     EXPONENTIATION,
     MODULO,
     PLUSASSIGNMENT,
@@ -678,7 +678,7 @@ GraveyardTokenType identify_single_char_token(char c) {
         case '+': return PLUS;
         case '-': return MINUS;
         case '*': return ASTERISK;
-        case '/': return DIVISION;
+        case '/': return FORWARDSLASH;
         case '(': return LEFTPARENTHESES;
         case ')': return RIGHTPARENTHESES;
         case '>': return GREATERTHAN;
@@ -1291,7 +1291,7 @@ static int get_operator_precedence(GraveyardTokenType type) {
         case MINUS:
             return 10;
         case ASTERISK:
-        case DIVISION:
+        case FORWARDSLASH:
         case MODULO:
             return 11;
         case EXPONENTIATION:
@@ -2025,7 +2025,7 @@ static GraveyardTokenType get_base_operator(GraveyardTokenType compound_type) {
         case PLUSASSIGNMENT:            return PLUS;
         case SUBTRACTIONASSIGNMENT:     return MINUS;
         case MULTIPLICATIONASSIGNMENT:  return ASTERISK;
-        case DIVISIONASSIGNMENT:        return DIVISION;
+        case DIVISIONASSIGNMENT:        return FORWARDSLASH;
         case EXPONENTIATIONASSIGNMENT:  return EXPONENTIATION;
         case MODULOASSIGNMENT:          return MODULO;
         default:                        return UNKNOWN;
@@ -2051,7 +2051,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
         case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
         case MINUS:          strcpy(binary_op_node->as.binary_op.operator.lexeme, "-"); break;
         case ASTERISK: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
-        case DIVISION:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
+        case FORWARDSLASH:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
         case EXPONENTIATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "**"); break;
         case MODULO:         strcpy(binary_op_node->as.binary_op.operator.lexeme, "/%"); break;
         default:             binary_op_node->as.binary_op.operator.lexeme[0] = '\0'; break;
@@ -4813,7 +4813,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 goto type_error;
             }
             
-            if (op_type == DIVISION) {
+            if (op_type == FORWARDSLASH) {
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
                     char left_str[1024];
                     char right_str[1024];
@@ -4852,7 +4852,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         return create_null_value();
                     }
                     return create_number_value(fmod(left.as.number, right.as.number));
-                case DIVISION:
+                case FORWARDSLASH:
                     if (right.as.number == 0) {
                         fprintf(stderr, "Runtime Error [line %d]: Division by zero.\n", node->line);
                         return create_null_value();
