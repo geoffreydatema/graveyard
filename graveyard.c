@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -155,7 +156,8 @@ typedef enum {
     AST_UID_EXPRESSION,
     AST_SLICE_EXPRESSION,
     AST_ARGV_EXPRESSION,
-    AST_EVAL_EXPRESSION
+    AST_EVAL_EXPRESSION,
+    AST_EXISTS_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -404,6 +406,10 @@ typedef struct {
     AstNode* code_expr;
 } AstNodeEvalExpression;
 
+typedef struct {
+    AstNode* path_expr;
+} AstNodeExistsExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -452,6 +458,7 @@ struct AstNode {
         AstNodeSliceExpression       slice_expression;
         AstNodeArgvExpression        argv_expression;
         AstNodeEvalExpression        eval_expression;
+        AstNodeExistsExpression     exists_expression;
     } as;
 };
 
@@ -1180,6 +1187,9 @@ void free_ast(AstNode* node) {
         case AST_EVAL_EXPRESSION:
             free_ast(node->as.eval_expression.code_expr);
             break;
+        case AST_EXISTS_EXPRESSION:
+            free_ast(node->as.exists_expression.path_expr);
+            break;
         case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
@@ -1587,6 +1597,16 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
+    if (peek(parser)->type == NULLCOALESCE && parser->tokens[parser->current + 1].type == AT) {
+        consume(parser);
+        consume(parser);
+        
+        AstNode* node = create_node(parser, AST_EXISTS_EXPRESSION);
+        node->line = parser->tokens[parser->current - 1].line;
+        node->as.exists_expression.path_expr = parse_expression(parser, 1);
+        return node;
+    }
+
     if (match(parser, COLON)) {
         AstNode* node = create_node(parser, AST_ARGV_EXPRESSION);
         node->line = parser->tokens[parser->current - 1].line;
@@ -5476,6 +5496,19 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             gy->environment = saved_env;
 
             return result;
+        }
+
+        case AST_EXISTS_EXPRESSION: {
+            GraveyardValue path_val = execute_node(gy, node->as.exists_expression.path_expr);
+            if (path_val.type != VAL_STRING) {
+                fprintf(stderr, "Runtime Error [line %d]: Path for exists check must be a string.\n", node->line);
+                return create_null_value();
+            }
+
+            struct stat buffer;
+            bool exists = (stat(path_val.as.string->chars, &buffer) == 0);
+            
+            return create_bool_value(exists);
         }
     }
 
