@@ -585,6 +585,19 @@ typedef struct {
 } Lines;
 
 typedef struct {
+    char** items;
+    size_t count;
+    size_t capacity;
+} StringList;
+
+typedef struct {
+    StringList included_files;
+    char* output_buffer;
+    size_t output_len;
+    size_t output_capacity;
+} Preprocessor;
+
+typedef struct {
     const char *mode;
     const char *filename;
     char *source_code;
@@ -713,6 +726,109 @@ GraveyardTokenType identify_single_char_token(char c) {
         case '.': return PERIOD;
         default: return UNKNOWN;
     }
+}
+
+static bool preprocess_source(Preprocessor* pp, const char* source);
+
+static char* extract_graveyard_code(const char* file_content) {
+    const char* start_marker = strstr(file_content, "::{");
+    if (!start_marker) return NULL;
+    const char* start_ptr = start_marker + 3;
+
+    const char* scanner = start_ptr;
+    int brace_depth = 1;
+    const char* end_ptr = NULL;
+    while (*scanner != '\0') {
+        if (*scanner == '"') { scanner++; while (*scanner != '\0' && (*scanner != '"' || *(scanner - 1) == '\\')) scanner++; }
+        else if (*scanner == '\'') { scanner++; while (*scanner != '\0' && (*scanner != '\'' || *(scanner - 1) == '\\')) scanner++; }
+        else if (*scanner == '{') brace_depth++;
+        else if (*scanner == '}') {
+            brace_depth--;
+            if (brace_depth == 0) {
+                end_ptr = scanner;
+                break;
+            }
+        }
+        if (*scanner != '\0') scanner++;
+    }
+    if (end_ptr == NULL) return NULL;
+
+    size_t len = end_ptr - start_ptr;
+    char* code = malloc(len + 1);
+    strncpy(code, start_ptr, len);
+    code[len] = '\0';
+    return code;
+}
+
+static bool preprocess_source(Preprocessor* pp, const char* source) {
+    const char* current = source;
+    while (*current != '\0') {
+        if (*current == '@' && *(current + 1) == '"') {
+            const char* path_start = current + 2;
+            const char* path_end = strchr(path_start, '"');
+            if (!path_end) {
+                fprintf(stderr, "Preprocessor error: Unterminated path string in import statement.\n");
+                return false;
+            }
+
+            char path[256];
+            strncpy(path, path_start, path_end - path_start);
+            path[path_end - path_start] = '\0';
+
+            bool already_included = false;
+            for (size_t i = 0; i < pp->included_files.count; i++) {
+                if (strcmp(pp->included_files.items[i], path) == 0) {
+                    already_included = true;
+                    break;
+                }
+            }
+
+            if (!already_included) {
+                if (pp->included_files.count >= pp->included_files.capacity) {
+                    pp->included_files.capacity *= 2;
+                    pp->included_files.items = realloc(pp->included_files.items, pp->included_files.capacity * sizeof(char*));
+                }
+                pp->included_files.items[pp->included_files.count++] = strdup(path);
+
+                FILE* import_file = fopen(path, "r");
+                if (!import_file) {
+                    fprintf(stderr, "Preprocessor error: Cannot open import file '%s'.\n", path);
+                    return false;
+                }
+                char* import_content = load(import_file, NULL);
+                fclose(import_file);
+                
+                char* import_code = extract_graveyard_code(import_content);
+                if (import_code) {
+                    if (!preprocess_source(pp, import_code)) {
+                        free(import_code);
+                        free(import_content);
+                        return false;
+                    }
+                    free(import_code);
+                } else {
+                     fprintf(stderr, "Preprocessor error: Import file '%s' does not contain a valid '::{...}' scope.\n", path);
+                     free(import_content);
+                     return false;
+                }
+                free(import_content);
+            }
+            current = path_end + 1;
+            while (*current != '\0' && isspace((unsigned char)*current)) {
+                current++;
+            }
+            if (*current == ';') current++;
+
+        } else {
+            if (pp->output_len + 1 >= pp->output_capacity) {
+                 pp->output_capacity *= 2;
+                 pp->output_buffer = realloc(pp->output_buffer, pp->output_capacity);
+            }
+            pp->output_buffer[pp->output_len++] = *current;
+            current++;
+        }
+    }
+    return true;
 }
 
 bool tokenize(Graveyard *gy) {
@@ -5734,39 +5850,66 @@ int main(int argc, char *argv[]) {
                 graveyard_free(gy);
                 return 1;
             }
-            gy->source_code = load(file, NULL);
+            char* raw_source = load(file, NULL);
             fclose(file);
-            if (!gy->source_code) {
+            if (!raw_source) {
                 fprintf(stderr, "Failed to load source file.\n");
                 success = false;
             } else {
-                if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
-                    printf("--- Tokenizer Debug Mode ---\n");
-                    if (!tokenize(gy)) {
-                        fprintf(stderr, "Tokenization failed.\n");
-                        success = false;
-                    } else {
-                        printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
-                        for (size_t i = 0; i < gy->token_count; i++) {
-                            printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
-                                   i,
-                                   gy->tokens[i].line,
-                                   gy->tokens[i].column,
-                                   gy->tokens[i].type,
-                                   gy->tokens[i].lexeme);
-                        }
-                    }
-                } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
-                    if (!compile_source(gy)) { success = false; }
-                } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
-                    if (!compile_source(gy) || !execute(gy)) { success = false; }
-                } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
-                    if (compile_source(gy) && execute(gy)) {
-                        graveyard_debug_print(gy);
-                    } else { success = false; }
+                Preprocessor pp;
+                pp.included_files.capacity = 8;
+                pp.included_files.count = 0;
+                pp.included_files.items = malloc(pp.included_files.capacity * sizeof(char*));
+                
+                pp.output_capacity = strlen(raw_source) * 2;
+                pp.output_len = 0;
+                pp.output_buffer = malloc(pp.output_capacity);
+
+                pp.included_files.items[pp.included_files.count++] = strdup(gy->filename);
+
+                if (preprocess_source(&pp, raw_source)) {
+                    pp.output_buffer[pp.output_len] = '\0';
+                    gy->source_code = pp.output_buffer;
                 } else {
-                    fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
+                    fprintf(stderr, "Fatal error during pre-processing of imports.\n");
                     success = false;
+                }
+                
+                free(raw_source);
+                for(size_t i = 0; i < pp.included_files.count; i++) {
+                    free(pp.included_files.items[i]);
+                }
+                free(pp.included_files.items);
+
+                if (success) {
+                    if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
+                        printf("--- Tokenizer Debug Mode ---\n");
+                        if (!tokenize(gy)) {
+                            fprintf(stderr, "Tokenization failed.\n");
+                            success = false;
+                        } else {
+                            printf("Tokenization successful. Found %zu tokens.\n", gy->token_count);
+                            for (size_t i = 0; i < gy->token_count; i++) {
+                                printf("Token %zu [L%d, C%d]: Type=%d, Lexeme='%s'\n",
+                                       i,
+                                       gy->tokens[i].line,
+                                       gy->tokens[i].column,
+                                       gy->tokens[i].type,
+                                       gy->tokens[i].lexeme);
+                            }
+                        }
+                    } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
+                        if (!compile_source(gy)) { success = false; }
+                    } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
+                        if (!compile_source(gy) || !execute(gy)) { success = false; }
+                    } else if (strcmp(gy->mode, "--debug") == 0 || strcmp(gy->mode, "-d") == 0) {
+                        if (compile_source(gy) && execute(gy)) {
+                            graveyard_debug_print(gy);
+                        } else { success = false; }
+                    } else {
+                        fprintf(stderr, "Unknown mode for .gy file: %s\n", gy->mode);
+                        success = false;
+                    }
                 }
             }
         }
