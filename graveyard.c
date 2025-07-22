@@ -154,7 +154,8 @@ typedef enum {
     AST_STATIC_ACCESS,
     AST_UID_EXPRESSION,
     AST_SLICE_EXPRESSION,
-    AST_ARGV_EXPRESSION
+    AST_ARGV_EXPRESSION,
+    AST_EVAL_EXPRESSION
 } AstNodeType;
 
 typedef struct {
@@ -399,6 +400,10 @@ typedef struct {
     Token keyword;
 } AstNodeArgvExpression;
 
+typedef struct {
+    AstNode* code_expr;
+} AstNodeEvalExpression;
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -446,6 +451,7 @@ struct AstNode {
         AstNodeUidExpression         uid_expression;
         AstNodeSliceExpression       slice_expression;
         AstNodeArgvExpression        argv_expression;
+        AstNodeEvalExpression        eval_expression;
     } as;
 };
 
@@ -1171,6 +1177,9 @@ void free_ast(AstNode* node) {
             free_ast(node->as.slice_expression.stop_expr);
             free_ast(node->as.slice_expression.step_expr);
             break;
+        case AST_EVAL_EXPRESSION:
+            free_ast(node->as.eval_expression.code_expr);
+            break;
         case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
@@ -1562,18 +1571,18 @@ static AstNode* parse_uid_expression(Parser* parser) {
 }
 
 static AstNode* parse_execute_or_eval_expression(Parser* parser) {
-    Token execute_token = parser->tokens[parser->current - 1];
+    Token op_token = parser->tokens[parser->current - 1];
 
     if (match(parser, AT)) {
         AstNode* node = create_node(parser, AST_EXECUTE_EXPRESSION);
-        node->line = execute_token.line;
+        node->line = op_token.line;
         node->as.execute_expression.command_expr = parse_expression(parser, 1);
         return node;
     } else {
-        // --- This will be an EVAL expression ---
-        // For now, we can throw a parser error since EVAL is not yet implemented.
-        error_at_token(parser, peek(parser), "EVAL feature not yet implemented. EXECUTE requires an '@' symbol after '$>>'.");
-        return NULL;
+        AstNode* node = create_node(parser, AST_EVAL_EXPRESSION);
+        node->line = op_token.line;
+        node->as.eval_expression.code_expr = parse_expression(parser, 1);
+        return node;
     }
 }
 
@@ -2716,6 +2725,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_EVAL_EXPRESSION: {
+            fprintf(file, "(EVAL_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.eval_expression.code_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2849,6 +2865,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "STATIC_ACCESS") == 0) return AST_STATIC_ACCESS;
     if (strcmp(type_str, "UID_EXPRESSION") == 0) return AST_UID_EXPRESSION;
     if (strcmp(type_str, "SLICE_EXPRESSION") == 0) return AST_SLICE_EXPRESSION;
+    if (strcmp(type_str, "EVAL_EXPRESSION") == 0) return AST_EVAL_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3374,6 +3391,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_EVAL_EXPRESSION: {
+            node->as.eval_expression.code_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
+
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -3419,6 +3441,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_WAIT_STATEMENT:
         case AST_UID_EXPRESSION:
         case AST_SLICE_EXPRESSION:
+        case AST_EVAL_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
@@ -4077,6 +4100,52 @@ void graveyard_debug_print(Graveyard* gy) {
     
     printf("\n========================================\n");
 }
+
+void graveyard_free(Graveyard *gy) {
+    if (!gy) return;
+    free(gy->source_code);
+    free(gy->tokens);
+    free_ast(gy->ast_root);
+    
+    Environment* env = gy->environment;
+    while (env != NULL) {
+        Environment* next = env->enclosing;
+        monolith_free(&env->values);
+        free(env);
+        env = next;
+    }
+    monolith_free(&gy->namespaces);
+    free(gy);
+}
+
+Graveyard *graveyard_init(const char *mode, const char *filename) {
+    Graveyard *gy = malloc(sizeof(Graveyard));
+    if (!gy) {
+        perror("graveyard_init: malloc failed");
+        return NULL;
+    }
+    gy->mode = mode;
+    gy->filename = filename;
+    gy->source_code = NULL;
+    gy->tokens = NULL;
+    gy->token_count = 0;
+    gy->ast_root = NULL;
+    gy->last_executed_value = create_null_value();
+    gy->environment = malloc(sizeof(Environment));
+    gy->environment->enclosing = NULL;
+    monolith_init(&gy->environment->values);
+    monolith_init(&gy->namespaces);
+    gy->is_returning = false;
+    gy->return_value = create_null_value();
+    gy->encountered_break = false;
+    gy->encountered_continue = false;
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    srand((unsigned int)ts.tv_sec ^ (unsigned int)ts.tv_nsec);
+    return gy;
+}
+
+bool execute(Graveyard *gy);
 
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
     switch (node->type) {
@@ -5334,6 +5403,48 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_ARGV_EXPRESSION: {
             return gy->arguments;
         }
+
+        case AST_EVAL_EXPRESSION: {
+            GraveyardValue code_val = execute_node(gy, node->as.eval_expression.code_expr);
+            if (code_val.type != VAL_STRING) {
+                fprintf(stderr, "Runtime Error [line %d]: Argument for eval operation must be a string.\n", node->line);
+                return create_null_value();
+            }
+
+            char* saved_source = gy->source_code;
+            Token* saved_tokens = gy->tokens;
+            size_t       saved_token_count = gy->token_count;
+            AstNode* saved_ast_root = gy->ast_root;
+            Environment* saved_env = gy->environment;
+
+            gy->source_code = strdup(code_val.as.string->chars);
+            gy->tokens = NULL;
+            gy->token_count = 0;
+            gy->ast_root = NULL;
+            
+            gy->environment = environment_new(saved_env);
+
+            GraveyardValue result = create_null_value();
+            if (tokenize(gy) && parse(gy) && execute(gy)) {
+                result = gy->last_executed_value;
+            } else {
+                fprintf(stderr, "Runtime Error [line %d]: Failed to evaluate string.\n", node->line);
+            }
+
+            free(gy->source_code);
+            free(gy->tokens);
+            free_ast(gy->ast_root);
+            monolith_free(&gy->environment->values);
+            free(gy->environment);
+
+            gy->source_code = saved_source;
+            gy->tokens = saved_tokens;
+            gy->token_count = saved_token_count;
+            gy->ast_root = saved_ast_root;
+            gy->environment = saved_env;
+
+            return result;
+        }
     }
 
     return create_null_value();
@@ -5351,50 +5462,6 @@ bool execute(Graveyard *gy) {
 }
 
 //MAIN----------------------------------------------------------------------------
-
-void graveyard_free(Graveyard *gy) {
-    if (!gy) return;
-    free(gy->source_code);
-    free(gy->tokens);
-    free_ast(gy->ast_root);
-    
-    Environment* env = gy->environment;
-    while (env != NULL) {
-        Environment* next = env->enclosing;
-        monolith_free(&env->values);
-        free(env);
-        env = next;
-    }
-    monolith_free(&gy->namespaces);
-    free(gy);
-}
-
-Graveyard *graveyard_init(const char *mode, const char *filename) {
-    Graveyard *gy = malloc(sizeof(Graveyard));
-    if (!gy) {
-        perror("graveyard_init: malloc failed");
-        return NULL;
-    }
-    gy->mode = mode;
-    gy->filename = filename;
-    gy->source_code = NULL;
-    gy->tokens = NULL;
-    gy->token_count = 0;
-    gy->ast_root = NULL;
-    gy->last_executed_value = create_null_value();
-    gy->environment = malloc(sizeof(Environment));
-    gy->environment->enclosing = NULL;
-    monolith_init(&gy->environment->values);
-    monolith_init(&gy->namespaces);
-    gy->is_returning = false;
-    gy->return_value = create_null_value();
-    gy->encountered_break = false;
-    gy->encountered_continue = false;
-    struct timespec ts;
-    timespec_get(&ts, TIME_UTC);
-    srand((unsigned int)ts.tv_sec ^ (unsigned int)ts.tv_nsec);
-    return gy;
-}
 
 static bool compile_source(Graveyard* gy) {
     if (!tokenize(gy)) {
