@@ -2752,6 +2752,13 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_EXISTS_EXPRESSION: {
+            fprintf(file, "(EXISTS_EXPRESSION line=%d\n", node->line);
+            write_ast_node(file, node->as.exists_expression.path_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -2886,6 +2893,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "UID_EXPRESSION") == 0) return AST_UID_EXPRESSION;
     if (strcmp(type_str, "SLICE_EXPRESSION") == 0) return AST_SLICE_EXPRESSION;
     if (strcmp(type_str, "EVAL_EXPRESSION") == 0) return AST_EVAL_EXPRESSION;
+    if (strcmp(type_str, "EXISTS_EXPRESSION") == 0) return AST_EXISTS_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -3415,6 +3423,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             node->as.eval_expression.code_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
+        
+        case AST_EXISTS_EXPRESSION: {
+            node->as.exists_expression.path_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            break;
+        }
 
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
@@ -3462,6 +3475,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_UID_EXPRESSION:
         case AST_SLICE_EXPRESSION:
         case AST_EVAL_EXPRESSION:
+        case AST_EXISTS_EXPRESSION:
             is_block_node = true;
             break;
         default: break;
