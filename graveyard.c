@@ -612,6 +612,7 @@ typedef struct {
     GraveyardValue return_value;
     bool encountered_break;
     bool encountered_continue;
+    bool had_runtime_error;
 } Graveyard;
 
 typedef struct {
@@ -4326,6 +4327,7 @@ Graveyard *graveyard_init(const char *mode, const char *filename) {
     gy->return_value = create_null_value();
     gy->encountered_break = false;
     gy->encountered_continue = false;
+    gy->had_runtime_error = false;
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
     srand((unsigned int)ts.tv_sec ^ (unsigned int)ts.tv_nsec);
@@ -4340,6 +4342,9 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue last_value = create_null_value();
             for (size_t i = 0; i < node->as.program.count; i++) {
                 last_value = execute_node(gy, node->as.program.statements[i]);
+                if (gy->had_runtime_error) {
+                    break;
+                }
             }
             return last_value;
         }
@@ -4348,14 +4353,19 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             for (size_t i = 0; i < node->as.print_stmt.count; i++) {
                 GraveyardValue value = execute_node(gy, node->as.print_stmt.expressions[i]);
 
+                if (gy->had_runtime_error) {
+                    return create_null_value();
+                }
+
                 print_value(value);
 
                 if (i < node->as.print_stmt.count - 1) {
                     printf(" ");
                 }
             }
-            printf("\n");
-
+            if (!gy->had_runtime_error) {
+                printf("\n");
+            }
             return create_null_value();
         }
 
@@ -4387,10 +4397,12 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     GraveyardValue type_val;
                     if (!environment_get(gy->environment, type_name, &type_val)) {
                         fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", node->line, type_name);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     if (type_val.type != VAL_TYPE) {
                         fprintf(stderr, "Runtime Error [line %d]: <%s> is not a type.\n", node->line, type_name);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     
@@ -4437,18 +4449,21 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue array_val = execute_node(gy, node->as.subscript.array);
             if (array_val.type != VAL_ARRAY) {
                 fprintf(stderr, "Runtime Error [line %d]: Subscript '[]' can only be applied to arrays.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
             GraveyardValue index_val = execute_node(gy, node->as.subscript.index);
             if (index_val.type != VAL_NUMBER) {
                 fprintf(stderr, "Runtime Error [line %d]: Array index must be a number.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             
             double raw_index = index_val.as.number;
             if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
                 fprintf(stderr, "Runtime Error [line %d]: Array index must be a non-negative integer.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             
@@ -4457,6 +4472,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (index >= array->count) {
                 fprintf(stderr, "Runtime Error [line %d]: Array index out of bounds. Index %d is too large for array of size %zu.\n", node->line, index, array->count);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -4474,6 +4490,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 if (key.type != VAL_STRING && key.type != VAL_NUMBER &&
                     key.type != VAL_BOOL && key.type != VAL_NULL) {
                     fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", pair.key->line);
+                    gy->had_runtime_error = true;
                     free(ht->entries);
                     free(ht);
                     return create_null_value();
@@ -4481,6 +4498,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 
                 if (key.type == VAL_NUMBER && fmod(key.as.number, 1.0) != 0) {
                      fprintf(stderr, "Runtime Error [line %d]: A non-integer number cannot be used as a hashtable key.\n", pair.key->line);
+                     gy->had_runtime_error = true;
                      free(ht->entries);
                      free(ht);
                      return create_null_value();
@@ -4498,8 +4516,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return value;
             }
 
-            fprintf(stderr, "Runtime Error [line %d]: Undefined variable '%s'.\n",
-                    node->line, node->as.identifier.name.lexeme);
+            fprintf(stderr, "Runtime Error [line %d]: Undefined variable '%s'.\n", node->line, node->as.identifier.name.lexeme);
+            gy->had_runtime_error = true;
             return create_null_value();
         }
 
@@ -4524,18 +4542,21 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue array_val = execute_node(gy, array_node);
                 if (array_val.type != VAL_ARRAY) {
                     fprintf(stderr, "Runtime Error [line %d]: Cannot assign to subscript of a non-array type.\n", target_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
                 GraveyardValue index_val = execute_node(gy, index_node);
                 if (index_val.type != VAL_NUMBER) {
                     fprintf(stderr, "Runtime Error [line %d]: Array index must be a number.\n", index_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
                 double raw_index = index_val.as.number;
                 if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
                     fprintf(stderr, "Runtime Error [line %d]: Array index must be a non-negative integer.\n", index_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
                 
@@ -4544,6 +4565,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 if (index >= array->count) {
                     fprintf(stderr, "Runtime Error [line %d]: Array index out of bounds. Cannot assign to index %d in an array of size %zu.\n", target_node->line, index, array->count);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -4556,6 +4578,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue ht_val = execute_node(gy, ht_node);
                 if (ht_val.type != VAL_HASHTABLE) {
                     fprintf(stderr, "Runtime Error [line %d]: Cannot assign to a key of a non-hashtable type.\n", ht_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -4564,11 +4587,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 if (key_val.type != VAL_STRING && key_val.type != VAL_NUMBER &&
                     key_val.type != VAL_BOOL && key_val.type != VAL_NULL) {
                     fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", key_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
                 if (key_val.type == VAL_NUMBER && fmod(key_val.as.number, 1.0) != 0) {
-                     fprintf(stderr, "Runtime Error [line %d]: A non-integer number cannot be used as a hashtable key.\n", key_node->line);
-                     return create_null_value();
+                    fprintf(stderr, "Runtime Error [line %d]: A non-integer number cannot be used as a hashtable key.\n", key_node->line);
+                    gy->had_runtime_error = true;
+                    return create_null_value();
                 }
 
                 hashtable_set(ht_val.as.hashtable, key_val, value_to_assign);
@@ -4577,6 +4602,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue object = execute_node(gy, target_node->as.member_access.object);
                 if (object.type != VAL_INSTANCE) {
                     fprintf(stderr, "Runtime Error [line %d]: Can only assign to members of an instance.\n", target_node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
                 
@@ -4597,6 +4623,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue type_val;
                 if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
                     fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", target_node->line, type_name);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -4631,6 +4658,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case MINUS:
                     if (right.type != VAL_NUMBER) {
                         fprintf(stderr, "Runtime Error [line %d]: Operand for negation must be a number.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     return create_number_value(-right.as.number);
@@ -4677,12 +4705,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             long val = strtol(right.as.string->chars, &end, 10);
                             if (*end != '\0') {
                                 fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to integer.\n", node->line);
+                                gy->had_runtime_error = true;
                                 return create_null_value();
                             }
                             return create_number_value(val);
                         }
                         default:
                             fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to integer.\n", node->line);
+                            gy->had_runtime_error = true;
                             return create_null_value();
                     }
                 }
@@ -4697,12 +4727,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             double val = strtod(right.as.string->chars, &end);
                             if (*end != '\0') {
                                 fprintf(stderr, "Runtime Error [line %d]: Cannot cast non-numeric string to float.\n", node->line);
+                                gy->had_runtime_error = true;
                                 return create_null_value();
                             }
                             return create_number_value(val);
                         }
                         default:
                             fprintf(stderr, "Runtime Error [line %d]: Cannot cast this type to float.\n", node->line);
+                            gy->had_runtime_error = true;
                             return create_null_value();
                     }
                 }
@@ -4765,16 +4797,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                                 if (!is_valid_key) {
                                     fprintf(stderr, "Runtime Error [line %d]: Array contains an invalid type for a hashtable key.\n", node->line);
+                                    gy->had_runtime_error = true;
                                     free(ht_val.as.hashtable->entries);
                                     free(ht_val.as.hashtable);
                                     return create_null_value();
                                 }
 
                                 if (hashtable_find_entry(ht_val.as.hashtable->entries, ht_val.as.hashtable->capacity, key)->is_in_use) {
-                                     fprintf(stderr, "Runtime Error [line %d]: Duplicate key found when casting array to hashtable.\n", node->line);
-                                     free(ht_val.as.hashtable->entries);
-                                     free(ht_val.as.hashtable);
-                                     return create_null_value();
+                                    fprintf(stderr, "Runtime Error [line %d]: Duplicate key found when casting array to hashtable.\n", node->line);
+                                    gy->had_runtime_error = true;
+                                    free(ht_val.as.hashtable->entries);
+                                    free(ht_val.as.hashtable);
+                                    return create_null_value();
                                 }
                                 hashtable_set(ht_val.as.hashtable, key, create_null_value());
                             }
@@ -4794,6 +4828,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                             if (!is_valid_key) {
                                 fprintf(stderr, "Runtime Error [line %d]: Invalid type used as a hashtable key.\n", node->line);
+                                gy->had_runtime_error = true;
                                 return create_null_value();
                             }
 
@@ -4820,9 +4855,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             return create_number_value(0);
                         case VAL_FUNCTION:
                             fprintf(stderr, "Runtime Error [line %d]: Cannot get the length of a function.\n", node->line);
+                            gy->had_runtime_error = true;
                             return create_null_value();
                         default:
                             fprintf(stderr, "Runtime Error [line %d]: This type does not have a length.\n", node->line);
+                            gy->had_runtime_error = true;
                             return create_null_value();
                     }
                 }
@@ -4830,6 +4867,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case CARET: {
                     if (right.type != VAL_HASHTABLE) {
                         fprintf(stderr, "Runtime Error [line %d]: The keys-of operator (^) can only be used on a hashtable.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     GraveyardValue keys_array = create_array_value();
@@ -4845,6 +4883,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case BACKTICK: {
                     if (right.type != VAL_HASHTABLE) {
                         fprintf(stderr, "Runtime Error [line %d]: The values-of operator (`) can only be used on a hashtable.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     GraveyardValue values_array = create_array_value();
@@ -4859,6 +4898,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 default:
                     fprintf(stderr, "Runtime Error [line %d]: Unknown unary operator.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
             }
             break;
@@ -4873,6 +4913,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 if (collection.type != VAL_HASHTABLE) {
                     fprintf(stderr, "Runtime Error [line %d]: The '#' operator can only be used on a hashtable.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
                 
@@ -4892,16 +4933,19 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 if (content.type != VAL_STRING) {
                     fprintf(stderr, "Runtime Error [line %d]: Content for file write operation must be a string.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
                 if (path_val.type != VAL_STRING) {
                     fprintf(stderr, "Runtime Error [line %d]: File path for write operation must be a string.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
                 FILE* file = fopen(path_val.as.string->chars, "w");
                 if (!file) {
                     fprintf(stderr, "Runtime Error [line %d]: Cannot open or create file '%s' for writing.\n", node->line, path_val.as.string->chars);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -4956,6 +5000,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     size_t total_len = strlen(left_str) + strlen(right_str);
                     if (total_len >= 1024) {
                         fprintf(stderr, "Runtime Error [line %d]: Resulting string from concatenation is too long.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     char result_buffer[1024];
@@ -5002,12 +5047,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 case MODULO:
                     if (right.as.number == 0) {
                         fprintf(stderr, "Runtime Error [line %d]: Division by zero in modulo operation.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     return create_number_value(fmod(left.as.number, right.as.number));
                 case FORWARDSLASH:
                     if (right.as.number == 0) {
                         fprintf(stderr, "Runtime Error [line %d]: Division by zero.\n", node->line);
+                        gy->had_runtime_error = true;
                         return create_null_value();
                     }
                     return create_number_value(left.as.number / right.as.number);
@@ -5022,6 +5069,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
         type_error:
             fprintf(stderr, "Runtime Error [line %d]: Operands have incompatible types for this operation.\n", node->line);
+            gy->had_runtime_error = true;
             return create_null_value();
         }
 
@@ -5105,14 +5153,15 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 environment_define(call_environment, "this", bound->receiver);
             } else {
                 fprintf(stderr, "Runtime Error [line %d]: Can only call functions and methods.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
             int arg_count = node->as.call_expression.arg_count;
 
             if (arg_count != function->arity) {
-                fprintf(stderr, "Runtime Error [line %d]: Expected %d arguments but got %d.\n",
-                    node->line, function->arity, arg_count);
+                fprintf(stderr, "Runtime Error [line %d]: Expected %d arguments but got %d.\n", node->line, function->arity, arg_count);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             
@@ -5170,7 +5219,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue condition = execute_node(gy, node->as.assert_statement.condition);
             if (is_value_falsy(condition)) {
                 fprintf(stderr, "Assertion failed on line %d.\n", node->line);
-                exit(1);
+                gy->had_runtime_error = true;
             }
             return create_null_value();
         }
@@ -5242,6 +5291,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     }
                 } else {
                     fprintf(stderr, "Runtime Error [line %d]: Invalid type for single-argument for loop.\n", node->line);
+                    gy->had_runtime_error = true;
                 }
             } else {
                 double start_val = execute_node(gy, range_exprs[0]).as.number;
@@ -5270,7 +5320,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             value_to_string(error_val, error_buffer, sizeof(error_buffer));
             
             fprintf(stderr, "Runtime Error [line %d]: %s\n", node->line, error_buffer);
-            exit(1);
+            gy->had_runtime_error = true;
+            return create_null_value();
         }
 
         case AST_TIME_EXPRESSION: {
@@ -5308,6 +5359,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (!monolith_get(&gy->namespaces, ns_name, &ns_val)) {
                 fprintf(stderr, "Runtime Error [line %d]: Namespace '%s' is not defined.\n", node->line, ns_name);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5316,6 +5368,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (!environment_get(ns_env, member_name, &member_val)) {
                 fprintf(stderr, "Runtime Error [line %d]: Member '%s' not found in namespace '%s'.\n", node->line, member_name, ns_name);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             
@@ -5326,12 +5379,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue path_val = execute_node(gy, node->as.fileread_statement.path_expr);
             if (path_val.type != VAL_STRING) {
                 fprintf(stderr, "Runtime Error [line %d]: File path for read operation must be a string.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             
             FILE* file = fopen(path_val.as.string->chars, "rb");
             if (!file) {
                 fprintf(stderr, "Runtime Error [line %d]: Cannot open file '%s'.\n", node->line, path_val.as.string->chars);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5339,6 +5394,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             fclose(file);
             if (!buffer) {
                 fprintf(stderr, "Runtime Error [line %d]: Failed to read file '%s'.\n", node->line, path_val.as.string->chars);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5382,6 +5438,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue this_val;
             if (!environment_get(gy->environment, "this", &this_val)) {
                 fprintf(stderr, "Runtime Error [line %d]: Cannot use '.' outside of a type's method.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             return this_val;
@@ -5393,6 +5450,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (object.type != VAL_INSTANCE) {
                 fprintf(stderr, "Runtime Error [line %d]: Can only access members on an instance of a type.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5414,6 +5472,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
 
             fprintf(stderr, "Runtime Error [line %d]: Member '%s' not found on instance.\n", node->line, member_name);
+            gy->had_runtime_error = true;
             return create_null_value();
         }
 
@@ -5421,6 +5480,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue command_val = execute_node(gy, node->as.execute_expression.command_expr);
             if (command_val.type != VAL_STRING) {
                 fprintf(stderr, "Runtime Error [line %d]: Command for execute operation must be a string.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5435,6 +5495,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (!pipe) {
                 fprintf(stderr, "Runtime Error [line %d]: Failed to execute command.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5480,6 +5541,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue duration_val = execute_node(gy, node->as.wait_statement.duration_expr);
             if (duration_val.type != VAL_NUMBER) {
                 fprintf(stderr, "Runtime Error [line %d]: Duration for wait operation must be a number.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5509,6 +5571,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (!environment_get(global_env, member_name, &member_val)) {
                 fprintf(stderr, "Runtime Error [line %d]: Global variable '%s' not found.\n", node->line, member_name);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             return member_val;
@@ -5523,6 +5586,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue type_val;
             if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
                 fprintf(stderr, "Runtime Error [line %d]: Type <%s> is not defined.\n", node->line, type_name);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             GraveyardType* type = type_val.as.type;
@@ -5537,6 +5601,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             }
             
             fprintf(stderr, "Runtime Error [line %d]: Static member '%s' not found on type <%s>.\n", node->line, member_name, type_name);
+            gy->had_runtime_error = true;
             return create_null_value();
         }
 
@@ -5544,17 +5609,20 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue length_val = execute_node(gy, node->as.uid_expression.length_expr);
             if (length_val.type != VAL_NUMBER) {
                 fprintf(stderr, "Runtime Error [line %d]: Length for UID operation must be a number.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             int length = (int)length_val.as.number;
             if (length <= 0) {
-                 fprintf(stderr, "Runtime Error [line %d]: UID length must be a positive number.\n", node->line);
+                fprintf(stderr, "Runtime Error [line %d]: UID length must be a positive number.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
             char* uid_str = generate_random_hex_string(length);
             if (!uid_str) {
                 fprintf(stderr, "Runtime Error [line %d]: Failed to generate random UID.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5572,6 +5640,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 
                 if (!calculate_slice_bounds(arr->count, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
                     fprintf(stderr, "Runtime Error [line %d]: Slice step cannot be zero.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -5593,6 +5662,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 if (!calculate_slice_bounds(str->length, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
                     fprintf(stderr, "Runtime Error [line %d]: Slice step cannot be zero.\n", node->line);
+                    gy->had_runtime_error = true;
                     return create_null_value();
                 }
 
@@ -5615,6 +5685,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             } else {
                 fprintf(stderr, "Runtime Error [line %d]: Slicing can only be applied to arrays and strings.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
         }
@@ -5627,6 +5698,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue code_val = execute_node(gy, node->as.eval_expression.code_expr);
             if (code_val.type != VAL_STRING) {
                 fprintf(stderr, "Runtime Error [line %d]: Argument for eval operation must be a string.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5648,6 +5720,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 result = gy->last_executed_value;
             } else {
                 fprintf(stderr, "Runtime Error [line %d]: Failed to evaluate string.\n", node->line);
+                gy->had_runtime_error = true;
             }
 
             free(gy->source_code);
@@ -5669,6 +5742,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue path_val = execute_node(gy, node->as.exists_expression.path_expr);
             if (path_val.type != VAL_STRING) {
                 fprintf(stderr, "Runtime Error [line %d]: Path for exists check must be a string.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5682,6 +5756,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue path_val = execute_node(gy, node->as.listdir_expression.path_expr);
             if (path_val.type != VAL_STRING) {
                 fprintf(stderr, "Runtime Error [line %d]: Path for list directory must be a string.\n", node->line);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
             const char* path = path_val.as.string->chars;
@@ -5696,6 +5771,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (find_handle == INVALID_HANDLE_VALUE) {
                 fprintf(stderr, "Runtime Error [line %d]: Cannot open directory '%s'.\n", node->line, path);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5710,6 +5786,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             DIR* dir = opendir(path);
             if (!dir) {
                 fprintf(stderr, "Runtime Error [line %d]: Cannot open directory '%s'.\n", node->line, path);
+                gy->had_runtime_error = true;
                 return create_null_value();
             }
 
@@ -5735,9 +5812,10 @@ bool execute(Graveyard *gy) {
         return false;
     }
     
+    gy->had_runtime_error = false;
     gy->last_executed_value = execute_node(gy, gy->ast_root);
     
-    return true; 
+    return !gy->had_runtime_error; 
 }
 
 //MAIN----------------------------------------------------------------------------
