@@ -1248,6 +1248,8 @@ void free_ast(AstNode* node) {
                 FmtStringPart part = node->as.formatted_string.parts[i];
                 if (part.type == FMT_PART_EXPRESSION) {
                     free_ast(part.as.expression);
+                } else {
+                    free(part.as.literal.lexeme);
                 }
             }
             free(node->as.formatted_string.parts);
@@ -3062,23 +3064,58 @@ static bool get_node_type_from_line(const char* line, char* out_type_str, size_t
     return true;
 }
 
-static bool get_attribute_string(const char* line, const char* key, char* out_buffer, size_t buffer_size) {
+static char* get_attribute_string_dynamic(const char* line, const char* key) {
     const char* key_ptr = strstr(line, key);
-    if (!key_ptr) return false;
+    if (!key_ptr) return NULL;
 
     const char* value_start = key_ptr + strlen(key);
-    if (*value_start != '"') return false;
+    if (*value_start != '"') return NULL;
     value_start++;
 
-    const char* value_end = strchr(value_start, '"');
-    if (!value_end) return false;
+    // First pass: determine the required length for the unescaped string.
+    size_t required_len = 0;
+    const char* scanner = value_start;
+    // Find the closing quote, respecting escaped quotes
+    while (*scanner != '\0') {
+        if (*scanner == '"' && *(scanner - 1) != '\\') break;
+        scanner++;
+    }
+    const char* value_end = scanner;
 
-    size_t len = value_end - value_start;
-    if (len >= buffer_size) return false;
+    scanner = value_start;
+    while (scanner < value_end) {
+        if (*scanner == '\\') {
+            scanner++; // Skip the backslash and the character after it
+        }
+        required_len++;
+        scanner++;
+    }
 
-    strncpy(out_buffer, value_start, len);
-    out_buffer[len] = '\0';
-    return true;
+    // Allocate the perfect amount of memory.
+    char* out_buffer = malloc(required_len + 1);
+    if (!out_buffer) return NULL;
+
+    // Second pass: copy and unescape the characters.
+    size_t out_len = 0;
+    scanner = value_start;
+     while (scanner < value_end) {
+        if (*scanner == '\\') {
+            scanner++; // Skip the backslash
+            switch (*scanner) {
+                case 'n':  out_buffer[out_len++] = '\n'; break;
+                case 't':  out_buffer[out_len++] = '\t'; break;
+                case '"':  out_buffer[out_len++] = '\"'; break;
+                case '\\': out_buffer[out_len++] = '\\'; break;
+                default:   out_buffer[out_len++] = *scanner; break;
+            }
+        } else {
+            out_buffer[out_len++] = *scanner;
+        }
+        scanner++;
+    }
+
+    out_buffer[out_len] = '\0';
+    return out_buffer;
 }
 
 static int get_attribute_int(const char* line, const char* key) {
@@ -3201,7 +3238,6 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     int current_indent = get_indent_level(line);
 
     if (current_indent < expected_indent) return NULL;
-
     if (*(line + current_indent * 2) == ')') return NULL;
     
     if (current_indent > expected_indent) {
@@ -3230,6 +3266,9 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     AstNode* node = create_node(parser, type);
     if (!node) return NULL;
     node->line = get_attribute_int(line, "line=");
+
+    // This temporary pointer is used to manage the memory from get_attribute_string_dynamic
+    char* temp_str = NULL;
 
     switch (type) {
         case AST_PROGRAM:
@@ -3314,8 +3353,8 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 FmtStringPart part;
                 if (strcmp(part_type_str, "FORMATTEDPART") == 0) {
                     part.type = FMT_PART_LITERAL;
-                    get_attribute_string(part_line, "value=", part.as.literal.lexeme, MAX_LEXEME_LEN);
-                    part.as.literal.type = FORMATTEDSTRING;
+                    part.as.literal.lexeme = get_attribute_string_dynamic(part_line, "value=");
+                    part.as.literal.type = FORMATTEDPART;
                     node->as.formatted_string.parts[node->as.formatted_string.count++] = part;
                     (*current_line_idx)++;
                 } else {
@@ -3339,7 +3378,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_BINARY_OP: {
-            get_attribute_string(line, "op=", node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN);
+            node->as.binary_op.operator.lexeme = get_attribute_string_dynamic(line, "op=");
             char* op_str = node->as.binary_op.operator.lexeme;
             size_t op_len = strlen(op_str);
             if (op_len == 3) node->as.binary_op.operator.type = identify_three_char_token(op_str[0], op_str[1], op_str[2]);
@@ -3351,58 +3390,44 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_LOGICAL_OP: {
-            get_attribute_string(line, "op=", node->as.logical_op.operator.lexeme, MAX_LEXEME_LEN);
-            
+            node->as.logical_op.operator.lexeme = get_attribute_string_dynamic(line, "op=");
             char* op_str = node->as.logical_op.operator.lexeme;
-            size_t op_len = strlen(op_str);
-            if (op_len == 2) {
-                node->as.logical_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
-            } else {
-                node->as.logical_op.operator.type = UNKNOWN;
-            }
-
+            if (strlen(op_str) == 2) node->as.logical_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
+            else node->as.logical_op.operator.type = UNKNOWN;
             node->as.logical_op.left = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             node->as.logical_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
         case AST_UNARY_OP: {
-            get_attribute_string(line, "op=", node->as.unary_op.operator.lexeme, MAX_LEXEME_LEN);
-
+            node->as.unary_op.operator.lexeme = get_attribute_string_dynamic(line, "op=");
             char* op_str = node->as.unary_op.operator.lexeme;
             size_t op_len = strlen(op_str);
-
-            if (op_len == 2) {
-                node->as.unary_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
-            } else if (op_len == 1) {
-                node->as.unary_op.operator.type = identify_single_char_token(op_str[0]);
-            } else {
-                node->as.unary_op.operator.type = UNKNOWN;
-            }
-
+            if (op_len == 2) node->as.unary_op.operator.type = identify_two_char_token(op_str[0], op_str[1]);
+            else if (op_len == 1) node->as.unary_op.operator.type = identify_single_char_token(op_str[0]);
+            else node->as.unary_op.operator.type = UNKNOWN;
             node->as.unary_op.right = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
         case AST_LITERAL: {
-            get_attribute_string(line, "value=", node->as.literal.value.lexeme, MAX_LEXEME_LEN);
-            if (strcmp(type_str, "LITERAL_STR") == 0) {
-                node->as.literal.value.type = STRING;
-            } else if (strcmp(type_str, "LITERAL_NUM") == 0) {
-                node->as.literal.value.type = NUMBER;
-            } else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
-                if (strcmp(node->as.literal.value.lexeme, "$") == 0) node->as.literal.value.type = TRUEVALUE;
+            temp_str = get_attribute_string_dynamic(line, "value=");
+            node->as.literal.value.lexeme = temp_str;
+
+            if (strcmp(type_str, "LITERAL_STR") == 0)         node->as.literal.value.type = STRING;
+            else if (strcmp(type_str, "LITERAL_NUM") == 0)    node->as.literal.value.type = NUMBER;
+            else if (strcmp(type_str, "LITERAL_TYPE") == 0)   node->as.literal.value.type = TYPE;
+            else if (strcmp(type_str, "LITERAL_BOOL") == 0) {
+                if (strcmp(temp_str, "$") == 0) node->as.literal.value.type = TRUEVALUE;
                 else node->as.literal.value.type = FALSEVALUE;
             } else if (strcmp(type_str, "LITERAL_NULL") == 0) {
                 node->as.literal.value.type = NULLVALUE;
-            } else if (strcmp(type_str, "LITERAL_TYPE") == 0) {
-                node->as.literal.value.type = TYPE;
             }
             break;
         }
 
         case AST_IDENTIFIER: {
-            get_attribute_string(line, "name=", node->as.identifier.name.lexeme, MAX_LEXEME_LEN);
+            node->as.identifier.name.lexeme = get_attribute_string_dynamic(line, "name=");
             break;
         }
 
@@ -3452,16 +3477,16 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_FUNCTION_DECLARATION: {
-            get_attribute_string(line, "name=", node->as.function_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.function_declaration.name.lexeme = get_attribute_string_dynamic(line, "name=");
             node->as.function_declaration.name.type = IDENTIFIER;
-
-            char params_buffer[256];
-            get_attribute_string(line, "params=", params_buffer, sizeof(params_buffer));
+            char* params_buffer = get_attribute_string_dynamic(line, "params=");
             
             node->as.function_declaration.param_capacity = 4;
             node->as.function_declaration.param_count = 0;
             node->as.function_declaration.params = malloc(node->as.function_declaration.param_capacity * sizeof(Token));
 
+            // Use a temporary pointer for strtok_r on Windows, or strtok on POSIX
+            char* context = NULL;
             char* param_name = strtok(params_buffer, " ");
             while (param_name != NULL) {
                 if (node->as.function_declaration.param_count >= node->as.function_declaration.param_capacity) {
@@ -3469,6 +3494,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                     Token* new_params = realloc(node->as.function_declaration.params, new_capacity * sizeof(Token));
                     if (!new_params) {
                         perror("AST function params realloc failed");
+                        free(params_buffer);
                         free_ast(node);
                         parser->had_error = true;
                         return NULL;
@@ -3478,11 +3504,11 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 }
                 Token param_token;
                 param_token.type = IDENTIFIER;
-                strncpy(param_token.lexeme, param_name, MAX_LEXEME_LEN);
+                param_token.lexeme = strdup(param_name);
                 node->as.function_declaration.params[node->as.function_declaration.param_count++] = param_token;
                 param_name = strtok(NULL, " ");
             }
-
+            free(params_buffer);
             node->as.function_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
@@ -3574,7 +3600,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_FOR_STATEMENT: {
-            get_attribute_string(line, "iterator=", node->as.for_statement.iterator.lexeme, MAX_LEXEME_LEN);
+            node->as.for_statement.iterator.lexeme = get_attribute_string_dynamic(line, "iterator=");
             size_t range_count = get_attribute_int(line, "range_count=");
             node->as.for_statement.range_count = range_count;
             node->as.for_statement.range_expressions = malloc(range_count * sizeof(AstNode*));
@@ -3587,7 +3613,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_SCAN_STATEMENT: {
-            get_attribute_string(line, "variable=", node->as.scan_statement.variable.lexeme, MAX_LEXEME_LEN);
+            node->as.scan_statement.variable.lexeme = get_attribute_string_dynamic(line, "variable=");
             node->as.scan_statement.prompt = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
@@ -3598,31 +3624,32 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_NAMESPACE_DECLARATION: {
-            get_attribute_string(line, "name=", node->as.namespace_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.namespace_declaration.name.lexeme = get_attribute_string_dynamic(line, "name=");
             node->as.namespace_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
+
         case AST_NAMESPACE_ACCESS: {
-            get_attribute_string(line, "namespace=", node->as.namespace_access.namespace_name.lexeme, MAX_LEXEME_LEN);
-            get_attribute_string(line, "member=", node->as.namespace_access.member_name.lexeme, MAX_LEXEME_LEN);
+            node->as.namespace_access.namespace_name.lexeme = get_attribute_string_dynamic(line, "namespace=");
+            node->as.namespace_access.member_name.lexeme = get_attribute_string_dynamic(line, "member=");
             break;
         }
 
         case AST_FILEREAD_STATEMENT: {
-            get_attribute_string(line, "variable=", node->as.fileread_statement.variable.lexeme, MAX_LEXEME_LEN);
+            node->as.fileread_statement.variable.lexeme = get_attribute_string_dynamic(line, "variable=");
             node->as.fileread_statement.variable.type = IDENTIFIER;
             node->as.fileread_statement.path_expr = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
         case AST_TYPE_DECLARATION: {
-            get_attribute_string(line, "name=", node->as.type_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.type_declaration.name.lexeme = get_attribute_string_dynamic(line, "name=");
             node->as.type_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
 
         case AST_MEMBER_ACCESS: {
-            get_attribute_string(line, "member=", node->as.member_access.member.lexeme, MAX_LEXEME_LEN);
+            node->as.member_access.member.lexeme = get_attribute_string_dynamic(line, "member=");
             node->as.member_access.object = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
         }
@@ -3638,14 +3665,14 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         }
 
         case AST_GLOBAL_ACCESS: {
-            get_attribute_string(line, "member=", node->as.global_access.member_name.lexeme, MAX_LEXEME_LEN);
+            node->as.global_access.member_name.lexeme = get_attribute_string_dynamic(line, "member=");
             node->as.global_access.member_name.type = IDENTIFIER;
             break;
         }
 
         case AST_STATIC_ACCESS: {
-            get_attribute_string(line, "type=", node->as.static_access.type_name.lexeme, MAX_LEXEME_LEN);
-            get_attribute_string(line, "member=", node->as.static_access.member_name.lexeme, MAX_LEXEME_LEN);
+            node->as.static_access.type_name.lexeme = get_attribute_string_dynamic(line, "type=");
+            node->as.static_access.member_name.lexeme = get_attribute_string_dynamic(line, "member=");
             node->as.static_access.type_name.type = TYPE;
             node->as.static_access.member_name.type = IDENTIFIER;
             break;
