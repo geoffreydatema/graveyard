@@ -109,7 +109,7 @@ typedef enum {
 
 typedef struct {
     GraveyardTokenType type;
-    char lexeme[MAX_LEXEME_LEN];
+    char* lexeme;
     int line;
     int column;
 } Token;
@@ -936,7 +936,8 @@ bool tokenize(Graveyard *gy) {
             if (c == '\'') {
                 state = STATE_DEFAULT;
                 tokens[count].type = FORMATTEDEND;
-                tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
+                tokens[count].lexeme = strdup("'");
+                if (!tokens[count].lexeme) goto cleanup_failure;
                 tokens[count].line = line; tokens[count].column = column;
                 count++;
                 current_ptr++;
@@ -946,7 +947,8 @@ bool tokenize(Graveyard *gy) {
                 state = STATE_DEFAULT;
                 fstring_brace_depth = 1;
                 tokens[count].type = LEFTBRACE;
-                tokens[count].lexeme[0] = '{'; tokens[count].lexeme[1] = '\0';
+                tokens[count].lexeme = strdup("{");
+                if (!tokens[count].lexeme) goto cleanup_failure;
                 tokens[count].line = line; tokens[count].column = column;
                 count++;
                 current_ptr++;
@@ -963,11 +965,9 @@ bool tokenize(Graveyard *gy) {
             }
             size_t len = current_ptr - start;
             if (len > 0) {
-                if (len >= MAX_LEXEME_LEN) {
-                    fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
-                    goto cleanup_failure;
-                }
                 tokens[count].type = FORMATTEDPART;
+                tokens[count].lexeme = malloc(len + 1);
+                if (!tokens[count].lexeme) goto cleanup_failure;
                 strncpy(tokens[count].lexeme, start, len);
                 tokens[count].lexeme[len] = '\0';
                 tokens[count].line = line;
@@ -1013,7 +1013,8 @@ bool tokenize(Graveyard *gy) {
         if (c == '\'') {
             state = STATE_IN_FMT_STRING;
             tokens[count].type = FORMATTEDSTART;
-            tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
+            tokens[count].lexeme = strdup("'");
+            if (!tokens[count].lexeme) goto cleanup_failure;
             tokens[count].line = line; tokens[count].column = column;
             count++;
             current_ptr++;
@@ -1031,12 +1032,14 @@ bool tokenize(Graveyard *gy) {
             const char* start = current_ptr;
             while (current_ptr < end_ptr && (isalnum((unsigned char)*current_ptr) || *current_ptr == '_')) { current_ptr++; }
             size_t len = current_ptr - start;
-            if (len >= MAX_LEXEME_LEN) {
-                fprintf(stderr, "Tokenizer error [line %d, col %d]: Identifier is too long.\n", line, column); goto cleanup_failure;
-            }
+            
             tokens[count].type = IDENTIFIER;
-            strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
-            tokens[count].line = line; tokens[count].column = column;
+            tokens[count].lexeme = malloc(len + 1);
+            if (!tokens[count].lexeme) goto cleanup_failure;
+            strncpy(tokens[count].lexeme, start, len);
+            tokens[count].lexeme[len] = '\0';
+            tokens[count].line = line;
+            tokens[count].column = column;
             count++;
 
         } else if (isdigit((unsigned char)c) || (c == '.' && (current_ptr + 1 < end_ptr) && isdigit((unsigned char)*(current_ptr+1)))) {
@@ -1047,32 +1050,35 @@ bool tokenize(Graveyard *gy) {
                 while (current_ptr < end_ptr && isdigit((unsigned char)*current_ptr)) { current_ptr++; }
             }
             size_t len = current_ptr - start;
-            if (len >= MAX_LEXEME_LEN) {
-                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Number literal is too long.\n", line, column); goto cleanup_failure;
-            }
+            
             tokens[count].type = NUMBER;
-            strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
-            tokens[count].line = line; tokens[count].column = column;
+            tokens[count].lexeme = malloc(len + 1);
+            if (!tokens[count].lexeme) goto cleanup_failure;
+            strncpy(tokens[count].lexeme, start, len);
+            tokens[count].lexeme[len] = '\0';
+            tokens[count].line = line;
+            tokens[count].column = column;
             count++;
 
         } else if (c == '"') {
-            const char* string_start_ptr = current_ptr;
             int start_line = line;
             int start_col = column;
             current_ptr++;
 
-            char lexeme_buffer[MAX_LEXEME_LEN];
+            size_t buffer_cap = 64;
+            char* lexeme_buffer = malloc(buffer_cap);
             size_t len = 0;
 
             while (current_ptr < end_ptr && *current_ptr != '"') {
+                if (len + 2 >= buffer_cap) {
+                    buffer_cap *= 2;
+                    lexeme_buffer = realloc(lexeme_buffer, buffer_cap);
+                }
+                
                 char ch = *current_ptr;
-
                 if (ch == '\n') {
                     fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated string literal (newline encountered).\n", line, column);
-                    goto cleanup_failure;
-                }
-                if (len >= MAX_LEXEME_LEN - 1) {
-                    fprintf(stderr, "Tokenizer error [line %d, col %d]: String literal is too long.\n", start_line, start_col);
+                    free(lexeme_buffer);
                     goto cleanup_failure;
                 }
 
@@ -1094,13 +1100,14 @@ bool tokenize(Graveyard *gy) {
 
             if (current_ptr >= end_ptr || *current_ptr != '"') {
                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated string literal.\n", start_line, start_col);
+                free(lexeme_buffer);
                 goto cleanup_failure;
             }
             current_ptr++;
 
             tokens[count].type = STRING;
-            strncpy(tokens[count].lexeme, lexeme_buffer, len);
-            tokens[count].lexeme[len] = '\0';
+            lexeme_buffer[len] = '\0';
+            tokens[count].lexeme = lexeme_buffer;
             tokens[count].line = start_line;
             tokens[count].column = start_col;
             count++;
@@ -1114,12 +1121,13 @@ bool tokenize(Graveyard *gy) {
                     while (lookahead_ptr < end_ptr && (isalnum((unsigned char)*lookahead_ptr) || *lookahead_ptr == '_')) { lookahead_ptr++; }
                     if (lookahead_ptr < end_ptr && *lookahead_ptr == '>') {
                         size_t len = (lookahead_ptr + 1) - start;
-                        if (len >= MAX_LEXEME_LEN) {
-                            fprintf(stderr, "Tokenizer error [line %d, col %d]: TYPE_IDENTIFIER is too long.\n", line, column); goto cleanup_failure;
-                        }
                         tokens[count].type = TYPE;
-                        strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
-                        tokens[count].line = line; tokens[count].column = column;
+                        tokens[count].lexeme = malloc(len + 1);
+                        if (!tokens[count].lexeme) goto cleanup_failure;
+                        strncpy(tokens[count].lexeme, start, len);
+                        tokens[count].lexeme[len] = '\0';
+                        tokens[count].line = line;
+                        tokens[count].column = column;
                         count++;
                         current_ptr = lookahead_ptr + 1;
                         continue;
@@ -1132,8 +1140,11 @@ bool tokenize(Graveyard *gy) {
             if (current_ptr + 2 < end_ptr) {
                 ttype = identify_three_char_token(start[0], start[1], start[2]);
                 if (ttype != UNKNOWN) {
+                    tokens[count].type = ttype;
+                    tokens[count].lexeme = malloc(4);
+                    if (!tokens[count].lexeme) goto cleanup_failure;
                     snprintf(tokens[count].lexeme, 4, "%c%c%c", start[0], start[1], start[2]);
-                    tokens[count].type = ttype; tokens[count].line = line; tokens[count].column = column;
+                    tokens[count].line = line; tokens[count].column = column;
                     count++; current_ptr += 3; continue;
                 }
             }
@@ -1141,8 +1152,11 @@ bool tokenize(Graveyard *gy) {
             if (current_ptr + 1 < end_ptr) {
                 ttype = identify_two_char_token(start[0], start[1]);
                 if (ttype != UNKNOWN) {
+                    tokens[count].type = ttype;
+                    tokens[count].lexeme = malloc(3);
+                    if (!tokens[count].lexeme) goto cleanup_failure;
                     snprintf(tokens[count].lexeme, 3, "%c%c", start[0], start[1]);
-                    tokens[count].type = ttype; tokens[count].line = line; tokens[count].column = column;
+                    tokens[count].line = line; tokens[count].column = column;
                     count++; current_ptr += 2; continue;
                 }
             }
@@ -1153,6 +1167,8 @@ bool tokenize(Graveyard *gy) {
                 goto cleanup_failure;
             }
             tokens[count].type = ttype;
+            tokens[count].lexeme = malloc(2);
+            if (!tokens[count].lexeme) goto cleanup_failure;
             tokens[count].lexeme[0] = c; tokens[count].lexeme[1] = '\0';
             tokens[count].line = line; tokens[count].column = column;
             count++;
@@ -1166,21 +1182,25 @@ bool tokenize(Graveyard *gy) {
     }
 
     tokens[count].type = TOKENEOF;
-    tokens[count].lexeme[0] = '\0';
+    tokens[count].lexeme = strdup("");
+    if (!tokens[count].lexeme) goto cleanup_failure;
     tokens[count].line = line;
     tokens[count].column = (current_ptr - line_start_ptr) + 1;
     count++;
-    
+
     if (count < capacity && count > 0) {
         Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
         if (shrunk_tokens) { tokens = shrunk_tokens; }
     }
-    
+
     gy->tokens = tokens;
     gy->token_count = count;
     return true;
 
 cleanup_failure:
+    for (size_t i = 0; i < count; i++) {
+        free(tokens[i].lexeme);
+    }
     free(tokens);
     gy->tokens = NULL;
     gy->token_count = 0;
@@ -4361,6 +4381,12 @@ void graveyard_debug_print(Graveyard* gy) {
 void graveyard_free(Graveyard *gy) {
     if (!gy) return;
     free(gy->source_code);
+    
+    if (gy->tokens) {
+        for (size_t i = 0; i < gy->token_count; i++) {
+            free(gy->tokens[i].lexeme);
+        }
+    }
     free(gy->tokens);
     free_ast(gy->ast_root);
     
@@ -5800,7 +5826,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             } while (FindNextFile(find_handle, &find_data) != 0);
 
             FindClose(find_handle);
-        #else // POSIX systems (Linux, macOS)
+        #else
             DIR* dir = opendir(path);
             if (!dir) {
                 runtime_error(gy, node->line, "Cannot open directory '%s'", path);
