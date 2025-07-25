@@ -3072,10 +3072,8 @@ static char* get_attribute_string_dynamic(const char* line, const char* key) {
     if (*value_start != '"') return NULL;
     value_start++;
 
-    // First pass: determine the required length for the unescaped string.
     size_t required_len = 0;
     const char* scanner = value_start;
-    // Find the closing quote, respecting escaped quotes
     while (*scanner != '\0') {
         if (*scanner == '"' && *(scanner - 1) != '\\') break;
         scanner++;
@@ -3085,22 +3083,20 @@ static char* get_attribute_string_dynamic(const char* line, const char* key) {
     scanner = value_start;
     while (scanner < value_end) {
         if (*scanner == '\\') {
-            scanner++; // Skip the backslash and the character after it
+            scanner++;
         }
         required_len++;
         scanner++;
     }
 
-    // Allocate the perfect amount of memory.
     char* out_buffer = malloc(required_len + 1);
     if (!out_buffer) return NULL;
 
-    // Second pass: copy and unescape the characters.
     size_t out_len = 0;
     scanner = value_start;
      while (scanner < value_end) {
         if (*scanner == '\\') {
-            scanner++; // Skip the backslash
+            scanner++;
             switch (*scanner) {
                 case 'n':  out_buffer[out_len++] = '\n'; break;
                 case 't':  out_buffer[out_len++] = '\t'; break;
@@ -3267,7 +3263,6 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     if (!node) return NULL;
     node->line = get_attribute_int(line, "line=");
 
-    // This temporary pointer is used to manage the memory from get_attribute_string_dynamic
     char* temp_str = NULL;
 
     switch (type) {
@@ -3485,8 +3480,6 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             node->as.function_declaration.param_count = 0;
             node->as.function_declaration.params = malloc(node->as.function_declaration.param_capacity * sizeof(Token));
 
-            // Use a temporary pointer for strtok_r on Windows, or strtok on POSIX
-            char* context = NULL;
             char* param_name = strtok(params_buffer, " ");
             while (param_name != NULL) {
                 if (node->as.function_declaration.param_count >= node->as.function_declaration.param_capacity) {
