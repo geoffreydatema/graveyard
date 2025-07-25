@@ -1240,6 +1240,7 @@ void free_ast(AstNode* node) {
             free_ast(node->as.unary_op.right);
             break;
         case AST_ASSIGNMENT:
+            free_ast(node->as.assignment.left);
             free_ast(node->as.assignment.value);
             break;
         case AST_FORMATTED_STRING:
@@ -1642,7 +1643,11 @@ static AstNode* parse_block(Parser* parser) {
 
         if (statement->type != AST_FUNCTION_DECLARATION &&
             statement->type != AST_IF_STATEMENT &&
-            statement->type != AST_WHILE_STATEMENT)
+            statement->type != AST_WHILE_STATEMENT &&
+            statement->type != AST_FOR_STATEMENT &&
+            statement->type != AST_NAMESPACE_DECLARATION &&
+            statement->type != AST_TYPE_DECLARATION &&
+            statement->type != AST_TRY_EXCEPT_STATEMENT)
         {
             expect(parser, SEMICOLON, "Expected ';' after statement inside block.");
             if (parser->had_error) break;
