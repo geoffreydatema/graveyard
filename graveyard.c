@@ -2552,6 +2552,15 @@ cleanup:
 
 //COMPILE (AST SERIALIZATION TO FILE)--------------------------------------------------
 
+static void write_escaped_string(FILE* file, const char* str) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (str[i] == '"' || str[i] == '\\') {
+            fputc('\\', file);
+        }
+        fputc(str[i], file);
+    }
+}
+
 static void write_ast_node(FILE* file, AstNode* node, int indent) {
     if (node == NULL) {
         return;
@@ -2631,7 +2640,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 FmtStringPart part = node->as.formatted_string.parts[i];
                 if (part.type == FMT_PART_LITERAL) {
                     for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
-                    fprintf(file, "(FORMATTEDPART value=\"%s\")\n", part.as.literal.lexeme);
+                    fprintf(file, "(FORMATTEDPART value=\"");
+                    write_escaped_string(file, part.as.literal.lexeme);
+                    fprintf(file, "\")\n");
                 } else {
                     write_ast_node(file, part.as.expression, indent + 1);
                 }
@@ -2689,7 +2700,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                     fprintf(file, "(LITERAL_TYPE value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
                     break;
                 case STRING:
-                    fprintf(file, "(LITERAL_STR value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    fprintf(file, "(LITERAL_STR value=\"");
+                    write_escaped_string(file, literal_token.lexeme);
+                    fprintf(file, "\" line=%d)\n", node->line);
                     break;
                 case NUMBER:
                     fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
