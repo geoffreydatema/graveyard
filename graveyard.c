@@ -584,17 +584,20 @@ struct GraveyardFunction {
 };
 
 struct GraveyardType {
+    int ref_count;
     GraveyardString* name;
     Monolith fields;
     Monolith methods;
 };
 
 struct GraveyardInstance {
+    int ref_count;
     GraveyardType* type;
     Monolith fields;
 };
 
 struct GraveyardBoundMethod {
+    int ref_count;
     GraveyardValue receiver;
     GraveyardValue function;
 };
@@ -3746,6 +3749,149 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 }
 
 //EXECUTE-------------------------------------------------------
+void monolith_init(Monolith* monolith) {
+    monolith->count = 0;
+    monolith->capacity = 8;
+    monolith->entries = malloc(monolith->capacity * sizeof(MonolithEntry));
+    if (!monolith->entries) {
+        perror("monolith_init: malloc failed");
+        exit(1);
+    }
+    for (int i = 0; i < monolith->capacity; i++) {
+        monolith->entries[i].key = NULL;
+    }
+}
+
+static void dec_ref(GraveyardValue value);
+static void free_value(GraveyardValue value);
+
+void monolith_free(Monolith* monolith) {
+    for (int i = 0; i < monolith->capacity; i++) {
+        MonolithEntry* entry = &monolith->entries[i];
+        if (entry->key != NULL) {
+            dec_ref(entry->value);
+            free(entry->key);
+        }
+    }
+    free(monolith->entries);
+    monolith->entries = NULL;
+    monolith->count = 0;
+    monolith->capacity = 0;
+}
+
+static void inc_ref(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_STRING:     if (value.as.string) value.as.string->ref_count++;         break;
+        case VAL_ARRAY:      if (value.as.array) value.as.array->ref_count++;           break;
+        case VAL_HASHTABLE:  if (value.as.hashtable) value.as.hashtable->ref_count++;   break;
+        case VAL_FUNCTION:   if (value.as.function) value.as.function->ref_count++;     break;
+        case VAL_TYPE:       if (value.as.type) value.as.type->ref_count++;             break;
+        case VAL_INSTANCE:   if (value.as.instance) value.as.instance->ref_count++;     break;
+        case VAL_BOUND_METHOD: if (value.as.bound_method) value.as.bound_method->ref_count++; break;
+        default:
+            break;
+    }
+}
+
+static GraveyardValue create_type_value_from_ptr(GraveyardType* type) {
+    GraveyardValue val;
+    val.type = VAL_TYPE;
+    val.as.type = type;
+    return val;
+}
+
+static void free_value(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_STRING: {
+            GraveyardString* string = value.as.string;
+            free(string->chars);
+            free(string);
+            break;
+        }
+        case VAL_ARRAY: {
+            GraveyardArray* array = value.as.array;
+            for (size_t i = 0; i < array->count; i++) {
+                dec_ref(array->values[i]);
+            }
+            free(array->values);
+            free(array);
+            break;
+        }
+        case VAL_HASHTABLE: {
+            GraveyardHashtable* ht = value.as.hashtable;
+            for (int i = 0; i < ht->capacity; i++) {
+                if (ht->entries[i].is_in_use) {
+                    dec_ref(ht->entries[i].key);
+                    dec_ref(ht->entries[i].value);
+                }
+            }
+            free(ht->entries);
+            free(ht);
+            break;
+        }
+        case VAL_FUNCTION: {
+            GraveyardFunction* func = value.as.function;
+            free(func->name->chars);
+            free(func->name);
+            free(func);
+            break;
+        }
+        case VAL_TYPE: {
+            GraveyardType* type = value.as.type;
+            free(type->name->chars);
+            free(type->name);
+            monolith_free(&type->fields);
+            monolith_free(&type->methods);
+            free(type);
+            break;
+        }
+        case VAL_INSTANCE: {
+            GraveyardInstance* instance = value.as.instance;
+            dec_ref(create_type_value_from_ptr(instance->type));
+            monolith_free(&instance->fields);
+            free(instance);
+            break;
+        }
+        case VAL_BOUND_METHOD: {
+            GraveyardBoundMethod* bound = value.as.bound_method;
+            dec_ref(bound->receiver);
+            dec_ref(bound->function);
+            free(bound);
+            break;
+        }
+        default:
+            break; 
+    }
+}
+
+static void dec_ref(GraveyardValue value) {
+    switch (value.type) {
+        case VAL_STRING:
+            if (value.as.string && --value.as.string->ref_count == 0) free_value(value);
+            break;
+        case VAL_ARRAY:
+            if (value.as.array && --value.as.array->ref_count == 0) free_value(value);
+            break;
+        case VAL_HASHTABLE:
+            if (value.as.hashtable && --value.as.hashtable->ref_count == 0) free_value(value);
+            break;
+        case VAL_FUNCTION:
+            if (value.as.function && --value.as.function->ref_count == 0) free_value(value);
+            break;
+        case VAL_TYPE:
+             if (value.as.type && --value.as.type->ref_count == 0) free_value(value);
+            break;
+        case VAL_INSTANCE:
+             if (value.as.instance && --value.as.instance->ref_count == 0) free_value(value);
+            break;
+        case VAL_BOUND_METHOD:
+             if (value.as.bound_method && --value.as.bound_method->ref_count == 0) free_value(value);
+            break;
+        default:
+            break;
+    }
+}
+
 static void runtime_error(Graveyard* gy, int line, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -3840,10 +3986,11 @@ static GraveyardValue create_hashtable_value() {
     GraveyardHashtable* ht = malloc(sizeof(GraveyardHashtable));
     ht->count = 0;
     ht->capacity = 8;
-    ht->ref_count = 0;
+    ht->ref_count = 1;
     ht->entries = malloc(ht->capacity * sizeof(HashtableEntry));
     for (int i = 0; i < ht->capacity; i++) {
         ht->entries[i].is_in_use = false;
+        ht->entries[i].key.type = VAL_NULL;
     }
     val.as.hashtable = ht;
     return val;
@@ -3911,9 +4058,13 @@ static void hashtable_set(GraveyardHashtable* ht, GraveyardValue key, GraveyardV
     if (is_new_key) {
         entry->is_in_use = true;
         ht->count++;
+        inc_ref(key);
+        entry->key = key;
+    } else {
+        dec_ref(entry->value);
     }
     
-    entry->key = key;
+    inc_ref(value);
     entry->value = value;
 }
 
@@ -3940,7 +4091,7 @@ static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
     val.type = VAL_FUNCTION;
     GraveyardFunction* func = malloc(sizeof(GraveyardFunction));
 
-    func->ref_count = 0;
+    func->ref_count = 1;
     func->arity = node->as.function_declaration.param_count;
     func->body = node->as.function_declaration.body;
     func->params = node->as.function_declaration.params;
@@ -3952,6 +4103,7 @@ static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
     name_str->chars = malloc(len + 1);
     memcpy(name_str->chars, node->as.function_declaration.name.lexeme, len + 1);
     name_str->length = len;
+    name_str->ref_count = 0;
     func->name = name_str;
 
     val.as.function = func;
@@ -4039,27 +4191,6 @@ static void monolith_resize(Monolith* monolith, int new_capacity) {
     monolith->capacity = new_capacity;
 }
 
-void monolith_init(Monolith* monolith) {
-    monolith->count = 0;
-    monolith->capacity = 8;
-    monolith->entries = malloc(monolith->capacity * sizeof(MonolithEntry));
-    if (!monolith->entries) {
-        perror("monolith_init: malloc failed");
-        exit(1);
-    }
-    for (int i = 0; i < monolith->capacity; i++) {
-        monolith->entries[i].key = NULL;
-    }
-}
-
-void monolith_free(Monolith* monolith) {
-    for (int i = 0; i < monolith->capacity; i++) {
-        free(monolith->entries[i].key);
-    }
-    free(monolith->entries);
-    monolith_init(monolith);
-}
-
 bool monolith_set(Monolith* monolith, const char* key, GraveyardValue value) {
     if (monolith->count + 1 > monolith->capacity * 0.75) {
         int new_capacity = monolith->capacity < 8 ? 8 : monolith->capacity * 2;
@@ -4068,15 +4199,23 @@ bool monolith_set(Monolith* monolith, const char* key, GraveyardValue value) {
 
     MonolithEntry* entry = find_entry(monolith->entries, monolith->capacity, key);
     bool is_new_key = entry->key == NULL;
+
+    if (!is_new_key) {
+        dec_ref(entry->value);
+    }
+    
+    inc_ref(value);
+    entry->value = value;
+
     if (is_new_key) {
         monolith->count++;
         entry->key = strdup(key);
         if (entry->key == NULL) {
-             perror("monolith_set: strdup failed");
-             return false;
+            perror("monolith_set: strdup failed");
+            return false;
         }
     }
-    entry->value = value;
+    
     return true;
 }
 
@@ -4096,6 +4235,7 @@ static GraveyardValue create_type_value(GraveyardString* name) {
     GraveyardValue val;
     val.type = VAL_TYPE;
     GraveyardType* type = malloc(sizeof(GraveyardType));
+    type->ref_count = 1;
     type->name = name;
     monolith_init(&type->fields);
     monolith_init(&type->methods);
@@ -4107,7 +4247,11 @@ static GraveyardValue create_instance_value(GraveyardValue type_value) {
     GraveyardValue val;
     val.type = VAL_INSTANCE;
     GraveyardInstance* instance = malloc(sizeof(GraveyardInstance));
+    instance->ref_count = 1;
     instance->type = type_value.as.type;
+    
+    inc_ref(type_value);
+
     monolith_init(&instance->fields);
     val.as.instance = instance;
     return val;
@@ -4160,7 +4304,7 @@ static GraveyardValue create_string_value(const char* chars) {
     memcpy(string_obj->chars, chars, length);
     string_obj->chars[length] = '\0';
     string_obj->length = length;
-    string_obj->ref_count = 0;
+    string_obj->ref_count = 1;
 
     val.as.string = string_obj;
     return val;
@@ -4174,14 +4318,13 @@ static GraveyardValue create_array_value() {
     array_obj->capacity = 8;
     array_obj->count = 0;
     array_obj->values = malloc(array_obj->capacity * sizeof(GraveyardValue));
-    array_obj->ref_count = 0;
+    array_obj->ref_count = 1;
 
     val.as.array = array_obj;
     return val;
 }
 
 static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_size) {
-    // Ensure buffer is not NULL and has space for at least a null terminator
     if (!buffer || buffer_size == 0) return;
 
     switch (value.type) {
@@ -4201,7 +4344,6 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             snprintf(buffer, buffer_size, "%s", value.as.function->name->chars);
             break;
 
-        // --- FIX: Dynamic string building for collections ---
         case VAL_ARRAY: {
             size_t capacity = 128;
             char* result = malloc(capacity);
@@ -4251,7 +4393,7 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
                     value_to_string(ht->entries[i].key, key_str, sizeof(key_str));
                     value_to_string(ht->entries[i].value, val_str, sizeof(val_str));
 
-                    size_t part_len = strlen(key_str) + strlen(val_str) + 2; // +2 for ": "
+                    size_t part_len = strlen(key_str) + strlen(val_str) + 2;
                     size_t comma_len = (printed > 0) ? 2 : 0;
 
                     if (len + part_len + comma_len + 2 > capacity) {
@@ -4278,7 +4420,6 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             strncpy(buffer, "(unknown)", buffer_size - 1);
             break;
     }
-    // Ensure null-termination
     buffer[buffer_size - 1] = '\0';
 }
 
@@ -4295,18 +4436,16 @@ static bool is_value_falsy(GraveyardValue value) {
 static void array_append(GraveyardArray* array, GraveyardValue value) {
     if (array->count >= array->capacity) {
         size_t new_capacity = (array->capacity == 0) ? 8 : array->capacity * 2;
-        
         GraveyardValue* temp = realloc(array->values, new_capacity * sizeof(GraveyardValue));
-        
         if (!temp) {
             perror("array_append: realloc failed");
             exit(1);
         }
-        
         array->values = temp;
         array->capacity = new_capacity;
     }
     
+    inc_ref(value);
     array->values[array->count++] = value;
 }
 
@@ -4450,6 +4589,10 @@ void graveyard_free(Graveyard *gy) {
     free(gy->tokens);
     free_ast(gy->ast_root);
     
+    dec_ref(gy->arguments);
+    dec_ref(gy->last_executed_value);
+    dec_ref(gy->return_value);
+
     Environment* env = gy->environment;
     while (env != NULL) {
         Environment* next = env->enclosing;
@@ -4457,7 +4600,17 @@ void graveyard_free(Graveyard *gy) {
         free(env);
         env = next;
     }
+    
+    for (int i = 0; i < gy->namespaces.capacity; i++) {
+        MonolithEntry* entry = &gy->namespaces.entries[i];
+        if (entry->key != NULL) {
+            Environment* ns_env = entry->value.as.environment;
+            monolith_free(&ns_env->values);
+            free(ns_env);
+        }
+    }
     monolith_free(&gy->namespaces);
+    
     free(gy);
 }
 
@@ -4507,12 +4660,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_PRINT_STATEMENT: {
             for (size_t i = 0; i < node->as.print_stmt.count; i++) {
                 GraveyardValue value = execute_node(gy, node->as.print_stmt.expressions[i]);
-
                 if (gy->had_runtime_error) {
+                    dec_ref(value);
                     return create_null_value();
                 }
-
                 print_value(value);
+                
+                dec_ref(value);
 
                 if (i < node->as.print_stmt.count - 1) {
                     printf(" ");
@@ -4545,18 +4699,16 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
                 case TYPE: {
-                    // FIX: Copy the lexeme to a local buffer before modifying it.
                     char type_name_buffer[MAX_LEXEME_LEN];
                     const char* lexeme = literal_token.lexeme;
                     size_t len = strlen(lexeme);
 
-                    // Ensure we have at least <> before proceeding
                     if (len > 2) {
                         size_t type_name_len = len - 2;
                         strncpy(type_name_buffer, lexeme + 1, type_name_len);
                         type_name_buffer[type_name_len] = '\0';
                     } else {
-                        type_name_buffer[0] = '\0'; // Handle malformed type literal
+                        type_name_buffer[0] = '\0';
                     }
 
                     GraveyardValue type_val;
@@ -4800,97 +4952,105 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_UNARY_OP: {
             GraveyardValue right = execute_node(gy, node->as.unary_op.right);
+            GraveyardValue result = create_null_value();
 
             switch (node->as.unary_op.operator.type) {
                 case MINUS:
                     if (right.type != VAL_NUMBER) {
                         runtime_error(gy, node->line, "Operand for negation must be a number");
-                        return create_null_value();
+                    } else {
+                        result = create_number_value(-right.as.number);
                     }
-                    return create_number_value(-right.as.number);
+                    break;
 
                 case NOT:
-                    return create_bool_value(is_value_falsy(right));
+                    result = create_bool_value(is_value_falsy(right));
+                    break;
 
                 case TYPEOF: {
                     switch (right.type) {
-                        case VAL_BOOL:      return create_string_value("boolean");
-                        case VAL_NULL:      return create_string_value("null");
-                        case VAL_STRING:    return create_string_value("string");
-                        case VAL_ARRAY:     return create_string_value("array");
-                        case VAL_HASHTABLE: return create_string_value("hashtable");
+                        case VAL_BOOL:         result = create_string_value("boolean"); break;
+                        case VAL_NULL:         result = create_string_value("null"); break;
+                        case VAL_STRING:       result = create_string_value("string"); break;
+                        case VAL_ARRAY:        result = create_string_value("array"); break;
+                        case VAL_HASHTABLE:    result = create_string_value("hashtable"); break;
                         case VAL_FUNCTION:
-                        case VAL_BOUND_METHOD:
-                            return create_string_value("function");
-                        case VAL_TYPE:
-                            return create_string_value("type");
-                        case VAL_INSTANCE:
-                            return create_string_value(right.as.instance->type->name->chars);
+                        case VAL_BOUND_METHOD: result = create_string_value("function"); break;
+                        case VAL_TYPE:         result = create_string_value("type"); break;
+                        case VAL_INSTANCE:     result = create_string_value(right.as.instance->type->name->chars); break;
                         case VAL_NUMBER:
                             if (fmod(right.as.number, 1.0) == 0) {
-                                return create_string_value("integer");
+                                result = create_string_value("integer");
                             } else {
-                                return create_string_value("float");
+                                result = create_string_value("float");
                             }
+                            break;
                         default:
-                            return create_string_value("unknown");
+                            result = create_string_value("unknown"); break;
                     }
+                    break;
                 }
 
                 case CASTBOOLEAN: {
-                    return create_bool_value(!is_value_falsy(right));
+                    result = create_bool_value(!is_value_falsy(right));
+                    break;
                 }
 
                 case CASTINTEGER: {
                     switch (right.type) {
-                        case VAL_NUMBER:  return create_number_value((int)right.as.number);
-                        case VAL_BOOL:    return create_number_value(right.as.boolean ? 1 : 0);
-                        case VAL_NULL:    return create_number_value(0);
+                        case VAL_NUMBER: result = create_number_value((int)right.as.number); break;
+                        case VAL_BOOL:   result = create_number_value(right.as.boolean ? 1 : 0); break;
+                        case VAL_NULL:   result = create_number_value(0); break;
                         case VAL_STRING: {
                             char* end;
                             long val = strtol(right.as.string->chars, &end, 10);
                             if (*end != '\0') {
                                 runtime_error(gy, node->line, "Cannot cast non-numeric string to integer");
-                                return create_null_value();
+                            } else {
+                                result = create_number_value(val);
                             }
-                            return create_number_value(val);
+                            break;
                         }
                         default:
                             runtime_error(gy, node->line, "Cannot cast this type to integer");
-                            return create_null_value();
+                            break;
                     }
+                    break;
                 }
 
                 case CASTFLOAT: {
                     switch (right.type) {
-                        case VAL_NUMBER:  return create_number_value((double)right.as.number);
-                        case VAL_BOOL:    return create_number_value(right.as.boolean ? 1.0 : 0.0);
-                        case VAL_NULL:    return create_number_value(0.0);
+                        case VAL_NUMBER: result = create_number_value((double)right.as.number); break;
+                        case VAL_BOOL:   result = create_number_value(right.as.boolean ? 1.0 : 0.0); break;
+                        case VAL_NULL:   result = create_number_value(0.0); break;
                         case VAL_STRING: {
                             char* end;
                             double val = strtod(right.as.string->chars, &end);
                             if (*end != '\0') {
                                 runtime_error(gy, node->line, "Cannot cast non-numeric string to float");
-                                return create_null_value();
+                            } else {
+                                result = create_number_value(val);
                             }
-                            return create_number_value(val);
+                            break;
                         }
                         default:
                             runtime_error(gy, node->line, "Cannot cast this type to float");
-                            return create_null_value();
+                            break;
                     }
+                    break;
                 }
                 
                 case CASTSTRING: {
                     char buffer[1024];
                     value_to_string(right, buffer, sizeof(buffer));
-                    return create_string_value(buffer);
+                    result = create_string_value(buffer);
+                    break;
                 }
 
                 case CASTARRAY: {
                     switch (right.type) {
-                        case VAL_ARRAY:     return right;
-                        case VAL_NULL:      return create_array_value();
+                        case VAL_ARRAY:       inc_ref(right); result = right; break;
+                        case VAL_NULL:        result = create_array_value(); break;
                         case VAL_HASHTABLE: {
                             GraveyardValue arr_val = create_array_value();
                             GraveyardHashtable* ht = right.as.hashtable;
@@ -4899,7 +5059,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                                     array_append(arr_val.as.array, ht->entries[i].value);
                                 }
                             }
-                            return arr_val;
+                            result = arr_val;
+                            break;
                         }
                         case VAL_STRING: {
                             GraveyardValue arr_val = create_array_value();
@@ -4908,182 +5069,137 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                                 char char_buf[2] = { str->chars[i], '\0' };
                                 array_append(arr_val.as.array, create_string_value(char_buf));
                             }
-                            return arr_val;
+                            result = arr_val;
+                            break;
                         }
                         default: {
                             GraveyardValue arr_val = create_array_value();
                             array_append(arr_val.as.array, right);
-                            return arr_val;
+                            result = arr_val;
+                            break;
                         }
                     }
+                    break;
                 }
 
                 case CASTHASHTABLE: {
                     switch (right.type) {
-                        case VAL_HASHTABLE: return right;
-                        case VAL_NULL:      return create_hashtable_value();
+                        case VAL_HASHTABLE:
+                            inc_ref(right);
+                            result = right;
+                            break;
+                        case VAL_NULL:
+                            result = create_hashtable_value();
+                            break;
                         case VAL_ARRAY: {
                             GraveyardValue ht_val = create_hashtable_value();
                             GraveyardArray* arr = right.as.array;
+                            bool cast_error = false;
+
                             for (size_t i = 0; i < arr->count; i++) {
                                 GraveyardValue key = arr->values[i];
                                 
-                                bool is_valid_key = false;
-                                if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
-                                    is_valid_key = true;
-                                } else if (key.type == VAL_NUMBER) {
-                                    if (fmod(key.as.number, 1.0) == 0) {
-                                        is_valid_key = true;
-                                    }
-                                }
+                                bool is_valid_key = (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING ||
+                                                    (key.type == VAL_NUMBER && fmod(key.as.number, 1.0) == 0));
 
                                 if (!is_valid_key) {
                                     runtime_error(gy, node->line, "Array contains an invalid type for a hashtable key");
-                                    free(ht_val.as.hashtable->entries);
-                                    free(ht_val.as.hashtable);
-                                    return create_null_value();
+                                    cast_error = true;
+                                    break;
                                 }
 
                                 if (hashtable_find_entry(ht_val.as.hashtable->entries, ht_val.as.hashtable->capacity, key)->is_in_use) {
-                                     runtime_error(gy, node->line, "Duplicate key found when casting array to hashtable");
-                                     free(ht_val.as.hashtable->entries);
-                                     free(ht_val.as.hashtable);
-                                     return create_null_value();
+                                    runtime_error(gy, node->line, "Duplicate key found when casting array to hashtable");
+                                    cast_error = true;
+                                    break;
                                 }
                                 hashtable_set(ht_val.as.hashtable, key, create_null_value());
                             }
-                            return ht_val;
+
+                            if (cast_error) {
+                                dec_ref(ht_val);
+                            } else {
+                                result = ht_val;
+                            }
+                            break;
                         }
                         default: {
                             GraveyardValue key = right;
-
-                            bool is_valid_key = false;
-                            if (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING) {
-                                is_valid_key = true;
-                            } else if (key.type == VAL_NUMBER) {
-                                if (fmod(key.as.number, 1.0) == 0) {
-                                    is_valid_key = true;
-                                }
-                            }
+                            bool is_valid_key = (key.type == VAL_BOOL || key.type == VAL_NULL || key.type == VAL_STRING ||
+                                                (key.type == VAL_NUMBER && fmod(key.as.number, 1.0) == 0));
 
                             if (!is_valid_key) {
                                 runtime_error(gy, node->line, "Invalid type used as a hashtable key");
-                                return create_null_value();
+                            } else {
+                                GraveyardValue ht_val = create_hashtable_value();
+                                hashtable_set(ht_val.as.hashtable, key, create_null_value());
+                                result = ht_val;
                             }
-
-                            GraveyardValue ht_val = create_hashtable_value();
-                            hashtable_set(ht_val.as.hashtable, key, create_null_value());
-                            return ht_val;
+                            break;
                         }
                     }
+                    break;
                 }
 
                 case ASTERISK: {
                     switch (right.type) {
-                        case VAL_STRING:
-                            return create_number_value(right.as.string->length);
-                        case VAL_ARRAY:
-                            return create_number_value(right.as.array->count);
-                        case VAL_HASHTABLE:
-                            return create_number_value(right.as.hashtable->count);
-                        case VAL_NUMBER:
-                            return create_number_value(trunc(right.as.number));
-                        case VAL_BOOL:
-                            return create_number_value(right.as.boolean ? 1 : 0);
-                        case VAL_NULL:
-                            return create_number_value(0);
-                        case VAL_FUNCTION:
-                            runtime_error(gy, node->line, "Cannot get the length of a function");
-                            return create_null_value();
+                        case VAL_STRING:    result = create_number_value(right.as.string->length); break;
+                        case VAL_ARRAY:     result = create_number_value(right.as.array->count); break;
+                        case VAL_HASHTABLE: result = create_number_value(right.as.hashtable->count); break;
+                        case VAL_NUMBER:    result = create_number_value(trunc(right.as.number)); break;
+                        case VAL_BOOL:      result = create_number_value(right.as.boolean ? 1 : 0); break;
+                        case VAL_NULL:      result = create_number_value(0); break;
                         default:
                             runtime_error(gy, node->line, "This type does not have a length");
-                            return create_null_value();
+                            break;
                     }
+                    break;
                 }
 
                 case CARET: {
                     if (right.type != VAL_HASHTABLE) {
                         runtime_error(gy, node->line, "The keys-of operator (^) can only be used on a hashtable");
-                        return create_null_value();
-                    }
-                    GraveyardValue keys_array = create_array_value();
-                    GraveyardHashtable* ht = right.as.hashtable;
-                    for (int i = 0; i < ht->capacity; i++) {
-                        if (ht->entries[i].is_in_use) {
-                            array_append(keys_array.as.array, ht->entries[i].key);
+                    } else {
+                        GraveyardValue keys_array = create_array_value();
+                        GraveyardHashtable* ht = right.as.hashtable;
+                        for (int i = 0; i < ht->capacity; i++) {
+                            if (ht->entries[i].is_in_use) {
+                                array_append(keys_array.as.array, ht->entries[i].key);
+                            }
                         }
+                        result = keys_array;
                     }
-                    return keys_array;
+                    break;
                 }
 
                 case BACKTICK: {
                     if (right.type != VAL_HASHTABLE) {
                         runtime_error(gy, node->line, "The values-of operator (`) can only be used on a hashtable");
-                        return create_null_value();
-                    }
-                    GraveyardValue values_array = create_array_value();
-                    GraveyardHashtable* ht = right.as.hashtable;
-                    for (int i = 0; i < ht->capacity; i++) {
-                        if (ht->entries[i].is_in_use) {
-                            array_append(values_array.as.array, ht->entries[i].value);
+                    } else {
+                        GraveyardValue values_array = create_array_value();
+                        GraveyardHashtable* ht = right.as.hashtable;
+                        for (int i = 0; i < ht->capacity; i++) {
+                            if (ht->entries[i].is_in_use) {
+                                array_append(values_array.as.array, ht->entries[i].value);
+                            }
                         }
+                        result = values_array;
                     }
-                    return values_array;
+                    break;
                 }
 
                 default:
                     runtime_error(gy, node->line, "Unknown unary operator");
-                    return create_null_value();
+                    break;
             }
-            break;
+
+            dec_ref(right);
+            
+            return result;
         }
 
         case AST_BINARY_OP: {
             GraveyardTokenType op_type = node->as.binary_op.operator.type;
-
-            if (op_type == REFERENCE) {
-                GraveyardValue collection = execute_node(gy, node->as.binary_op.left);
-                GraveyardValue key = execute_node(gy, node->as.binary_op.right);
-
-                if (collection.type != VAL_HASHTABLE) {
-                    runtime_error(gy, node->line, "The '#' operator can only be used on a hashtable");
-                    return create_null_value();
-                }
-                
-                GraveyardHashtable* ht = collection.as.hashtable;
-                HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, key);
-
-                if (entry->is_in_use) {
-                    return entry->value;
-                } else {
-                    return create_null_value();
-                }
-            }
-
-            if (op_type == FILEWRITE) {
-                GraveyardValue content = execute_node(gy, node->as.binary_op.left);
-                GraveyardValue path_val = execute_node(gy, node->as.binary_op.right);
-
-                if (content.type != VAL_STRING) {
-                    runtime_error(gy, node->line, "Content for file write operation must be a string");
-                    return create_null_value();
-                }
-                if (path_val.type != VAL_STRING) {
-                    runtime_error(gy, node->line, "File path for write operation must be a string");
-                    return create_null_value();
-                }
-
-                FILE* file = fopen(path_val.as.string->chars, "w");
-                if (!file) {
-                    runtime_error(gy, node->line, "Cannot open or create file '%s' for writing", path_val.as.string->chars);
-                    return create_null_value();
-                }
-
-                fprintf(file, "%s", content.as.string->chars);
-                fclose(file);
-
-                return create_null_value();
-            }
 
             if (op_type == NULLCOALESCE) {
                 GraveyardValue left = execute_node(gy, node->as.binary_op.left);
@@ -5095,33 +5211,55 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             GraveyardValue left = execute_node(gy, node->as.binary_op.left);
             GraveyardValue right = execute_node(gy, node->as.binary_op.right);
+            GraveyardValue result = create_null_value();
 
-            if (op_type == EQUALITY)   return create_bool_value(are_values_equal(left, right));
-            if (op_type == INEQUALITY) return create_bool_value(!are_values_equal(left, right));
-            if (op_type == XOR) {
+            if (op_type == REFERENCE) {
+                if (left.type != VAL_HASHTABLE) {
+                    runtime_error(gy, node->line, "The '#' operator can only be used on a hashtable");
+                } else {
+                    GraveyardHashtable* ht = left.as.hashtable;
+                    HashtableEntry* entry = hashtable_find_entry(ht->entries, ht->capacity, right);
+                    if (entry->is_in_use) {
+                        inc_ref(entry->value);
+                        result = entry->value;
+                    }
+                }
+            } else if (op_type == FILEWRITE) {
+                if (left.type != VAL_STRING) {
+                    runtime_error(gy, node->line, "Content for file write operation must be a string");
+                } else if (right.type != VAL_STRING) {
+                    runtime_error(gy, node->line, "File path for write operation must be a string");
+                } else {
+                    FILE* file = fopen(right.as.string->chars, "w");
+                    if (!file) {
+                        runtime_error(gy, node->line, "Cannot open or create file '%s' for writing", right.as.string->chars);
+                    } else {
+                        fprintf(file, "%s", left.as.string->chars);
+                        fclose(file);
+                    }
+                }
+            } else if (op_type == EQUALITY) {
+                result = create_bool_value(are_values_equal(left, right));
+            } else if (op_type == INEQUALITY) {
+                result = create_bool_value(!are_values_equal(left, right));
+            } else if (op_type == XOR) {
                 bool left_is_truthy = !is_value_falsy(left);
                 bool right_is_truthy = !is_value_falsy(right);
-                return create_bool_value(left_is_truthy != right_is_truthy);
-            }
-
-            if (op_type == PLUS) {
+                result = create_bool_value(left_is_truthy != right_is_truthy);
+            } else if (op_type == PLUS) {
                 if (left.type == VAL_ARRAY) {
                     GraveyardValue new_array_val = create_array_value();
-                    GraveyardArray* old_array = left.as.array;
-                    for (size_t i = 0; i < old_array->count; i++) {
-                        array_append(new_array_val.as.array, old_array->values[i]);
+                    for (size_t i = 0; i < left.as.array->count; i++) {
+                        array_append(new_array_val.as.array, left.as.array->values[i]);
                     }
                     array_append(new_array_val.as.array, right);
-                    return new_array_val;
-                }
-                if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
-                    return create_number_value(left.as.number + right.as.number);
-                }
-                if (left.type == VAL_STRING || right.type == VAL_STRING) {
+                    result = new_array_val;
+                } else if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
+                    result = create_number_value(left.as.number + right.as.number);
+                } else if (left.type == VAL_STRING || right.type == VAL_STRING) {
                     char left_str_temp[1024];
                     char right_str_temp[1024];
-                    
-                    // --- FIX: Get raw string content, not the quoted representation ---
+
                     if (left.type == VAL_STRING) {
                         strncpy(left_str_temp, left.as.string->chars, sizeof(left_str_temp) - 1);
                         left_str_temp[sizeof(left_str_temp) - 1] = '\0';
@@ -5138,96 +5276,87 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     
                     size_t total_len = strlen(left_str_temp) + strlen(right_str_temp);
                     char* result_buffer = malloc(total_len + 1);
+
                     if (!result_buffer) {
                         runtime_error(gy, node->line, "Memory allocation failed for string concatenation");
-                        return create_null_value();
+                    } else {
+                        strcpy(result_buffer, left_str_temp);
+                        strcat(result_buffer, right_str_temp);
+                        
+                        result = create_string_value(result_buffer);
+                        free(result_buffer);
                     }
-
-                    strcpy(result_buffer, left_str_temp);
-                    strcat(result_buffer, right_str_temp);
-                    
-                    GraveyardValue result = create_string_value(result_buffer);
-                    free(result_buffer);
-                    return result;
+                } else {
+                    runtime_error(gy, node->line, "Operands have incompatible types for '+' operation");
                 }
-                goto type_error;
-            }
-            
-            if (op_type == FORWARDSLASH) {
-                if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    char left_str_temp[1024];
-                    char right_str_temp[1024];
-                    
-                    // --- FIX: Get raw string content, not the quoted representation ---
-                    if (left.type == VAL_STRING) {
-                        strncpy(left_str_temp, left.as.string->chars, sizeof(left_str_temp) - 1);
-                        left_str_temp[sizeof(left_str_temp) - 1] = '\0';
-                    } else {
-                        value_to_string(left, left_str_temp, sizeof(left_str_temp));
-                    }
+            } else if (op_type == FORWARDSLASH && (left.type == VAL_STRING || right.type == VAL_STRING)) {
+                char left_str_temp[1024];
+                char right_str_temp[1024];
 
-                    if (right.type == VAL_STRING) {
-                        strncpy(right_str_temp, right.as.string->chars, sizeof(right_str_temp) - 1);
-                        right_str_temp[sizeof(right_str_temp) - 1] = '\0';
-                    } else {
-                        value_to_string(right, right_str_temp, sizeof(right_str_temp));
-                    }
+                if (left.type == VAL_STRING) {
+                    strncpy(left_str_temp, left.as.string->chars, sizeof(left_str_temp) - 1);
+                    left_str_temp[sizeof(left_str_temp) - 1] = '\0';
+                } else {
+                    value_to_string(left, left_str_temp, sizeof(left_str_temp));
+                }
 
-                    size_t left_len = strlen(left_str_temp);
-                    while (left_len > 0 && (left_str_temp[left_len - 1] == '/' || left_str_temp[left_len - 1] == '\\')) {
-                        left_str_temp[--left_len] = '\0';
-                    }
-                    
-                    size_t right_offset = 0;
-                    while (right_str_temp[right_offset] == '/' || right_str_temp[right_offset] == '\\') {
-                        right_offset++;
-                    }
-                    
-                    size_t total_len = strlen(left_str_temp) + strlen(right_str_temp + right_offset) + 1; // +1 for the '/'
-                    char* result_buffer = malloc(total_len + 1);
-                    if (!result_buffer) {
-                        runtime_error(gy, node->line, "Memory allocation failed for path joining");
-                        return create_null_value();
-                    }
+                if (right.type == VAL_STRING) {
+                    strncpy(right_str_temp, right.as.string->chars, sizeof(right_str_temp) - 1);
+                    right_str_temp[sizeof(right_str_temp) - 1] = '\0';
+                } else {
+                    value_to_string(right, right_str_temp, sizeof(right_str_temp));
+                }
 
+                size_t left_len = strlen(left_str_temp);
+                while (left_len > 0 && (left_str_temp[left_len - 1] == '/' || left_str_temp[left_len - 1] == '\\')) {
+                    left_str_temp[--left_len] = '\0';
+                }
+                
+                size_t right_offset = 0;
+                while (right_str_temp[right_offset] == '/' || right_str_temp[right_offset] == '\\') {
+                    right_offset++;
+                }
+                
+                size_t total_len = strlen(left_str_temp) + strlen(right_str_temp + right_offset) + 1;
+                char* result_buffer = malloc(total_len + 1);
+
+                if (!result_buffer) {
+                    runtime_error(gy, node->line, "Memory allocation failed for path joining");
+                } else {
                     snprintf(result_buffer, total_len + 1, "%s/%s", left_str_temp, right_str_temp + right_offset);
                     
-                    GraveyardValue result = create_string_value(result_buffer);
+                    result = create_string_value(result_buffer);
                     free(result_buffer);
-                    return result;
+                }
+            } else {
+                if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) {
+                    runtime_error(gy, node->line, "Operands must be numbers for this operation");
+                } else {
+                    switch (op_type) {
+                        case MINUS:          result = create_number_value(left.as.number - right.as.number); break;
+                        case ASTERISK:       result = create_number_value(left.as.number * right.as.number); break;
+                        case EXPONENTIATION: result = create_number_value(pow(left.as.number, right.as.number)); break;
+                        case FORWARDSLASH:
+                            if (right.as.number == 0) { runtime_error(gy, node->line, "Division by zero"); }
+                            else { result = create_number_value(left.as.number / right.as.number); }
+                            break;
+                        case MODULO:
+                            if (right.as.number == 0) { runtime_error(gy, node->line, "Division by zero in modulo operation"); }
+                            else { result = create_number_value(fmod(left.as.number, right.as.number)); }
+                            break;
+                        case GREATERTHAN:      result = create_bool_value(left.as.number > right.as.number); break;
+                        case LEFTANGLEBRACKET: result = create_bool_value(left.as.number < right.as.number); break;
+                        case GREATERTHANEQUAL: result = create_bool_value(left.as.number >= right.as.number); break;
+                        case LESSTHANEQUAL:    result = create_bool_value(left.as.number <= right.as.number); break;
+                        default: break;
+                    }
                 }
             }
 
-            if (left.type != VAL_NUMBER || right.type != VAL_NUMBER) goto type_error;
+            dec_ref(left);
+            dec_ref(right);
 
-            switch (op_type) {
-                case MINUS:          return create_number_value(left.as.number - right.as.number);
-                case ASTERISK:       return create_number_value(left.as.number * right.as.number);
-                case EXPONENTIATION: return create_number_value(pow(left.as.number, right.as.number));
-                case MODULO:
-                    if (right.as.number == 0) {
-                        runtime_error(gy, node->line, "Division by zero in modulo operation");
-                        return create_null_value();
-                    }
-                    return create_number_value(fmod(left.as.number, right.as.number));
-                case FORWARDSLASH:
-                    if (right.as.number == 0) {
-                        runtime_error(gy, node->line, "Division by zero");
-                        return create_null_value();
-                    }
-                    return create_number_value(left.as.number / right.as.number);
-                
-                default:
-                    return create_bool_value(
-                        op_type == GREATERTHAN       ? left.as.number > right.as.number :
-                        op_type == LEFTANGLEBRACKET  ? left.as.number < right.as.number :
-                        op_type == GREATERTHANEQUAL ? left.as.number >= right.as.number :
-                                                      left.as.number <= right.as.number
-                    );
-            }
-        type_error:
-            runtime_error(gy, node->line, "Operands have incompatible types for this operation");
-            return create_null_value();
+            return result;
         }
 
         case AST_FORMATTED_STRING: {
@@ -5289,7 +5418,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 value = execute_node(gy, node->as.return_statement.value);
             }
             gy->is_returning = true;
+            
+            dec_ref(gy->return_value);
             gy->return_value = value;
+            
             return value;
         }
 
@@ -5337,7 +5469,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue result = create_null_value();
             if (gy->is_returning) {
                 result = gy->return_value;
-                gy->is_returning = false; 
+                gy->is_returning = false;
+                gy->return_value = create_null_value(); 
             }
 
             return result;
@@ -5345,15 +5478,24 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_IF_STATEMENT: {
             GraveyardValue condition_val = execute_node(gy, node->as.if_statement.condition);
-            if (!is_value_falsy(condition_val)) {
+            bool is_truthy = !is_value_falsy(condition_val);
+            
+            dec_ref(condition_val);
+
+            if (is_truthy) {
                 execute_block(gy, node->as.if_statement.then_branch, environment_new(gy->environment));
                 return create_null_value();
             }
 
             for (size_t i = 0; i < node->as.if_statement.else_if_count; i++) {
                 AstNodeElseIfClause* clause = &node->as.if_statement.else_if_clauses[i];
+                
                 GraveyardValue else_if_condition = execute_node(gy, clause->condition);
-                if (!is_value_falsy(else_if_condition)) {
+                bool else_if_is_truthy = !is_value_falsy(else_if_condition);
+                
+                dec_ref(else_if_condition);
+
+                if (else_if_is_truthy) {
                     execute_block(gy, clause->body, environment_new(gy->environment));
                     return create_null_value();
                 }
@@ -5368,7 +5510,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_TERNARY_EXPRESSION: {
             GraveyardValue condition = execute_node(gy, node->as.ternary_expression.condition);
-            if (!is_value_falsy(condition)) {
+            bool is_falsy = is_value_falsy(condition);
+
+            dec_ref(condition);
+
+            if (!is_falsy) {
                 return execute_node(gy, node->as.ternary_expression.then_expr);
             } else {
                 return execute_node(gy, node->as.ternary_expression.else_expr);
@@ -5386,19 +5532,19 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_WHILE_STATEMENT: {
             while (true) {
                 GraveyardValue condition = execute_node(gy, node->as.while_statement.condition);
-                if (is_value_falsy(condition)) {
+                bool is_falsy = is_value_falsy(condition);
+                
+                dec_ref(condition);
+
+                if (is_falsy) {
                     break;
                 }
-
-                gy->encountered_continue = false;
-                gy->encountered_break = false;
 
                 execute_block(gy, node->as.while_statement.body, environment_new(gy->environment));
 
-                if (gy->encountered_break) {
+                if (gy->is_returning || gy->encountered_break) {
                     break;
                 }
-
             }
             gy->encountered_break = false;
             gy->encountered_continue = false;
@@ -5421,67 +5567,102 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             AstNode** range_exprs = node->as.for_statement.range_expressions;
 
             if (range_count == 1) {
-                GraveyardValue collection_or_stop = execute_node(gy, range_exprs[0]);
+                GraveyardValue collection = execute_node(gy, range_exprs[0]);
                 
-                if (collection_or_stop.type == VAL_ARRAY) {
-                    GraveyardArray* array = collection_or_stop.as.array;
+                if (collection.type == VAL_ARRAY) {
+                    GraveyardArray* array = collection.as.array;
                     for (size_t i = 0; i < array->count; i++) {
                         Environment* loop_env = environment_new(gy->environment);
                         environment_define(loop_env, iterator_name, array->values[i]);
                         execute_block(gy, node->as.for_statement.body, loop_env);
-                        if (gy->encountered_break) break;
+                        
+                        monolith_free(&loop_env->values);
+                        free(loop_env);
+
+                        if (gy->is_returning || gy->encountered_break) break;
                     }
-                } else if (collection_or_stop.type == VAL_HASHTABLE) {
-                    GraveyardHashtable* ht = collection_or_stop.as.hashtable;
+                } else if (collection.type == VAL_HASHTABLE) {
+                    GraveyardHashtable* ht = collection.as.hashtable;
                     for (int i = 0; i < ht->capacity; i++) {
                         if (!ht->entries[i].is_in_use) continue;
                         Environment* loop_env = environment_new(gy->environment);
                         environment_define(loop_env, iterator_name, ht->entries[i].key);
                         execute_block(gy, node->as.for_statement.body, loop_env);
-                        if (gy->encountered_break) break;
+
+                        monolith_free(&loop_env->values);
+                        free(loop_env);
+
+                        if (gy->is_returning || gy->encountered_break) break;
                     }
-                } else if (collection_or_stop.type == VAL_NUMBER) {
-                    double stop_val = collection_or_stop.as.number;
+                } else if (collection.type == VAL_NUMBER) {
+                    double stop_val = collection.as.number;
                     for (double i = 0; i < stop_val; i += 1) {
                         Environment* loop_env = environment_new(gy->environment);
                         environment_define(loop_env, iterator_name, create_number_value(i));
                         execute_block(gy, node->as.for_statement.body, loop_env);
-                        if (gy->encountered_break) break;
+
+                        monolith_free(&loop_env->values);
+                        free(loop_env);
+
+                        if (gy->is_returning || gy->encountered_break) break;
                     }
                 } else {
                     runtime_error(gy, node->line, "Invalid type for single-argument for loop");
                 }
+                
+                dec_ref(collection);
+
             } else {
                 GraveyardValue start_gv = execute_node(gy, range_exprs[0]);
                 if (start_gv.type != VAL_NUMBER) {
                     runtime_error(gy, range_exprs[0]->line, "For loop range arguments must be numbers");
+                    dec_ref(start_gv);
                     return create_null_value();
                 }
-                double start_val = start_gv.as.number;
 
                 GraveyardValue stop_gv = execute_node(gy, range_exprs[1]);
-                 if (stop_gv.type != VAL_NUMBER) {
+                if (stop_gv.type != VAL_NUMBER) {
                     runtime_error(gy, range_exprs[1]->line, "For loop range arguments must be numbers");
+                    dec_ref(start_gv);
+                    dec_ref(stop_gv);
                     return create_null_value();
                 }
-                double stop_val = stop_gv.as.number;
 
-                double step_val = 1.0;
+                GraveyardValue step_gv = create_number_value(1.0);
                 if (range_count == 3) {
-                    GraveyardValue step_gv = execute_node(gy, range_exprs[2]);
+                    dec_ref(step_gv);
+                    step_gv = execute_node(gy, range_exprs[2]);
                     if (step_gv.type != VAL_NUMBER) {
-                        runtime_error(gy, range_exprs[2]->line, "For loop range arguments must be numbers");
+                        runtime_error(gy, range_exprs[2]->line, "For loop step argument must be a number");
+                        dec_ref(start_gv);
+                        dec_ref(stop_gv);
+                        dec_ref(step_gv);
                         return create_null_value();
                     }
-                    step_val = step_gv.as.number;
                 }
+
+                double start_val = start_gv.as.number;
+                double stop_val = stop_gv.as.number;
+                double step_val = step_gv.as.number;
                 
-                for (double i = start_val; (step_val > 0) ? (i < stop_val) : (i > stop_val); i += step_val) {
-                    Environment* loop_env = environment_new(gy->environment);
-                    environment_define(loop_env, iterator_name, create_number_value(i));
-                    execute_block(gy, node->as.for_statement.body, loop_env);
-                    if (gy->encountered_break) break;
+                if (step_val == 0) {
+                    runtime_error(gy, node->line, "For loop step cannot be zero");
+                } else {
+                    for (double i = start_val; (step_val > 0) ? (i < stop_val) : (i > stop_val); i += step_val) {
+                        Environment* loop_env = environment_new(gy->environment);
+                        environment_define(loop_env, iterator_name, create_number_value(i));
+                        execute_block(gy, node->as.for_statement.body, loop_env);
+                        
+                        monolith_free(&loop_env->values);
+                        free(loop_env);
+
+                        if (gy->is_returning || gy->encountered_break) break;
+                    }
                 }
+
+                dec_ref(start_gv);
+                dec_ref(stop_gv);
+                dec_ref(step_gv);
             }
             
             gy->encountered_break = false;
@@ -5546,6 +5727,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return create_null_value();
             }
             
+            inc_ref(member_val);
+            
             return member_val;
         }
 
@@ -5579,24 +5762,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_TYPE_DECLARATION: {
-            // FIX: Copy the type name from the token's lexeme into a local buffer
-            //      to avoid modifying the shared tokenizer data.
             char type_name_buffer[MAX_LEXEME_LEN];
             const char* lexeme = node->as.type_declaration.name.lexeme;
             size_t len = strlen(lexeme);
             
-            // Ensure the lexeme is long enough (e.g., more than just "<>")
             if (len > 2) {
                 size_t type_name_len = len - 2;
-                // Copy the content between the angle brackets (e.g., "MyType" from "<MyType>")
                 strncpy(type_name_buffer, lexeme + 1, type_name_len);
                 type_name_buffer[type_name_len] = '\0';
             } else {
-                // Handle a malformed or empty type name gracefully
                 type_name_buffer[0] = '\0';
             }
 
-            // Now, use the safe 'type_name_buffer' for all operations below.
             GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
             
             environment_define(gy->environment, type_name_buffer, type_val);
@@ -5642,8 +5819,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardInstance* instance = object.as.instance;
             GraveyardValue member_val;
 
-            // Note: The logic for checking private members would go here.
-            // For now, we just get the value.
             if (monolith_get(&instance->fields, member_name, &member_val)) {
                 return member_val;
             }
@@ -5652,8 +5827,14 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue bound_method_val;
                 bound_method_val.type = VAL_BOUND_METHOD;
                 GraveyardBoundMethod* bound = malloc(sizeof(GraveyardBoundMethod));
+                
+                bound->ref_count = 1;
                 bound->receiver = object;
                 bound->function = member_val;
+                
+                inc_ref(bound->receiver);
+                inc_ref(bound->function);
+                
                 bound_method_val.as.bound_method = bound;
                 return bound_method_val;
             }
@@ -5760,7 +5941,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_STATIC_ACCESS: {
-            // FIX: Copy the type name to a local buffer to avoid modifying shared token data.
             char type_name_buffer[MAX_LEXEME_LEN];
             const char* lexeme = node->as.static_access.type_name.lexeme;
             size_t len = strlen(lexeme);
@@ -5770,11 +5950,9 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 strncpy(type_name_buffer, lexeme + 1, type_name_len);
                 type_name_buffer[type_name_len] = '\0';
             } else {
-                // Handle a malformed or empty type name gracefully
                 type_name_buffer[0] = '\0';
             }
             
-            // Use the safe 'type_name_buffer' from now on.
             const char* member_name = node->as.static_access.member_name.lexeme;
 
             GraveyardValue type_val;
@@ -5799,81 +5977,95 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_UID_EXPRESSION: {
             GraveyardValue length_val = execute_node(gy, node->as.uid_expression.length_expr);
+            GraveyardValue result = create_null_value();
+
             if (length_val.type != VAL_NUMBER) {
                 runtime_error(gy, node->line, "Length for UID operation must be a number");
-                return create_null_value();
-            }
-            int length = (int)length_val.as.number;
-            if (length <= 0) {
-                runtime_error(gy, node->line, "UID length must be a positive number");
-                return create_null_value();
+            } else {
+                int length = (int)length_val.as.number;
+                if (length <= 0) {
+                    runtime_error(gy, node->line, "UID length must be a positive number");
+                } else {
+                    char* uid_str = generate_random_hex_string(length);
+                    if (!uid_str) {
+                        runtime_error(gy, node->line, "Failed to generate random UID");
+                    } else {
+                        result = create_string_value(uid_str);
+                        free(uid_str);
+                    }
+                }
             }
 
-            char* uid_str = generate_random_hex_string(length);
-            if (!uid_str) {
-                runtime_error(gy, node->line, "Failed to generate random UID");
-                return create_null_value();
-            }
-
-            GraveyardValue result = create_string_value(uid_str);
-            free(uid_str);
+            dec_ref(length_val);
+            
             return result;
         }
 
         case AST_SLICE_EXPRESSION: {
             GraveyardValue collection = execute_node(gy, node->as.slice_expression.collection);
+            GraveyardValue result = create_null_value();
 
             if (collection.type == VAL_ARRAY) {
                 GraveyardArray* arr = collection.as.array;
                 long start, stop, step;
                 
-                if (!calculate_slice_bounds(arr->count, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
+                if (!calculate_slice_bounds(arr->count, node->as.slice_expression.start_expr,
+                                            node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr,
+                                            &start, &stop, &step, gy)) {
                     runtime_error(gy, node->line, "Slice step cannot be zero");
-                    return create_null_value();
-                }
-
-                GraveyardValue result_array = create_array_value();
-                if (step > 0) {
-                    for (long i = start; i < stop; i += step) {
-                        array_append(result_array.as.array, arr->values[i]);
-                    }
                 } else {
-                    for (long i = start; i > stop; i += step) {
-                        array_append(result_array.as.array, arr->values[i]);
+                    GraveyardValue result_array = create_array_value();
+                    if (step > 0 && start < stop) {
+                        for (long i = start; i < stop; i += step) {
+                            if (i < 0 || i >= arr->count) continue;
+                            array_append(result_array.as.array, arr->values[i]);
+                        }
+                    } else if (step < 0 && start > stop) {
+                        for (long i = start; i > stop; i += step) {
+                            if (i < 0 || i >= arr->count) continue;
+                            array_append(result_array.as.array, arr->values[i]);
+                        }
                     }
+                    result = result_array;
                 }
-                return result_array;
-
             } else if (collection.type == VAL_STRING) {
                 GraveyardString* str = collection.as.string;
                 long start, stop, step;
 
-                if (!calculate_slice_bounds(str->length, node->as.slice_expression.start_expr, node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr, &start, &stop, &step, gy)) {
+                if (!calculate_slice_bounds(str->length, node->as.slice_expression.start_expr,
+                                            node->as.slice_expression.stop_expr, node->as.slice_expression.step_expr,
+                                            &start, &stop, &step, gy)) {
                     runtime_error(gy, node->line, "Slice step cannot be zero");
-                    return create_null_value();
-                }
-
-                size_t new_len = 0;
-                char* new_chars = malloc(str->length + 1);
-                if (step > 0) {
-                    for (long i = start; i < stop; i += step) {
-                        new_chars[new_len++] = str->chars[i];
-                    }
                 } else {
-                    for (long i = start; i > stop; i += step) {
-                        new_chars[new_len++] = str->chars[i];
+                    char* new_chars = malloc(str->length + 1);
+                    if (!new_chars) {
+                        runtime_error(gy, node->line, "Memory allocation failed for string slice");
+                    } else {
+                        size_t new_len = 0;
+                        if (step > 0 && start < stop) {
+                            for (long i = start; i < stop; i += step) {
+                                if (i < 0 || i >= str->length) continue;
+                                new_chars[new_len++] = str->chars[i];
+                            }
+                        } else if (step < 0 && start > stop) {
+                            for (long i = start; i > stop; i += step) {
+                                if (i < 0 || i >= str->length) continue;
+                                new_chars[new_len++] = str->chars[i];
+                            }
+                        }
+                        new_chars[new_len] = '\0';
+                        
+                        result = create_string_value(new_chars);
+                        free(new_chars);
                     }
                 }
-                new_chars[new_len] = '\0';
-                
-                GraveyardValue result_string = create_string_value(new_chars);
-                free(new_chars);
-                return result_string;
-
             } else {
                 runtime_error(gy, node->line, "Slicing can only be applied to arrays and strings");
-                return create_null_value();
             }
+
+            dec_ref(collection);
+            
+            return result;
         }
 
         case AST_ARGV_EXPRESSION: {
@@ -5993,11 +6185,24 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     AstNodeExceptClause* clause = node->as.try_except_statement.except_clause;
                     
                     GraveyardValue error_obj = create_hashtable_value();
-                    hashtable_set(error_obj.as.hashtable, create_string_value("message"), create_string_value(gy->error_message));
-                    hashtable_set(error_obj.as.hashtable, create_string_value("line"), create_number_value(gy->error_line));
+                    
+                    GraveyardValue key_msg = create_string_value("message");
+                    GraveyardValue val_msg = create_string_value(gy->error_message);
+                    hashtable_set(error_obj.as.hashtable, key_msg, val_msg);
+                    dec_ref(key_msg);
+                    dec_ref(val_msg);
+
+                    GraveyardValue key_line = create_string_value("line");
+                    GraveyardValue val_line = create_number_value(gy->error_line);
+                    hashtable_set(error_obj.as.hashtable, key_line, val_line);
+                    dec_ref(key_line);
+                    dec_ref(val_line);
 
                     Environment* except_env = environment_new(gy->environment);
                     environment_define(except_env, clause->error_variable.lexeme, error_obj);
+                    
+                    dec_ref(error_obj);
+
                     execute_block(gy, clause->body, except_env);
                     
                     monolith_free(&except_env->values);
@@ -6008,8 +6213,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             if (node->as.try_except_statement.finally_block) {
                 execute_node(gy, node->as.try_except_statement.finally_block);
             }
-
-            if (error_occurred && !gy->had_runtime_error) {}
 
             return create_null_value();
         }
