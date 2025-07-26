@@ -1763,7 +1763,7 @@ static AstNode* parse_fileread_statement(Parser* parser) {
 static AstNode* parse_uid_expression(Parser* parser) {
     AstNode* node = create_node(parser, AST_UID_EXPRESSION);
     node->line = parser->tokens[parser->current - 1].line;
-    node->as.uid_expression.length_expr = parse_expression(parser, 1);
+    node->as.uid_expression.length_expr = parse_expression(parser, 13);
     return node;
 }
 
