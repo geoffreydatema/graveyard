@@ -4181,12 +4181,15 @@ static GraveyardValue create_array_value() {
 }
 
 static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_size) {
+    // Ensure buffer is not NULL and has space for at least a null terminator
+    if (!buffer || buffer_size == 0) return;
+
     switch (value.type) {
         case VAL_NULL:
-            strncpy(buffer, "null", buffer_size);
+            strncpy(buffer, "null", buffer_size - 1);
             break;
         case VAL_BOOL:
-            strncpy(buffer, value.as.boolean ? "true" : "false", buffer_size);
+            strncpy(buffer, value.as.boolean ? "true" : "false", buffer_size - 1);
             break;
         case VAL_NUMBER:
             snprintf(buffer, buffer_size, "%g", value.as.number);
@@ -4197,42 +4200,86 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
         case VAL_FUNCTION:
             snprintf(buffer, buffer_size, "%s", value.as.function->name->chars);
             break;
+
+        // --- FIX: Dynamic string building for collections ---
         case VAL_ARRAY: {
-            char temp_buffer[1024] = "[";
+            size_t capacity = 128;
+            char* result = malloc(capacity);
+            if (!result) { buffer[0] = '\0'; return; }
+            strcpy(result, "[");
+            size_t len = 1;
+
             GraveyardArray* arr = value.as.array;
             for (size_t i = 0; i < arr->count; i++) {
                 char element_str[256];
                 value_to_string(arr->values[i], element_str, sizeof(element_str));
-                strcat(temp_buffer, element_str);
-                if (i < arr->count - 1) {
-                    strcat(temp_buffer, ", ");
+                
+                size_t part_len = strlen(element_str);
+                size_t comma_len = (i < arr->count - 1) ? 2 : 0;
+
+                if (len + part_len + comma_len + 2 > capacity) {
+                    capacity = (len + part_len + comma_len + 2) * 2;
+                    char* temp = realloc(result, capacity);
+                    if (!temp) { free(result); buffer[0] = '\0'; return; }
+                    result = temp;
+                }
+                
+                strcat(result, element_str);
+                len += part_len;
+                if (comma_len > 0) {
+                    strcat(result, ", ");
+                    len += comma_len;
                 }
             }
-            strcat(temp_buffer, "]");
-            strncpy(buffer, temp_buffer, buffer_size);
+            strcat(result, "]");
+            strncpy(buffer, result, buffer_size - 1);
+            free(result);
             break;
         }
         case VAL_HASHTABLE: {
-            char temp_buffer[1024] = "{";
+            size_t capacity = 128;
+            char* result = malloc(capacity);
+            if (!result) { buffer[0] = '\0'; return; }
+            strcpy(result, "{");
+            size_t len = 1;
+
             GraveyardHashtable* ht = value.as.hashtable;
             int printed = 0;
             for (int i = 0; i < ht->capacity; i++) {
                 if (ht->entries[i].is_in_use) {
-                    if (printed > 0) strcat(temp_buffer, ", ");
                     char key_str[256], val_str[256];
                     value_to_string(ht->entries[i].key, key_str, sizeof(key_str));
                     value_to_string(ht->entries[i].value, val_str, sizeof(val_str));
-                    strcat(temp_buffer, key_str);
-                    strcat(temp_buffer, ": ");
-                    strcat(temp_buffer, val_str);
+
+                    size_t part_len = strlen(key_str) + strlen(val_str) + 2; // +2 for ": "
+                    size_t comma_len = (printed > 0) ? 2 : 0;
+
+                    if (len + part_len + comma_len + 2 > capacity) {
+                        capacity = (len + part_len + comma_len + 2) * 2;
+                        char* temp = realloc(result, capacity);
+                        if (!temp) { free(result); buffer[0] = '\0'; return; }
+                        result = temp;
+                    }
+
+                    if (comma_len > 0) strcat(result, ", ");
+                    strcat(result, key_str);
+                    strcat(result, ": ");
+                    strcat(result, val_str);
+                    len += part_len + comma_len;
                     printed++;
                 }
             }
-            strcat(temp_buffer, "}");
-            strncpy(buffer, temp_buffer, buffer_size);
+            strcat(result, "}");
+            strncpy(buffer, result, buffer_size - 1);
+            free(result);
             break;
         }
+        default:
+            strncpy(buffer, "(unknown)", buffer_size - 1);
+            break;
     }
+    // Ensure null-termination
+    buffer[buffer_size - 1] = '\0';
 }
 
 static bool is_value_falsy(GraveyardValue value) {
@@ -4246,10 +4293,20 @@ static bool is_value_falsy(GraveyardValue value) {
 }
 
 static void array_append(GraveyardArray* array, GraveyardValue value) {
-    if (array->count == array->capacity) {
-        array->capacity *= 2;
-        array->values = realloc(array->values, array->capacity * sizeof(GraveyardValue));
+    if (array->count >= array->capacity) {
+        size_t new_capacity = (array->capacity == 0) ? 8 : array->capacity * 2;
+        
+        GraveyardValue* temp = realloc(array->values, new_capacity * sizeof(GraveyardValue));
+        
+        if (!temp) {
+            perror("array_append: realloc failed");
+            exit(1);
+        }
+        
+        array->values = temp;
+        array->capacity = new_capacity;
     }
+    
     array->values[array->count++] = value;
 }
 
@@ -4488,17 +4545,27 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
                 case TYPE: {
-                    char* name_str = literal_token.lexeme;
-                    name_str[strlen(name_str) - 1] = '\0';
-                    const char* type_name = name_str + 1;
+                    // FIX: Copy the lexeme to a local buffer before modifying it.
+                    char type_name_buffer[MAX_LEXEME_LEN];
+                    const char* lexeme = literal_token.lexeme;
+                    size_t len = strlen(lexeme);
+
+                    // Ensure we have at least <> before proceeding
+                    if (len > 2) {
+                        size_t type_name_len = len - 2;
+                        strncpy(type_name_buffer, lexeme + 1, type_name_len);
+                        type_name_buffer[type_name_len] = '\0';
+                    } else {
+                        type_name_buffer[0] = '\0'; // Handle malformed type literal
+                    }
 
                     GraveyardValue type_val;
-                    if (!environment_get(gy->environment, type_name, &type_val)) {
-                        runtime_error(gy, node->line, "Type <%s> is not defined", type_name);
+                    if (!environment_get(gy->environment, type_name_buffer, &type_val)) {
+                        runtime_error(gy, node->line, "Type <%s> is not defined", type_name_buffer);
                         return create_null_value();
                     }
                     if (type_val.type != VAL_TYPE) {
-                        runtime_error(gy, node->line, "<%s> is not a type", type_name);
+                        runtime_error(gy, node->line, "<%s> is not a type", type_name_buffer);
                         return create_null_value();
                     }
                     
@@ -5051,44 +5118,83 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     return create_number_value(left.as.number + right.as.number);
                 }
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    char left_str[1024];
-                    char right_str[1024];
-                    if (left.type == VAL_STRING) strncpy(left_str, left.as.string->chars, sizeof(left_str));
-                    else value_to_string(left, left_str, sizeof(left_str));
-                    if (right.type == VAL_STRING) strncpy(right_str, right.as.string->chars, sizeof(right_str));
-                    else value_to_string(right, right_str, sizeof(right_str));
-                    size_t total_len = strlen(left_str) + strlen(right_str);
-                    if (total_len >= 1024) {
-                        runtime_error(gy, node->line, "Resulting string from concatenation is too long");
+                    char left_str_temp[1024];
+                    char right_str_temp[1024];
+                    
+                    // --- FIX: Get raw string content, not the quoted representation ---
+                    if (left.type == VAL_STRING) {
+                        strncpy(left_str_temp, left.as.string->chars, sizeof(left_str_temp) - 1);
+                        left_str_temp[sizeof(left_str_temp) - 1] = '\0';
+                    } else {
+                        value_to_string(left, left_str_temp, sizeof(left_str_temp));
+                    }
+
+                    if (right.type == VAL_STRING) {
+                        strncpy(right_str_temp, right.as.string->chars, sizeof(right_str_temp) - 1);
+                        right_str_temp[sizeof(right_str_temp) - 1] = '\0';
+                    } else {
+                        value_to_string(right, right_str_temp, sizeof(right_str_temp));
+                    }
+                    
+                    size_t total_len = strlen(left_str_temp) + strlen(right_str_temp);
+                    char* result_buffer = malloc(total_len + 1);
+                    if (!result_buffer) {
+                        runtime_error(gy, node->line, "Memory allocation failed for string concatenation");
                         return create_null_value();
                     }
-                    char result_buffer[1024];
-                    strcpy(result_buffer, left_str);
-                    strcat(result_buffer, right_str);
-                    return create_string_value(result_buffer);
+
+                    strcpy(result_buffer, left_str_temp);
+                    strcat(result_buffer, right_str_temp);
+                    
+                    GraveyardValue result = create_string_value(result_buffer);
+                    free(result_buffer);
+                    return result;
                 }
                 goto type_error;
             }
             
             if (op_type == FORWARDSLASH) {
                 if (left.type == VAL_STRING || right.type == VAL_STRING) {
-                    char left_str[1024];
-                    char right_str[1024];
-                    if (left.type == VAL_STRING) strncpy(left_str, left.as.string->chars, sizeof(left_str));
-                    else value_to_string(left, left_str, sizeof(left_str));
-                    if (right.type == VAL_STRING) strncpy(right_str, right.as.string->chars, sizeof(right_str));
-                    else value_to_string(right, right_str, sizeof(right_str));
-                    size_t left_len = strlen(left_str);
-                    while (left_len > 0 && (left_str[left_len - 1] == '/' || left_str[left_len - 1] == '\\')) {
-                        left_str[--left_len] = '\0';
+                    char left_str_temp[1024];
+                    char right_str_temp[1024];
+                    
+                    // --- FIX: Get raw string content, not the quoted representation ---
+                    if (left.type == VAL_STRING) {
+                        strncpy(left_str_temp, left.as.string->chars, sizeof(left_str_temp) - 1);
+                        left_str_temp[sizeof(left_str_temp) - 1] = '\0';
+                    } else {
+                        value_to_string(left, left_str_temp, sizeof(left_str_temp));
                     }
+
+                    if (right.type == VAL_STRING) {
+                        strncpy(right_str_temp, right.as.string->chars, sizeof(right_str_temp) - 1);
+                        right_str_temp[sizeof(right_str_temp) - 1] = '\0';
+                    } else {
+                        value_to_string(right, right_str_temp, sizeof(right_str_temp));
+                    }
+
+                    size_t left_len = strlen(left_str_temp);
+                    while (left_len > 0 && (left_str_temp[left_len - 1] == '/' || left_str_temp[left_len - 1] == '\\')) {
+                        left_str_temp[--left_len] = '\0';
+                    }
+                    
                     size_t right_offset = 0;
-                    while (right_str[right_offset] == '/' || right_str[right_offset] == '\\') {
+                    while (right_str_temp[right_offset] == '/' || right_str_temp[right_offset] == '\\') {
                         right_offset++;
                     }
-                    char result_buffer[2048];
-                    snprintf(result_buffer, sizeof(result_buffer), "%s/%s", left_str, right_str + right_offset);
-                    return create_string_value(result_buffer);
+                    
+                    size_t total_len = strlen(left_str_temp) + strlen(right_str_temp + right_offset) + 1; // +1 for the '/'
+                    char* result_buffer = malloc(total_len + 1);
+                    if (!result_buffer) {
+                        runtime_error(gy, node->line, "Memory allocation failed for path joining");
+                        return create_null_value();
+                    }
+
+                    snprintf(result_buffer, total_len + 1, "%s/%s", left_str_temp, right_str_temp + right_offset);
+                    
+                    GraveyardValue result = create_string_value(result_buffer);
+                    free(result_buffer);
+                    return result;
                 }
             }
 
@@ -5473,11 +5579,27 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_TYPE_DECLARATION: {
-            char* name_str = node->as.type_declaration.name.lexeme;
-            name_str[strlen(name_str) - 1] = '\0';
-            GraveyardValue type_val = create_type_value(create_string_value(name_str + 1).as.string);
+            // FIX: Copy the type name from the token's lexeme into a local buffer
+            //      to avoid modifying the shared tokenizer data.
+            char type_name_buffer[MAX_LEXEME_LEN];
+            const char* lexeme = node->as.type_declaration.name.lexeme;
+            size_t len = strlen(lexeme);
             
-            environment_define(gy->environment, name_str + 1, type_val);
+            // Ensure the lexeme is long enough (e.g., more than just "<>")
+            if (len > 2) {
+                size_t type_name_len = len - 2;
+                // Copy the content between the angle brackets (e.g., "MyType" from "<MyType>")
+                strncpy(type_name_buffer, lexeme + 1, type_name_len);
+                type_name_buffer[type_name_len] = '\0';
+            } else {
+                // Handle a malformed or empty type name gracefully
+                type_name_buffer[0] = '\0';
+            }
+
+            // Now, use the safe 'type_name_buffer' for all operations below.
+            GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
+            
+            environment_define(gy->environment, type_name_buffer, type_val);
 
             Environment* type_env = environment_new(gy->environment);
             execute_block(gy, node->as.type_declaration.body, type_env);
@@ -5638,14 +5760,26 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_STATIC_ACCESS: {
-            char* name_str = node->as.static_access.type_name.lexeme;
-            name_str[strlen(name_str) - 1] = '\0';
-            const char* type_name = name_str + 1;
+            // FIX: Copy the type name to a local buffer to avoid modifying shared token data.
+            char type_name_buffer[MAX_LEXEME_LEN];
+            const char* lexeme = node->as.static_access.type_name.lexeme;
+            size_t len = strlen(lexeme);
+
+            if (len > 2) {
+                size_t type_name_len = len - 2;
+                strncpy(type_name_buffer, lexeme + 1, type_name_len);
+                type_name_buffer[type_name_len] = '\0';
+            } else {
+                // Handle a malformed or empty type name gracefully
+                type_name_buffer[0] = '\0';
+            }
+            
+            // Use the safe 'type_name_buffer' from now on.
             const char* member_name = node->as.static_access.member_name.lexeme;
 
             GraveyardValue type_val;
-            if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
-                runtime_error(gy, node->line, "Type <%s> is not defined", type_name);
+            if (!environment_get(gy->environment, type_name_buffer, &type_val) || type_val.type != VAL_TYPE) {
+                runtime_error(gy, node->line, "Type <%s> is not defined", type_name_buffer);
                 return create_null_value();
             }
             GraveyardType* type = type_val.as.type;
@@ -5659,7 +5793,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return member_val;
             }
             
-            runtime_error(gy, node->line, "Static member '%s' not found on type <%s>", member_name, type_name);
+            runtime_error(gy, node->line, "Static member '%s' not found on type <%s>", member_name, type_name_buffer);
             return create_null_value();
         }
 
