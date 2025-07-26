@@ -2559,6 +2559,19 @@ cleanup:
 
 //COMPILE (AST SERIALIZATION TO FILE)--------------------------------------------------
 
+static void write_escaped_string(FILE* file, const char* str) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        switch (str[i]) {
+            case '"':  fprintf(file, "\\\""); break;
+            case '\\': fprintf(file, "\\\\"); break;
+            case '\n': fprintf(file, "\\n"); break;
+            case '\t': fprintf(file, "\\t"); break;
+            case '\r': fprintf(file, "\\r"); break;
+            default:   fputc(str[i], file); break;
+        }
+    }
+}
+
 static void write_ast_node(FILE* file, AstNode* node, int indent) {
     if (node == NULL) {
         return;
@@ -2588,9 +2601,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
 
         case AST_SCAN_STATEMENT: {
-            fprintf(file, "(SCAN_STATEMENT variable=\"%s\" line=%d\n",
-                node->as.scan_statement.variable.lexeme,
-                node->line);
+            fprintf(file, "(SCAN_STATEMENT variable=\"");
+            write_escaped_string(file, node->as.scan_statement.variable.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.scan_statement.prompt, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
@@ -2598,7 +2612,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         }
 
         case AST_LOGICAL_OP:
-            fprintf(file, "(LOGICAL_OP op=\"%s\" line=%d\n", node->as.logical_op.operator.lexeme, node->line);
+            fprintf(file, "(LOGICAL_OP op=\"");
+            write_escaped_string(file, node->as.logical_op.operator.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.logical_op.left, indent + 1);
             write_ast_node(file, node->as.logical_op.right, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
@@ -2606,7 +2623,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
 
         case AST_BINARY_OP:
-            fprintf(file, "(BINARY_OP op=\"%s\" line=%d\n", node->as.binary_op.operator.lexeme, node->line);
+            fprintf(file, "(BINARY_OP op=\"");
+            write_escaped_string(file, node->as.binary_op.operator.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.binary_op.left, indent + 1);
             write_ast_node(file, node->as.binary_op.right, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
@@ -2614,7 +2634,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
 
         case AST_UNARY_OP:
-            fprintf(file, "(UNARY_OP op=\"%s\" line=%d\n", node->as.unary_op.operator.lexeme, node->line);
+            fprintf(file, "(UNARY_OP op=\"");
+            write_escaped_string(file, node->as.unary_op.operator.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+            
             write_ast_node(file, node->as.unary_op.right, indent + 1);
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
@@ -2629,7 +2652,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             break;
 
         case AST_IDENTIFIER:
-            fprintf(file, "(IDENTIFIER name=\"%s\" line=%d)\n", node->as.identifier.name.lexeme, node->line);
+            fprintf(file, "(IDENTIFIER name=\"");
+            write_escaped_string(file, node->as.identifier.name.lexeme);
+            fprintf(file, "\" line=%d)\n", node->line);
             break;
             
         case AST_FORMATTED_STRING: {
@@ -2638,7 +2663,9 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 FmtStringPart part = node->as.formatted_string.parts[i];
                 if (part.type == FMT_PART_LITERAL) {
                     for (int j = 0; j < indent + 1; ++j) { fprintf(file, "  "); }
-                    fprintf(file, "(FORMATTEDPART value=\"%s\")\n", part.as.literal.lexeme);
+                    fprintf(file, "(FORMATTEDPART value=\"");
+                    write_escaped_string(file, part.as.literal.lexeme);
+                    fprintf(file, "\")\n");
                 } else {
                     write_ast_node(file, part.as.expression, indent + 1);
                 }
@@ -2693,10 +2720,14 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             Token literal_token = node->as.literal.value;
             switch (literal_token.type) {
                 case TYPE:
-                    fprintf(file, "(LITERAL_TYPE value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    fprintf(file, "(LITERAL_TYPE value=\"");
+                    write_escaped_string(file, literal_token.lexeme);
+                    fprintf(file, "\" line=%d)\n", node->line);
                     break;
                 case STRING:
-                    fprintf(file, "(LITERAL_STR value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
+                    fprintf(file, "(LITERAL_STR value=\"");
+                    write_escaped_string(file, literal_token.lexeme);
+                    fprintf(file, "\" line=%d)\n", node->line);
                     break;
                 case NUMBER:
                     fprintf(file, "(LITERAL_NUM value=\"%s\" line=%d)\n", literal_token.lexeme, node->line);
@@ -2746,18 +2777,46 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         }
 
         case AST_FUNCTION_DECLARATION: {
-            char params_str[256] = "";
+            size_t params_capacity = 64;
+            char* params_str = malloc(params_capacity);
+            if (!params_str) {
+                perror("malloc for function params failed");
+                return;
+            }
+            params_str[0] = '\0';
+            size_t params_len = 0;
+
             for (size_t i = 0; i < node->as.function_declaration.param_count; i++) {
-                strcat(params_str, node->as.function_declaration.params[i].lexeme);
-                if (i < node->as.function_declaration.param_count - 1) {
+                const char* param = node->as.function_declaration.params[i].lexeme;
+                size_t param_len = strlen(param);
+                size_t space_len = (i < node->as.function_declaration.param_count - 1) ? 1 : 0;
+
+                if (params_len + param_len + space_len + 1 > params_capacity) {
+                    params_capacity = (params_len + param_len + space_len + 1) * 2;
+                    char* temp = realloc(params_str, params_capacity);
+                    if (!temp) {
+                        perror("realloc for function params failed");
+                        free(params_str);
+                        return;
+                    }
+                    params_str = temp;
+                }
+
+                strcat(params_str, param);
+                params_len += param_len;
+                if (space_len > 0) {
                     strcat(params_str, " ");
+                    params_len++;
                 }
             }
 
-            fprintf(file, "(FUNCTION_DECLARATION name=\"%s\" params=\"%s\" line=%d\n",
-                node->as.function_declaration.name.lexeme,
-                params_str,
-                node->line);
+            fprintf(file, "(FUNCTION_DECLARATION name=\"");
+            write_escaped_string(file, node->as.function_declaration.name.lexeme);
+            fprintf(file, "\" params=\"");
+            write_escaped_string(file, params_str);
+            fprintf(file, "\" line=%d\n", node->line);
+            
+            free(params_str);
             
             write_ast_node(file, node->as.function_declaration.body, indent + 1);
             
@@ -2852,14 +2911,17 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         }
 
         case AST_FOR_STATEMENT: {
-            fprintf(file, "(FOR_STATEMENT iterator=\"%s\" range_count=%zu line=%d\n",
-                node->as.for_statement.iterator.lexeme,
+            fprintf(file, "(FOR_STATEMENT iterator=\"");
+            write_escaped_string(file, node->as.for_statement.iterator.lexeme);
+            fprintf(file, "\" range_count=%zu line=%d\n",
                 node->as.for_statement.range_count,
                 node->line);
+            
             for (size_t i = 0; i < node->as.for_statement.range_count; i++) {
                 write_ast_node(file, node->as.for_statement.range_expressions[i], indent + 1);
             }
             write_ast_node(file, node->as.for_statement.body, indent + 1);
+            
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
@@ -2874,50 +2936,67 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         }
 
         case AST_NAMESPACE_DECLARATION: {
-            fprintf(file, "(NAMESPACE_DECLARATION name=\"%s\" line=%d\n",
-                node->as.namespace_declaration.name.lexeme,
-                node->line);
+            fprintf(file, "(NAMESPACE_DECLARATION name=\"");
+            write_escaped_string(file, node->as.namespace_declaration.name.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.namespace_declaration.body, indent + 1);
+            
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
         }
+        
         case AST_NAMESPACE_ACCESS: {
-            fprintf(file, "(NAMESPACE_ACCESS namespace=\"%s\" member=\"%s\" line=%d)\n",
-                node->as.namespace_access.namespace_name.lexeme,
-                node->as.namespace_access.member_name.lexeme,
-                node->line);
+            fprintf(file, "(NAMESPACE_ACCESS namespace=\"");
+            write_escaped_string(file, node->as.namespace_access.namespace_name.lexeme);
+            fprintf(file, "\" member=\"");
+            write_escaped_string(file, node->as.namespace_access.member_name.lexeme);
+            fprintf(file, "\" line=%d)\n", node->line);
             break;
         }
 
         case AST_FILEREAD_STATEMENT: {
-            fprintf(file, "(FILEREAD_STATEMENT variable=\"%s\" line=%d\n",
-                node->as.fileread_statement.variable.lexeme,
-                node->line);
+            fprintf(file, "(FILEREAD_STATEMENT variable=\"");
+            write_escaped_string(file, node->as.fileread_statement.variable.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.fileread_statement.path_expr, indent + 1);
+            
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
         }
 
         case AST_TYPE_DECLARATION: {
-            fprintf(file, "(TYPE_DECLARATION name=\"%s\" line=%d\n", node->as.type_declaration.name.lexeme, node->line);
+            fprintf(file, "(TYPE_DECLARATION name=\"");
+            write_escaped_string(file, node->as.type_declaration.name.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.type_declaration.body, indent + 1);
+            
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
         }
+
         case AST_MEMBER_ACCESS: {
-            fprintf(file, "(MEMBER_ACCESS member=\"%s\" line=%d\n", node->as.member_access.member.lexeme, node->line);
+            fprintf(file, "(MEMBER_ACCESS member=\"");
+            write_escaped_string(file, node->as.member_access.member.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
             write_ast_node(file, node->as.member_access.object, indent + 1);
+            
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
         }
+
         case AST_THIS_EXPRESSION: {
             fprintf(file, "(THIS_EXPRESSION line=%d)\n", node->line);
             break;
         }
+        
         case AST_EXECUTE_EXPRESSION: {
             fprintf(file, "(EXECUTE_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.execute_expression.command_expr, indent + 1);
@@ -2925,10 +3004,12 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_CAT_CONSTANT_EXPRESSION: {
             fprintf(file, "(CAT_CONSTANT_EXPRESSION line=%d)\n", node->line);
             break;
         }
+
         case AST_WAIT_STATEMENT: {
             fprintf(file, "(WAIT_STATEMENT line=%d\n", node->line);
             write_ast_node(file, node->as.wait_statement.duration_expr, indent + 1);
@@ -2936,23 +3017,28 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_RANDOM_EXPRESSION: {
             fprintf(file, "(RANDOM_EXPRESSION line=%d)\n", node->line);
             break;
         }
+
         case AST_GLOBAL_ACCESS: {
-            fprintf(file, "(GLOBAL_ACCESS member=\"%s\" line=%d)\n",
-                node->as.global_access.member_name.lexeme,
-                node->line);
+            fprintf(file, "(GLOBAL_ACCESS member=\"");
+            write_escaped_string(file, node->as.global_access.member_name.lexeme);
+            fprintf(file, "\" line=%d)\n", node->line);
             break;
         }
+
         case AST_STATIC_ACCESS: {
-            fprintf(file, "(STATIC_ACCESS type=\"%s\" member=\"%s\" line=%d)\n",
-                node->as.static_access.type_name.lexeme,
-                node->as.static_access.member_name.lexeme,
-                node->line);
+            fprintf(file, "(STATIC_ACCESS type=\"");
+            write_escaped_string(file, node->as.static_access.type_name.lexeme);
+            fprintf(file, "\" member=\"");
+            write_escaped_string(file, node->as.static_access.member_name.lexeme);
+            fprintf(file, "\" line=%d)\n", node->line);
             break;
         }
+
         case AST_UID_EXPRESSION: {
             fprintf(file, "(UID_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.uid_expression.length_expr, indent + 1);
@@ -2960,6 +3046,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_SLICE_EXPRESSION: {
             fprintf(file, "(SLICE_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.slice_expression.collection, indent + 1);
@@ -2976,6 +3063,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_EVAL_EXPRESSION: {
             fprintf(file, "(EVAL_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.eval_expression.code_expr, indent + 1);
@@ -2983,6 +3071,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_EXISTS_EXPRESSION: {
             fprintf(file, "(EXISTS_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.exists_expression.path_expr, indent + 1);
@@ -2990,9 +3079,45 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+
         case AST_LISTDIR_EXPRESSION: {
             fprintf(file, "(LISTDIR_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.listdir_expression.path_expr, indent + 1);
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+            break;
+        }
+
+        case AST_TRY_EXCEPT_STATEMENT: {
+            fprintf(file, "(TRY_EXCEPT_STATEMENT line=%d\n", node->line);
+
+            // Write the 'try' block
+            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+            fprintf(file, "(TRY_BLOCK\n");
+            write_ast_node(file, node->as.try_except_statement.try_block, indent + 2);
+            for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
+
+            // Write the 'except' clause if it exists
+            if (node->as.try_except_statement.except_clause) {
+                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+                fprintf(file, "(EXCEPT_CLAUSE error_var=\"");
+                write_escaped_string(file, node->as.try_except_statement.except_clause->error_variable.lexeme);
+                fprintf(file, "\"\n");
+                write_ast_node(file, node->as.try_except_statement.except_clause->body, indent + 2);
+                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+                fprintf(file, ")\n");
+            }
+
+            // Write the 'finally' block if it exists
+            if (node->as.try_except_statement.finally_block) {
+                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+                fprintf(file, "(FINALLY_BLOCK\n");
+                write_ast_node(file, node->as.try_except_statement.finally_block, indent + 2);
+                for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
+                fprintf(file, ")\n");
+            }
+
             for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
             break;
