@@ -28,6 +28,7 @@
 #endif
 
 #define MAX_LEXEME_LEN 65
+#define MAX_STATE_STACK 16
 
 typedef enum {
     SEMICOLON,
@@ -113,6 +114,11 @@ typedef struct {
     int line;
     int column;
 } Token;
+
+typedef enum {
+    STATE_DEFAULT,
+    STATE_IN_FMT_STRING
+} TokenizerState;
 
 typedef struct AstNode AstNode;
 
@@ -431,6 +437,7 @@ typedef struct {
     AstNode* finally_block;
 } AstNodeTryExceptStatement;
 
+
 struct AstNode {
     AstNodeType type;
     int line;
@@ -725,14 +732,23 @@ static bool preprocess_source(Preprocessor* pp, const char* source) {
 
             if (!already_included) {
                 if (pp->included_files.count >= pp->included_files.capacity) {
-                    pp->included_files.capacity *= 2;
-                    pp->included_files.items = realloc(pp->included_files.items, pp->included_files.capacity * sizeof(char*));
+                    size_t new_capacity = pp->included_files.capacity * 2;
+                    if (new_capacity == 0) new_capacity = 8;
+                    char** temp_items = realloc(pp->included_files.items, new_capacity * sizeof(char*));
+                    if (!temp_items) {
+                        perror("Preprocessor: realloc for included_files failed");
+                        free(path);
+                        return false;
+                    }
+                    pp->included_files.items = temp_items;
+                    pp->included_files.capacity = new_capacity;
                 }
                 pp->included_files.items[pp->included_files.count++] = strdup(path);
 
                 FILE* import_file = fopen(path, "r");
                 if (!import_file) {
                     fprintf(stderr, "Preprocessor error: Cannot open import file '%s'.\n", path);
+                    free(path);
                     return false;
                 }
                 char* import_content = load(import_file, NULL);
@@ -743,16 +759,21 @@ static bool preprocess_source(Preprocessor* pp, const char* source) {
                     if (!preprocess_source(pp, import_code)) {
                         free(import_code);
                         free(import_content);
+                        free(path);
                         return false;
                     }
                     free(import_code);
                 } else {
-                     fprintf(stderr, "Preprocessor error: Import file '%s' does not contain a valid '::{...}' scope.\n", path);
-                     free(import_content);
-                     return false;
+                    fprintf(stderr, "Preprocessor error: Import file '%s' does not contain a valid '::{...}' scope.\n", path);
+                    free(import_content);
+                    free(path);
+                    return false;
                 }
                 free(import_content);
             }
+            
+            free(path); 
+            
             current = path_end + 1;
             while (*current != '\0' && isspace((unsigned char)*current)) {
                 current++;
@@ -761,14 +782,62 @@ static bool preprocess_source(Preprocessor* pp, const char* source) {
 
         } else {
             if (pp->output_len + 1 >= pp->output_capacity) {
-                 pp->output_capacity *= 2;
-                 pp->output_buffer = realloc(pp->output_buffer, pp->output_capacity);
+                size_t new_capacity = pp->output_capacity * 2;
+                if (new_capacity == 0) new_capacity = 256;
+                char* temp_buffer = realloc(pp->output_buffer, new_capacity);
+                if (!temp_buffer) {
+                    perror("Preprocessor: realloc for output_buffer failed");
+                    return false;
+                }
+                pp->output_buffer = temp_buffer;
+                pp->output_capacity = new_capacity;
             }
             pp->output_buffer[pp->output_len++] = *current;
             current++;
         }
     }
     return true;
+}
+
+char* run_preprocessor(const char* initial_source) {
+    char* main_code = extract_graveyard_code(initial_source);
+    if (!main_code) {
+        fprintf(stderr, "Preprocessor error: Could not find main '::{...}' scope in the initial file.\n");
+        return NULL;
+    }
+
+    Preprocessor pp;
+    pp.included_files.count = 0;
+    pp.included_files.capacity = 8;
+    pp.included_files.items = malloc(pp.included_files.capacity * sizeof(char*));
+    
+    pp.output_len = 0;
+    pp.output_capacity = strlen(main_code) + 1024;
+    pp.output_buffer = malloc(pp.output_capacity);
+
+    if (!pp.included_files.items || !pp.output_buffer) {
+        perror("Preprocessor: Initial malloc failed");
+        free(main_code);
+        free(pp.included_files.items);
+        free(pp.output_buffer);
+        return NULL;
+    }
+
+    bool success = preprocess_source(&pp, main_code);
+    
+    free(main_code);
+    for (size_t i = 0; i < pp.included_files.count; i++) {
+        free(pp.included_files.items[i]);
+    }
+    free(pp.included_files.items);
+
+    if (!success) {
+        free(pp.output_buffer);
+        return NULL;
+    }
+
+    pp.output_buffer[pp.output_len] = '\0';
+    return pp.output_buffer;
 }
 
 //TOKENIZE-----------------------------------------------------------------------------------
@@ -854,73 +923,32 @@ GraveyardTokenType identify_single_char_token(char c) {
 
 bool tokenize(Graveyard *gy) {
     const char* source = gy->source_code;
-    const char* scope_start_marker = strstr(source, "::{");
-    if (!scope_start_marker) {
-        fprintf(stderr, "Fatal error: Could not find global scope start '::{'.\n");
-        return false;
-    }
-    const char* start_ptr = scope_start_marker + 3;
 
-    const char* scanner = start_ptr;
-    int brace_depth = 1;
-    const char* end_ptr = NULL;
-
-    while (*scanner != '\0') {
-        if (*scanner == '"') {
-            scanner++;
-            while (*scanner != '\0' && (*scanner != '"' || *(scanner - 1) == '\\')) {
-                scanner++;
-            }
-        } else if (*scanner == '\'') {
-            scanner++;
-            while (*scanner != '\0' && (*scanner != '\'' || *(scanner - 1) == '\\')) {
-                scanner++;
-            }
-        } else if (*scanner == '/' && *(scanner + 1) == '/') {
-            scanner += 2;
-            while (*scanner != '\0' && *scanner != '\n') {
-                scanner++;
-            }
-        } else if (*scanner == '/' && *(scanner + 1) == '*') {
-            scanner += 2;
-            while (*scanner != '\0' && !(*scanner == '*' && *(scanner + 1) == '/')) {
-                scanner++;
-            }
-            if (*scanner != '\0') scanner += 2;
-        }
-        if (*scanner == '{') {
-            brace_depth++;
-        } else if (*scanner == '}') {
-            brace_depth--;
-            if (brace_depth == 0) {
-                end_ptr = scanner;
-                break;
-            }
-        }
-        if (*scanner != '\0') {
-            scanner++;
-        }
-    }
-
-    if (end_ptr == NULL) {
-        fprintf(stderr, "Fatal error: Could not find matching '}' for global scope.\n");
-        return false;
-    }
-    
     size_t capacity = 16;
     size_t count = 0;
     Token *tokens = malloc(capacity * sizeof(Token));
-    if (!tokens) { perror("tokenize: malloc failed"); return false; }
+    if (!tokens) {
+        perror("tokenize: malloc failed");
+        return false;
+    }
 
-    typedef enum { STATE_DEFAULT, STATE_IN_FMT_STRING } TokenizerState;
-    TokenizerState state = STATE_DEFAULT;
-    int fstring_brace_depth = 0;
+    TokenizerState state_stack[MAX_STATE_STACK];
+    int state_top = -1; 
+
+    int fstring_brace_depth_stack[MAX_STATE_STACK];
+    int fstring_depth_top = -1;
+
+    if (state_top + 1 >= MAX_STATE_STACK) {
+        fprintf(stderr, "Tokenizer error: State stack overflow (too much nesting).\n");
+        goto cleanup_failure;
+    }
+    state_stack[++state_top] = STATE_DEFAULT;
     
     size_t line = 1;
     const char* line_start_ptr = source;
-    const char* current_ptr = start_ptr;
+    const char* current_ptr = source;
 
-    while (current_ptr < end_ptr) {
+    while (*current_ptr != '\0') {
         if (count + 1 >= capacity) {
             size_t new_capacity = capacity * 2;
             Token *new_tokens = realloc(tokens, new_capacity * sizeof(Token));
@@ -929,12 +957,13 @@ bool tokenize(Graveyard *gy) {
             capacity = new_capacity;
         }
 
-        if (state == STATE_IN_FMT_STRING) {
-            int column = (current_ptr - line_start_ptr) + 1;
-            char c = *current_ptr;
+        TokenizerState current_state = state_stack[state_top];
+        int column = (current_ptr - line_start_ptr) + 1;
+        char c = *current_ptr;
 
+        if (current_state == STATE_IN_FMT_STRING) {
             if (c == '\'') {
-                state = STATE_DEFAULT;
+                state_top--;
                 tokens[count].type = FORMATTEDEND;
                 tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
                 tokens[count].line = line; tokens[count].column = column;
@@ -943,8 +972,9 @@ bool tokenize(Graveyard *gy) {
                 continue;
             }
             if (c == '{') {
-                state = STATE_DEFAULT;
-                fstring_brace_depth = 1;
+                state_stack[++state_top] = STATE_DEFAULT; 
+                fstring_brace_depth_stack[++fstring_depth_top] = 1;
+                
                 tokens[count].type = LEFTBRACE;
                 tokens[count].lexeme[0] = '{'; tokens[count].lexeme[1] = '\0';
                 tokens[count].line = line; tokens[count].column = column;
@@ -956,15 +986,14 @@ bool tokenize(Graveyard *gy) {
                 fprintf(stderr, "Tokenizer error [line %zu, col %d]: Unterminated formatted string.\n", line, column);
                 goto cleanup_failure;
             }
-            
             const char* start = current_ptr;
-            while (current_ptr < end_ptr && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') {
+            while (*current_ptr != '\0' && *current_ptr != '\'' && *current_ptr != '{' && *current_ptr != '\n') {
                 current_ptr++;
             }
             size_t len = current_ptr - start;
             if (len > 0) {
-                if (len >= MAX_LEXEME_LEN) {
-                    fprintf(stderr, "Tokenizer error [line %d, col %d]: Literal part of formatted string is too long.\n", line, column);
+                 if (len >= MAX_LEXEME_LEN) {
+                    fprintf(stderr, "Tokenizer error [line %zu, col %d]: Literal part of formatted string is too long.\n", line, column);
                     goto cleanup_failure;
                 }
                 tokens[count].type = FORMATTEDPART;
@@ -976,42 +1005,39 @@ bool tokenize(Graveyard *gy) {
             }
             continue;
         }
-        
-        if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '/') {
-            current_ptr += 2;
-            while (current_ptr < end_ptr && *current_ptr != '\n') { current_ptr++; }
+
+        if (strncmp(current_ptr, "//", 2) == 0) {
+            while (*current_ptr != '\0' && *current_ptr != '\n') { current_ptr++; }
             continue;
         }
-
-        if (current_ptr + 1 < end_ptr && *current_ptr == '/' && *(current_ptr + 1) == '*') {
-            const char* comment_start = current_ptr;
+        if (strncmp(current_ptr, "/*", 2) == 0) {
             int comment_start_line = line;
-            int comment_start_col = (comment_start - line_start_ptr) + 1;
+            int comment_start_col = column;
             current_ptr += 2;
-            while (current_ptr + 1 < end_ptr && !(*current_ptr == '*' && *(current_ptr + 1) == '/')) {
-                if (*current_ptr == '\n') { line++; line_start_ptr = current_ptr + 1; }
-                current_ptr++;
+            while (*current_ptr != '\0' && strncmp(current_ptr, "*/", 2) != 0) {
+                 if (*current_ptr == '\n') { line++; line_start_ptr = current_ptr + 1; }
+                 current_ptr++;
             }
-
-            if (current_ptr + 1 >= end_ptr) {
+            if (*current_ptr == '\0') {
                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated block comment.\n", comment_start_line, comment_start_col);
                 goto cleanup_failure;
             }
-
             current_ptr += 2;
             continue;
         }
-        if (isspace((unsigned char)*current_ptr)) {
-            if (*current_ptr == '\n') { line++; line_start_ptr = current_ptr + 1; }
+        if (isspace((unsigned char)c)) {
+            if (c == '\n') { line++; line_start_ptr = current_ptr + 1; }
             current_ptr++;
             continue;
         }
 
-        int column = (current_ptr - line_start_ptr) + 1;
-        char c = *current_ptr;
-
         if (c == '\'') {
-            state = STATE_IN_FMT_STRING;
+            if (state_top + 1 >= MAX_STATE_STACK) {
+                fprintf(stderr, "Tokenizer error [line %zu]: Formatted string nesting level too deep.\n", line);
+                goto cleanup_failure;
+            }
+            state_stack[++state_top] = STATE_IN_FMT_STRING;
+            
             tokens[count].type = FORMATTEDSTART;
             tokens[count].lexeme[0] = '\''; tokens[count].lexeme[1] = '\0';
             tokens[count].line = line; tokens[count].column = column;
@@ -1020,16 +1046,21 @@ bool tokenize(Graveyard *gy) {
             continue;
         }
         
-        if (fstring_brace_depth > 0) {
-            if (c == '}') {
-                fstring_brace_depth--;
-                if (fstring_brace_depth == 0) { state = STATE_IN_FMT_STRING; }
-            } else if (c == '{') { fstring_brace_depth++; }
+        if (fstring_depth_top > -1) {
+            if (c == '{') {
+                fstring_brace_depth_stack[fstring_depth_top]++;
+            } else if (c == '}') {
+                fstring_brace_depth_stack[fstring_depth_top]--;
+                if (fstring_brace_depth_stack[fstring_depth_top] == 0) {
+                    fstring_depth_top--;
+                    state_top--;
+                }
+            }
         }
-
+        
         if (isalpha((unsigned char)c) || c == '_') {
             const char* start = current_ptr;
-            while (current_ptr < end_ptr && (isalnum((unsigned char)*current_ptr) || *current_ptr == '_')) { current_ptr++; }
+            while (*current_ptr != '\0' && (isalnum((unsigned char)*current_ptr) || *current_ptr == '_')) { current_ptr++; }
             size_t len = current_ptr - start;
             if (len >= MAX_LEXEME_LEN) {
                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Identifier is too long.\n", line, column); goto cleanup_failure;
@@ -1039,16 +1070,16 @@ bool tokenize(Graveyard *gy) {
             tokens[count].line = line; tokens[count].column = column;
             count++;
 
-        } else if (isdigit((unsigned char)c) || (c == '.' && (current_ptr + 1 < end_ptr) && isdigit((unsigned char)*(current_ptr+1)))) {
+        } else if (isdigit((unsigned char)c) || (c == '.' && *(current_ptr + 1) != '\0' && isdigit((unsigned char)*(current_ptr+1)))) {
             const char* start = current_ptr;
-            while (current_ptr < end_ptr && isdigit((unsigned char)*current_ptr)) { current_ptr++; }
-            if (current_ptr + 1 < end_ptr && *current_ptr == '.' && isdigit((unsigned char)*(current_ptr + 1))) {
+            while (*current_ptr != '\0' && isdigit((unsigned char)*current_ptr)) { current_ptr++; }
+            if (*current_ptr == '.' && *(current_ptr + 1) != '\0' && isdigit((unsigned char)*(current_ptr + 1))) {
                 current_ptr++;
-                while (current_ptr < end_ptr && isdigit((unsigned char)*current_ptr)) { current_ptr++; }
+                while (*current_ptr != '\0' && isdigit((unsigned char)*current_ptr)) { current_ptr++; }
             }
             size_t len = current_ptr - start;
             if (len >= MAX_LEXEME_LEN) {
-                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Number literal is too long.\n", line, column); goto cleanup_failure;
+                fprintf(stderr, "Tokenizer error [line %d, col %d]: Number literal is too long.\n", line, column); goto cleanup_failure;
             }
             tokens[count].type = NUMBER;
             strncpy(tokens[count].lexeme, start, len); tokens[count].lexeme[len] = '\0';
@@ -1056,7 +1087,6 @@ bool tokenize(Graveyard *gy) {
             count++;
 
         } else if (c == '"') {
-            const char* string_start_ptr = current_ptr;
             int start_line = line;
             int start_col = column;
             current_ptr++;
@@ -1064,9 +1094,8 @@ bool tokenize(Graveyard *gy) {
             char lexeme_buffer[MAX_LEXEME_LEN];
             size_t len = 0;
 
-            while (current_ptr < end_ptr && *current_ptr != '"') {
+            while (*current_ptr != '\0' && *current_ptr != '"') {
                 char ch = *current_ptr;
-
                 if (ch == '\n') {
                     fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated string literal (newline encountered).\n", line, column);
                     goto cleanup_failure;
@@ -1075,8 +1104,7 @@ bool tokenize(Graveyard *gy) {
                     fprintf(stderr, "Tokenizer error [line %d, col %d]: String literal is too long.\n", start_line, start_col);
                     goto cleanup_failure;
                 }
-
-                if (ch == '\\' && current_ptr + 1 < end_ptr) {
+                if (ch == '\\' && *(current_ptr + 1) != '\0') {
                     current_ptr++;
                     char next_ch = *current_ptr;
                     switch (next_ch) {
@@ -1092,7 +1120,7 @@ bool tokenize(Graveyard *gy) {
                 current_ptr++;
             }
 
-            if (current_ptr >= end_ptr || *current_ptr != '"') {
+            if (*current_ptr != '"') {
                 fprintf(stderr, "Tokenizer error [line %d, col %d]: Unterminated string literal.\n", start_line, start_col);
                 goto cleanup_failure;
             }
@@ -1109,10 +1137,10 @@ bool tokenize(Graveyard *gy) {
             const char* start = current_ptr;
             if (c == '<') {
                 const char* lookahead_ptr = current_ptr + 1;
-                if (lookahead_ptr < end_ptr && (isalpha((unsigned char)*lookahead_ptr) || *lookahead_ptr == '_')) {
+                if (*lookahead_ptr != '\0' && (isalpha((unsigned char)*lookahead_ptr) || *lookahead_ptr == '_')) {
                     lookahead_ptr++;
-                    while (lookahead_ptr < end_ptr && (isalnum((unsigned char)*lookahead_ptr) || *lookahead_ptr == '_')) { lookahead_ptr++; }
-                    if (lookahead_ptr < end_ptr && *lookahead_ptr == '>') {
+                    while (*lookahead_ptr != '\0' && (isalnum((unsigned char)*lookahead_ptr) || *lookahead_ptr == '_')) { lookahead_ptr++; }
+                    if (*lookahead_ptr != '\0' && *lookahead_ptr == '>') {
                         size_t len = (lookahead_ptr + 1) - start;
                         if (len >= MAX_LEXEME_LEN) {
                             fprintf(stderr, "Tokenizer error [line %d, col %d]: TYPE_IDENTIFIER is too long.\n", line, column); goto cleanup_failure;
@@ -1129,7 +1157,7 @@ bool tokenize(Graveyard *gy) {
 
             GraveyardTokenType ttype = UNKNOWN;
 
-            if (current_ptr + 2 < end_ptr) {
+            if (*(start + 1) != '\0' && *(start + 2) != '\0') {
                 ttype = identify_three_char_token(start[0], start[1], start[2]);
                 if (ttype != UNKNOWN) {
                     snprintf(tokens[count].lexeme, 4, "%c%c%c", start[0], start[1], start[2]);
@@ -1137,8 +1165,7 @@ bool tokenize(Graveyard *gy) {
                     count++; current_ptr += 3; continue;
                 }
             }
-
-            if (current_ptr + 1 < end_ptr) {
+            if (*(start + 1) != '\0') {
                 ttype = identify_two_char_token(start[0], start[1]);
                 if (ttype != UNKNOWN) {
                     snprintf(tokens[count].lexeme, 3, "%c%c", start[0], start[1]);
@@ -1160,7 +1187,7 @@ bool tokenize(Graveyard *gy) {
         }
     }
 
-    if (state == STATE_IN_FMT_STRING) {
+    if (state_top != 0) {
         fprintf(stderr, "Tokenizer error [line %zu]: Unterminated formatted string at end of file.\n", line);
         goto cleanup_failure;
     }
@@ -1171,10 +1198,8 @@ bool tokenize(Graveyard *gy) {
     tokens[count].column = (current_ptr - line_start_ptr) + 1;
     count++;
     
-    if (count < capacity && count > 0) {
-        Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
-        if (shrunk_tokens) { tokens = shrunk_tokens; }
-    }
+    Token *shrunk_tokens = realloc(tokens, count * sizeof(Token));
+    if (shrunk_tokens) { tokens = shrunk_tokens; }
     
     gy->tokens = tokens;
     gy->token_count = count;
@@ -5800,7 +5825,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             } while (FindNextFile(find_handle, &find_data) != 0);
 
             FindClose(find_handle);
-        #else // POSIX systems (Linux, macOS)
+        #else
             DIR* dir = opendir(path);
             if (!dir) {
                 runtime_error(gy, node->line, "Cannot open directory '%s'", path);
@@ -5902,6 +5927,103 @@ static bool compile_source(Graveyard* gy) {
     return true;
 }
 
+const char* token_type_to_string(GraveyardTokenType type) {
+    switch (type) {
+        case SEMICOLON: return "SEMICOLON";
+        case IDENTIFIER: return "IDENTIFIER";
+        case TRUEVALUE: return "TRUEVALUE";
+        case FALSEVALUE: return "FALSEVALUE";
+        case NULLVALUE: return "NULLVALUE";
+        case NUMBER: return "NUMBER";
+        case STRING: return "STRING";
+        case FORMATTEDSTRING: return "FORMATTEDSTRING";
+        case ASSIGNMENT: return "ASSIGNMENT";
+        case PLUS: return "PLUS";
+        case MINUS: return "MINUS";
+        case ASTERISK: return "ASTERISK";
+        case FORWARDSLASH: return "FORWARDSLASH";
+        case EXPONENTIATION: return "EXPONENTIATION";
+        case MODULO: return "MODULO";
+        case PLUSASSIGNMENT: return "PLUSASSIGNMENT";
+        case SUBTRACTIONASSIGNMENT: return "SUBTRACTIONASSIGNMENT";
+        case MULTIPLICATIONASSIGNMENT: return "MULTIPLICATIONASSIGNMENT";
+        case DIVISIONASSIGNMENT: return "DIVISIONASSIGNMENT";
+        case EXPONENTIATIONASSIGNMENT: return "EXPONENTIATIONASSIGNMENT";
+        case MODULOASSIGNMENT: return "MODULOASSIGNMENT";
+        case INCREMENT: return "INCREMENT";
+        case DECREMENT: return "DECREMENT";
+        case EQUALITY: return "EQUALITY";
+        case INEQUALITY: return "INEQUALITY";
+        case GREATERTHAN: return "GREATERTHAN";
+        case LEFTANGLEBRACKET: return "LEFTANGLEBRACKET";
+        case GREATERTHANEQUAL: return "GREATERTHANEQUAL";
+        case LESSTHANEQUAL: return "LESSTHANEQUAL";
+        case NOT: return "NOT";
+        case AND: return "AND";
+        case OR: return "OR";
+        case XOR: return "XOR";
+        case LEFTPARENTHESES: return "LEFTPARENTHESES";
+        case RIGHTPARENTHESES: return "RIGHTPARENTHESES";
+        case LEFTBRACKET: return "LEFTBRACKET";
+        case RIGHTBRACKET: return "RIGHTBRACKET";
+        case LEFTBRACE: return "LEFTBRACE";
+        case RIGHTBRACE: return "RIGHTBRACE";
+        case PARAMETER: return "PARAMETER";
+        case RETURN: return "RETURN";
+        case QUESTIONMARK: return "QUESTIONMARK";
+        case COMMA: return "COMMA";
+        case COLON: return "COLON";
+        case WHILE: return "WHILE";
+        case CARET: return "CARET";
+        case BACKTICK: return "BACKTICK";
+        case AT: return "AT";
+        case NULLCOALESCE: return "NULLCOALESCE";
+        case PERIOD: return "PERIOD";
+        case NAMESPACE: return "NAMESPACE";
+        case REFERENCE: return "REFERENCE";
+        case PRINT: return "PRINT";
+        case SCAN: return "SCAN";
+        case FILEREAD: return "FILEREAD";
+        case FILEWRITE: return "FILEWRITE";
+        case RAISE: return "RAISE";
+        case CASTBOOLEAN: return "CASTBOOLEAN";
+        case CASTINTEGER: return "CASTINTEGER";
+        case CASTFLOAT: return "CASTFLOAT";
+        case CASTSTRING: return "CASTSTRING";
+        case CASTARRAY: return "CASTARRAY";
+        case CASTHASHTABLE: return "CASTHASHTABLE";
+        case TYPEOF: return "TYPEOF";
+        case TIME: return "TIME";
+        case WAIT: return "WAIT";
+        case RANDOM: return "RANDOM";
+        case EXECUTE: return "EXECUTE";
+        case CATCONSTANT: return "CATCONSTANT";
+        case TOKENEOF: return "TOKENEOF";
+        case FORMATTEDSTART: return "FORMATTEDSTART";
+        case FORMATTEDEND: return "FORMATTEDEND";
+        case FORMATTEDPART: return "FORMATTEDPART";
+        case TYPE: return "TYPE";
+        case UNKNOWN: return "UNKNOWN";
+        default: return "INVALID_TOKEN";
+    }
+}
+
+void print_tokens(Graveyard *gy) {
+    printf("--- Token Stream ---\n");
+    printf("LINE | COL  | %-25s | LEXEME\n", "TYPE");
+    printf("---------------------------------------------------------\n");
+    for (size_t i = 0; i < gy->token_count; i++) {
+        Token token = gy->tokens[i];
+        printf("%-4d | %-4d | %-25s | '%s'\n",
+            token.line,
+            token.column,
+            token_type_to_string(token.type),
+            token.lexeme
+        );
+    }
+    printf("---------------------------------------------------------\n");
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: graveyard <mode> <source file> [args...]\n");
@@ -5986,33 +6108,22 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Failed to load source file.\n");
                 success = false;
             } else {
-                Preprocessor pp;
-                pp.included_files.capacity = 8;
-                pp.included_files.count = 0;
-                pp.included_files.items = malloc(pp.included_files.capacity * sizeof(char*));
-                
-                pp.output_capacity = strlen(raw_source) * 2;
-                pp.output_len = 0;
-                pp.output_buffer = malloc(pp.output_capacity);
-
-                pp.included_files.items[pp.included_files.count++] = strdup(gy->filename);
-
-                if (preprocess_source(&pp, raw_source)) {
-                    pp.output_buffer[pp.output_len] = '\0';
-                    gy->source_code = pp.output_buffer;
-                } else {
-                    fprintf(stderr, "Fatal error during pre-processing of imports.\n");
-                    success = false;
-                }
+                gy->source_code = run_preprocessor(raw_source);
                 
                 free(raw_source);
-                for(size_t i = 0; i < pp.included_files.count; i++) {
-                    free(pp.included_files.items[i]);
+
+                if (!gy->source_code) {
+                    fprintf(stderr, "Fatal error: Halting due to preprocessing failure.\n");
+                    success = false;
                 }
-                free(pp.included_files.items);
 
                 if (success) {
                     if (strcmp(gy->mode, "--tokenize") == 0 || strcmp(gy->mode, "-t") == 0) {
+                        if (!tokenize(gy)) {
+                            success = false;
+                        } else {
+                            print_tokens(gy);
+                        }
                     } else if (strcmp(gy->mode, "--parse") == 0 || strcmp(gy->mode, "-p") == 0) {
                         if (!compile_source(gy)) { success = false; }
                     } else if (strcmp(gy->mode, "--execute") == 0 || strcmp(gy->mode, "-e") == 0) {
