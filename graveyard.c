@@ -1245,6 +1245,7 @@ void free_ast(AstNode* node) {
             free_ast(node->as.unary_op.right);
             break;
         case AST_ASSIGNMENT:
+            free_ast(node->as.assignment.left);
             free_ast(node->as.assignment.value);
             break;
         case AST_FORMATTED_STRING:
@@ -2240,13 +2241,14 @@ static AstNode* parse_compound_assignment(Parser* parser) {
 
     GraveyardTokenType base_op_type = get_base_operator(compound_op.type);
     binary_op_node->as.binary_op.operator.type = base_op_type;
+    
     switch (base_op_type) {
-        case PLUS:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "+"); break;
-        case MINUS:          strcpy(binary_op_node->as.binary_op.operator.lexeme, "-"); break;
-        case ASTERISK: strcpy(binary_op_node->as.binary_op.operator.lexeme, "*"); break;
-        case FORWARDSLASH:       strcpy(binary_op_node->as.binary_op.operator.lexeme, "/"); break;
-        case EXPONENTIATION: strcpy(binary_op_node->as.binary_op.operator.lexeme, "**"); break;
-        case MODULO:         strcpy(binary_op_node->as.binary_op.operator.lexeme, "/%"); break;
+        case PLUS:           snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "+"); break;
+        case MINUS:          snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "-"); break;
+        case ASTERISK:       snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "*"); break;
+        case FORWARDSLASH:   snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "/"); break;
+        case EXPONENTIATION: snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "**"); break;
+        case MODULO:         snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "/%"); break;
         default:             binary_op_node->as.binary_op.operator.lexeme[0] = '\0'; break;
     }
 
@@ -2278,13 +2280,16 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     if (!right_side) { free_ast(left_side); return NULL; }
     right_side->line = op.line;
     right_side->as.literal.value.type = NUMBER;
-    strcpy(right_side->as.literal.value.lexeme, "1");
+    
+    snprintf(right_side->as.literal.value.lexeme, MAX_LEXEME_LEN, "1");
 
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
     if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
     binary_op_node->line = op.line;
     binary_op_node->as.binary_op.operator.type = (op.type == INCREMENT) ? PLUS : MINUS;
-    strcpy(binary_op_node->as.binary_op.operator.lexeme, (op.type == INCREMENT) ? "+" : "-");
+    
+    snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, (op.type == INCREMENT) ? "+" : "-");
+    
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
@@ -2297,7 +2302,6 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     assignment_target->as.identifier.name = identifier;
 
     assignment_node->as.assignment.left = assignment_target;
-
     assignment_node->as.assignment.value = binary_op_node;
 
     return assignment_node;
