@@ -2219,13 +2219,14 @@ static bool is_compound_assignment(GraveyardTokenType type) {
 
 static GraveyardTokenType get_base_operator(GraveyardTokenType compound_type) {
     switch (compound_type) {
-        case PLUSASSIGNMENT:            return PLUS;
-        case SUBTRACTIONASSIGNMENT:     return MINUS;
-        case MULTIPLICATIONASSIGNMENT:  return ASTERISK;
-        case DIVISIONASSIGNMENT:        return FORWARDSLASH;
-        case EXPONENTIATIONASSIGNMENT:  return EXPONENTIATION;
-        case MODULOASSIGNMENT:          return MODULO;
-        default:                        return UNKNOWN;
+        case PLUSASSIGNMENT:           return PLUS;
+        case SUBTRACTIONASSIGNMENT:    return MINUS;
+        case MULTIPLICATIONASSIGNMENT: return ASTERISK;
+        case DIVISIONASSIGNMENT:       return FORWARDSLASH;
+        case EXPONENTIATIONASSIGNMENT: return EXPONENTIATION;
+        case MODULOASSIGNMENT:         return MODULO;
+
+        default:                       return UNKNOWN;
     }
 }
 
@@ -2251,7 +2252,7 @@ static AstNode* parse_compound_assignment(Parser* parser) {
         case ASTERISK:       snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "*"); break;
         case FORWARDSLASH:   snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "/"); break;
         case EXPONENTIATION: snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "**"); break;
-        case MODULO:         snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "/%"); break;
+        case MODULO:         snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, "/%%"); break;
         default:             binary_op_node->as.binary_op.operator.lexeme[0] = '\0'; break;
     }
 
@@ -2996,7 +2997,7 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, "(THIS_EXPRESSION line=%d)\n", node->line);
             break;
         }
-        
+
         case AST_EXECUTE_EXPRESSION: {
             fprintf(file, "(EXECUTE_EXPRESSION line=%d\n", node->line);
             write_ast_node(file, node->as.execute_expression.command_expr, indent + 1);
@@ -3091,14 +3092,12 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
         case AST_TRY_EXCEPT_STATEMENT: {
             fprintf(file, "(TRY_EXCEPT_STATEMENT line=%d\n", node->line);
 
-            // Write the 'try' block
             for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
             fprintf(file, "(TRY_BLOCK\n");
             write_ast_node(file, node->as.try_except_statement.try_block, indent + 2);
             for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
             fprintf(file, ")\n");
 
-            // Write the 'except' clause if it exists
             if (node->as.try_except_statement.except_clause) {
                 for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
                 fprintf(file, "(EXCEPT_CLAUSE error_var=\"");
@@ -3109,7 +3108,6 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
                 fprintf(file, ")\n");
             }
 
-            // Write the 'finally' block if it exists
             if (node->as.try_except_statement.finally_block) {
                 for (int i = 0; i < indent + 1; ++i) { fprintf(file, "  "); }
                 fprintf(file, "(FINALLY_BLOCK\n");
@@ -3155,6 +3153,29 @@ void print_ast(AstNode* root) {
 
 //DESERIALIZER-----------------------------------------------------
 
+static void unescape_and_copy_string(char* dest, const char* src, size_t dest_size) {
+    size_t i = 0, j = 0;
+    while (src[i] != '\0' && j < dest_size - 1) {
+        if (src[i] == '\\') {
+            i++;
+            switch (src[i]) {
+                case '"':  dest[j++] = '"'; break;
+                case '\\': dest[j++] = '\\'; break;
+                case 'n':  dest[j++] = '\n'; break;
+                case 't':  dest[j++] = '\t'; break;
+                case 'r':  dest[j++] = '\r'; break;
+                default:
+                    if (src[i] != '\0') dest[j++] = src[i];
+                    break;
+            }
+        } else {
+            dest[j++] = src[i];
+        }
+        if (src[i] != '\0') i++;
+    }
+    dest[j] = '\0';
+}
+
 static int get_indent_level(const char* line) {
     int indent = 0;
     while (line[indent] == ' ') {
@@ -3193,10 +3214,18 @@ static bool get_attribute_string(const char* line, const char* key, char* out_bu
     if (!value_end) return false;
 
     size_t len = value_end - value_start;
-    if (len >= buffer_size) return false;
+    
+    char* raw_value = malloc(len + 1);
+    if (!raw_value) {
+        perror("get_attribute_string: malloc failed");
+        return false;
+    }
+    strncpy(raw_value, value_start, len);
+    raw_value[len] = '\0';
 
-    strncpy(out_buffer, value_start, len);
-    out_buffer[len] = '\0';
+    unescape_and_copy_string(out_buffer, raw_value, buffer_size);
+
+    free(raw_value);
     return true;
 }
 
@@ -3205,7 +3234,15 @@ static int get_attribute_int(const char* line, const char* key) {
     if (!key_ptr) return -1;
 
     const char* value_start = key_ptr + strlen(key);
-    return atoi(value_start);
+    
+    char* end_ptr;
+    long val = strtol(value_start, &end_ptr, 10);
+
+    if (end_ptr == value_start) {
+        return -1;
+    }
+
+    return (int)val;
 }
 
 static AstNodeType get_node_type_from_string(const char* type_str) {
@@ -3258,6 +3295,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "EVAL_EXPRESSION") == 0) return AST_EVAL_EXPRESSION;
     if (strcmp(type_str, "EXISTS_EXPRESSION") == 0) return AST_EXISTS_EXPRESSION;
     if (strcmp(type_str, "LISTDIR_EXPRESSION") == 0) return AST_LISTDIR_EXPRESSION;
+    if (strcmp(type_str, "TRY_EXCEPT_STATEMENT") == 0) return AST_TRY_EXCEPT_STATEMENT;
     return AST_UNKNOWN;
 }
 
@@ -3276,14 +3314,27 @@ bool load_ast_from_file(Graveyard* gy, const char* filename) {
 
     Lines lines;
     lines.count = 0;
-    lines.lines = malloc(sizeof(char*));
-    int capacity = 1;
+    int capacity = 64; 
+    lines.lines = malloc(capacity * sizeof(char*));
+    if (!lines.lines) {
+        perror("load_ast_from_file: malloc failed");
+        free(buffer);
+        return false;
+    }
 
     char* line = strtok(buffer, "\n");
     while (line != NULL) {
-        if (lines.count == capacity) {
+        if (lines.count >= capacity) {
             capacity *= 2;
-            lines.lines = realloc(lines.lines, capacity * sizeof(char*));
+            
+            char** temp = realloc(lines.lines, capacity * sizeof(char*));
+            if (!temp) {
+                perror("load_ast_from_file: realloc for lines failed");
+                free(lines.lines);
+                free(buffer);
+                return false;
+            }
+            lines.lines = temp;
         }
         lines.lines[lines.count++] = line;
         line = strtok(NULL, "\n");
@@ -3351,37 +3402,80 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
     node->line = get_attribute_int(line, "line=");
 
     switch (type) {
-        case AST_PROGRAM:
-
-        case AST_PRINT_STATEMENT:
-
-        case AST_ARRAY_LITERAL: {
-            AstNode** list_ptr = NULL; size_t* count_ptr = NULL; size_t* capacity_ptr = NULL;
-            if (type == AST_PROGRAM) {
-                node->as.program.capacity = 8; node->as.program.count = 0;
-                node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
-                list_ptr = node->as.program.statements; count_ptr = &node->as.program.count; capacity_ptr = &node->as.program.capacity;
-            } else if (type == AST_PRINT_STATEMENT) {
-                node->as.print_stmt.capacity = 4; node->as.print_stmt.count = 0;
-                node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
-                list_ptr = node->as.print_stmt.expressions; count_ptr = &node->as.print_stmt.count; capacity_ptr = &node->as.print_stmt.capacity;
-            } else {
-                node->as.array_literal.capacity = 4; node->as.array_literal.count = 0;
-                node->as.array_literal.elements = malloc(node->as.array_literal.capacity * sizeof(AstNode*));
-                list_ptr = node->as.array_literal.elements; count_ptr = &node->as.array_literal.count; capacity_ptr = &node->as.array_literal.capacity;
-            }
-            if (!list_ptr) { parser->had_error = true; free(node); return NULL; }
+        case AST_PROGRAM: {
+            node->as.program.capacity = 8;
+            node->as.program.count = 0;
+            node->as.program.statements = malloc(node->as.program.capacity * sizeof(AstNode*));
+            if (!node->as.program.statements) { parser->had_error = true; free(node); return NULL; }
 
             AstNode* child;
             while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
-                if (*count_ptr == *capacity_ptr) {
-                    *capacity_ptr *= 2;
-                    list_ptr = realloc(list_ptr, *capacity_ptr * sizeof(AstNode*));
-                    if (!list_ptr) { parser->had_error = true; free_ast(child); free_ast(node); return NULL; }
-                    if (type == AST_PROGRAM) node->as.program.statements = list_ptr;
-                    else node->as.print_stmt.expressions = list_ptr;
+                if (node->as.program.count >= node->as.program.capacity) {
+                    size_t new_capacity = node->as.program.capacity * 2;
+                    AstNode** temp = realloc(node->as.program.statements, new_capacity * sizeof(AstNode*));
+                    if (!temp) {
+                        perror("AST program statements realloc failed");
+                        parser->had_error = true;
+                        free_ast(child);
+                        free_ast(node);
+                        return NULL;
+                    }
+                    node->as.program.statements = temp;
+                    node->as.program.capacity = new_capacity;
                 }
-                list_ptr[(*count_ptr)++] = child;
+                node->as.program.statements[node->as.program.count++] = child;
+            }
+            break;
+        }
+
+        case AST_PRINT_STATEMENT: {
+            node->as.print_stmt.capacity = 4;
+            node->as.print_stmt.count = 0;
+            node->as.print_stmt.expressions = malloc(node->as.print_stmt.capacity * sizeof(AstNode*));
+            if (!node->as.print_stmt.expressions) { parser->had_error = true; free(node); return NULL; }
+
+            AstNode* child;
+            while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
+                if (node->as.print_stmt.count >= node->as.print_stmt.capacity) {
+                    size_t new_capacity = node->as.print_stmt.capacity * 2;
+                    AstNode** temp = realloc(node->as.print_stmt.expressions, new_capacity * sizeof(AstNode*));
+                    if (!temp) {
+                        perror("AST print expressions realloc failed");
+                        parser->had_error = true;
+                        free_ast(child);
+                        free_ast(node);
+                        return NULL;
+                    }
+                    node->as.print_stmt.expressions = temp;
+                    node->as.print_stmt.capacity = new_capacity;
+                }
+                node->as.print_stmt.expressions[node->as.print_stmt.count++] = child;
+            }
+            break;
+        }
+
+        case AST_ARRAY_LITERAL: {
+            node->as.array_literal.capacity = 4;
+            node->as.array_literal.count = 0;
+            node->as.array_literal.elements = malloc(node->as.array_literal.capacity * sizeof(AstNode*));
+            if (!node->as.array_literal.elements) { parser->had_error = true; free(node); return NULL; }
+
+            AstNode* child;
+            while ((child = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser))) {
+                if (node->as.array_literal.count >= node->as.array_literal.capacity) {
+                    size_t new_capacity = node->as.array_literal.capacity * 2;
+                    AstNode** temp = realloc(node->as.array_literal.elements, new_capacity * sizeof(AstNode*));
+                    if (!temp) {
+                        perror("AST array elements realloc failed");
+                        parser->had_error = true;
+                        free_ast(child);
+                        free_ast(node);
+                        return NULL;
+                    }
+                    node->as.array_literal.elements = temp;
+                    node->as.array_literal.capacity = new_capacity;
+                }
+                node->as.array_literal.elements[node->as.array_literal.count++] = child;
             }
             break;
         }
@@ -3402,7 +3496,14 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
 
                     if (node->as.hashtable_literal.count >= node->as.hashtable_literal.capacity) {
                         size_t new_capacity = node->as.hashtable_literal.capacity * 2;
-                        node->as.hashtable_literal.pairs = realloc(node->as.hashtable_literal.pairs, new_capacity * sizeof(AstNodeKeyValuePair));
+                        AstNodeKeyValuePair* temp = realloc(node->as.hashtable_literal.pairs, new_capacity * sizeof(AstNodeKeyValuePair));
+                        if (!temp) {
+                            perror("AST hashtable pairs realloc failed");
+                            parser->had_error = true;
+                            free_ast(node);
+                            return NULL;
+                        }
+                        node->as.hashtable_literal.pairs = temp;
                         node->as.hashtable_literal.capacity = new_capacity;
                     }
                     
@@ -3574,12 +3675,40 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             get_attribute_string(line, "name=", node->as.function_declaration.name.lexeme, MAX_LEXEME_LEN);
             node->as.function_declaration.name.type = IDENTIFIER;
 
-            char params_buffer[256];
-            get_attribute_string(line, "params=", params_buffer, sizeof(params_buffer));
+            const char* params_attr_start = strstr(line, "params=\"");
+            if (!params_attr_start) {
+                parser->had_error = true; 
+                free(node); 
+                return NULL;
+            }
+            params_attr_start += strlen("params=\"");
+            const char* params_attr_end = strchr(params_attr_start, '"');
+            if (!params_attr_end) {
+                parser->had_error = true; 
+                free(node); 
+                return NULL;
+            }
+
+            size_t params_len = params_attr_end - params_attr_start;
+            char* params_buffer = malloc(params_len + 1);
+            if (!params_buffer) {
+                perror("AST function params malloc failed");
+                parser->had_error = true; 
+                free(node); 
+                return NULL;
+            }
             
+            unescape_and_copy_string(params_buffer, params_attr_start, params_len + 1);
+
             node->as.function_declaration.param_capacity = 4;
             node->as.function_declaration.param_count = 0;
             node->as.function_declaration.params = malloc(node->as.function_declaration.param_capacity * sizeof(Token));
+            if (!node->as.function_declaration.params) {
+                parser->had_error = true;
+                free(params_buffer);
+                free(node);
+                return NULL;
+            }
 
             char* param_name = strtok(params_buffer, " ");
             while (param_name != NULL) {
@@ -3588,8 +3717,9 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                     Token* new_params = realloc(node->as.function_declaration.params, new_capacity * sizeof(Token));
                     if (!new_params) {
                         perror("AST function params realloc failed");
-                        free_ast(node);
                         parser->had_error = true;
+                        free(params_buffer);
+                        free_ast(node);
                         return NULL;
                     }
                     node->as.function_declaration.params = new_params;
@@ -3597,10 +3727,16 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 }
                 Token param_token;
                 param_token.type = IDENTIFIER;
-                strncpy(param_token.lexeme, param_name, MAX_LEXEME_LEN);
+                param_token.line = node->line;
+                param_token.column = 0;
+                strncpy(param_token.lexeme, param_name, MAX_LEXEME_LEN - 1);
+                param_token.lexeme[MAX_LEXEME_LEN - 1] = '\0';
                 node->as.function_declaration.params[node->as.function_declaration.param_count++] = param_token;
+                
                 param_name = strtok(NULL, " ");
             }
+            
+            free(params_buffer);
 
             node->as.function_declaration.body = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
             break;
@@ -3655,20 +3791,21 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 } else if (strcmp(part_type_str, "ELSE_IF_CLAUSE") == 0) {
                     if (node->as.if_statement.else_if_count >= node->as.if_statement.else_if_capacity) {
                         size_t new_capacity = node->as.if_statement.else_if_capacity * 2;
-                        AstNodeElseIfClause* new_clauses = realloc(node->as.if_statement.else_if_clauses, new_capacity * sizeof(AstNodeElseIfClause));
-                        if (!new_clauses) {
+                        AstNodeElseIfClause* temp = realloc(node->as.if_statement.else_if_clauses, new_capacity * sizeof(AstNodeElseIfClause));
+                        if (!temp) {
                             perror("AST if-else clauses realloc failed");
-                            free_ast(node);
                             parser->had_error = true;
+                            free_ast(node);
                             return NULL;
                         }
-                        node->as.if_statement.else_if_clauses = new_clauses;
+                        node->as.if_statement.else_if_clauses = temp;
                         node->as.if_statement.else_if_capacity = new_capacity;
                     }
                     AstNodeElseIfClause* clause = &node->as.if_statement.else_if_clauses[node->as.if_statement.else_if_count++];
                     clause->condition = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
                     clause->body = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
                 }
+                
                 (*current_line_idx)++;
             }
             break;
@@ -3798,6 +3935,36 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_TRY_EXCEPT_STATEMENT: {
+            node->as.try_except_statement.except_clause = NULL;
+            node->as.try_except_statement.finally_block = NULL;
+
+            while (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
+                const char* part_line = lines->lines[*current_line_idx];
+                char part_type_str[64];
+                get_node_type_from_line(part_line, part_type_str, sizeof(part_type_str));
+                (*current_line_idx)++;
+
+                if (strcmp(part_type_str, "TRY_BLOCK") == 0) {
+                    node->as.try_except_statement.try_block = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
+                } else if (strcmp(part_type_str, "EXCEPT_CLAUSE") == 0) {
+                    AstNodeExceptClause* clause = malloc(sizeof(AstNodeExceptClause));
+                    if (!clause) { parser->had_error = true; free_ast(node); return NULL; }
+                    
+                    get_attribute_string(part_line, "error_var=", clause->error_variable.lexeme, MAX_LEXEME_LEN);
+                    clause->error_variable.type = IDENTIFIER;
+                    clause->body = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
+                    node->as.try_except_statement.except_clause = clause;
+
+                } else if (strcmp(part_type_str, "FINALLY_BLOCK") == 0) {
+                    node->as.try_except_statement.finally_block = parse_node_recursive(lines, current_line_idx, expected_indent + 2, parser);
+                }
+                
+                (*current_line_idx)++;
+            }
+            break;
+        }
+
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -3846,6 +4013,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_EVAL_EXPRESSION:
         case AST_EXISTS_EXPRESSION:
         case AST_LISTDIR_EXPRESSION:
+        case AST_TRY_EXCEPT_STATEMENT:
             is_block_node = true;
             break;
         default: break;
