@@ -4062,6 +4062,7 @@ void monolith_free(Monolith* monolith) {
     for (int i = 0; i < monolith->capacity; i++) {
         MonolithEntry* entry = &monolith->entries[i];
         if (entry->key != NULL) {
+            // printf("DEBUG: Dec-ref'ing '%s' in monolith.\n", entry->key); // <-- ADD THIS
             dec_ref(entry->value);
             free(entry->key);
         }
@@ -4103,6 +4104,8 @@ static void free_value(GraveyardValue value) {
         }
         case VAL_ARRAY: {
             GraveyardArray* array = value.as.array;
+            if (array->ref_count == -1) return;
+            array->ref_count = -1;
             for (size_t i = 0; i < array->count; i++) {
                 dec_ref(array->values[i]);
             }
@@ -4112,6 +4115,8 @@ static void free_value(GraveyardValue value) {
         }
         case VAL_HASHTABLE: {
             GraveyardHashtable* ht = value.as.hashtable;
+            if (ht->ref_count == -1) return;
+            ht->ref_count = -1;
             for (int i = 0; i < ht->capacity; i++) {
                 if (ht->entries[i].is_in_use) {
                     dec_ref(ht->entries[i].key);
@@ -4892,6 +4897,7 @@ void graveyard_debug_print(Graveyard* gy) {
 
 void graveyard_free(Graveyard *gy) {
     if (!gy) return;
+    // printf("DEBUG: Starting final cleanup...\n"); // <-- ADD THIS
     free(gy->source_code);
     free(gy->tokens);
     free_ast(gy->ast_root);
@@ -4917,7 +4923,7 @@ void graveyard_free(Graveyard *gy) {
         }
     }
     monolith_free(&gy->namespaces);
-    
+    // printf("DEBUG: Cleanup complete. Freeing main struct.\n"); // <-- ADD THIS
     free(gy);
 }
 
@@ -5736,8 +5742,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_BLOCK: {
-            Environment* new_env = environment_new(gy->environment);
-            return execute_block(gy, node, new_env);
+            Environment* block_env = environment_new(gy->environment);
+            GraveyardValue result = execute_block(gy, node, block_env);
+
+            monolith_free(&block_env->values);
+            free(block_env);
+
+            return result;
         }
 
         case AST_RETURN_STATEMENT: {
@@ -5811,7 +5822,11 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             dec_ref(condition_val);
 
             if (is_truthy) {
-                execute_block(gy, node->as.if_statement.then_branch, environment_new(gy->environment));
+                Environment* block_env = environment_new(gy->environment);
+                execute_block(gy, node->as.if_statement.then_branch, block_env);
+                monolith_free(&block_env->values);
+                free(block_env);
+                
                 return create_null_value();
             }
 
@@ -5824,13 +5839,20 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 dec_ref(else_if_condition);
 
                 if (else_if_is_truthy) {
-                    execute_block(gy, clause->body, environment_new(gy->environment));
+                    Environment* block_env = environment_new(gy->environment);
+                    execute_block(gy, clause->body, block_env);
+                    monolith_free(&block_env->values);
+                    free(block_env);
+
                     return create_null_value();
                 }
             }
 
             if (node->as.if_statement.else_branch != NULL) {
-                execute_block(gy, node->as.if_statement.else_branch, environment_new(gy->environment));
+                Environment* block_env = environment_new(gy->environment);
+                execute_block(gy, node->as.if_statement.else_branch, block_env);
+                monolith_free(&block_env->values);
+                free(block_env);
             }
 
             return create_null_value();
@@ -5868,7 +5890,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     break;
                 }
 
-                execute_block(gy, node->as.while_statement.body, environment_new(gy->environment));
+                Environment* block_env = environment_new(gy->environment);
+                execute_block(gy, node->as.while_statement.body, block_env);
+                monolith_free(&block_env->values);
+                free(block_env);
 
                 if (gy->is_returning || gy->encountered_break) {
                     break;
