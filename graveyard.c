@@ -4062,7 +4062,7 @@ void monolith_free(Monolith* monolith) {
     for (int i = 0; i < monolith->capacity; i++) {
         MonolithEntry* entry = &monolith->entries[i];
         if (entry->key != NULL) {
-            // printf("DEBUG: Dec-ref'ing '%s' in monolith.\n", entry->key); // <-- ADD THIS
+            printf("DEBUG: Dec-ref'ing '%s' in monolith.\n", entry->key); // <-- ADD THIS
             dec_ref(entry->value);
             free(entry->key);
         }
@@ -5154,7 +5154,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_ASSIGNMENT: {
             AstNode* target_node = node->as.assignment.left;
             GraveyardValue value_to_assign = execute_node(gy, node->as.assignment.value);
-            dec_ref(value_to_assign);
 
             if (target_node->type == AST_IDENTIFIER) {
                 const char* name = target_node->as.identifier.name.lexeme;
@@ -5264,6 +5263,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return value_to_assign;
             }
             
+            dec_ref(value_to_assign);
             return create_null_value();
         }
         
