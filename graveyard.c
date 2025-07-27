@@ -521,6 +521,7 @@ struct GraveyardValue {
     union {
         bool                  boolean;
         double                number;
+        void* object;
         GraveyardString*      string;
         GraveyardArray*       array;
         GraveyardHashtable*   hashtable;
@@ -4073,6 +4074,68 @@ void monolith_free(Monolith* monolith) {
     monolith->capacity = 0;
 }
 
+const char* value_type_name(ValueType type) {
+    switch(type) {
+        case VAL_STRING: return "String";
+        case VAL_ARRAY: return "Array";
+        case VAL_HASHTABLE: return "Hashtable";
+        case VAL_FUNCTION: return "Function";
+        case VAL_INSTANCE: return "Instance";
+        case VAL_TYPE: return "Type";
+        case VAL_BOUND_METHOD: return "BoundMethod";
+        default: return "Primitive";
+    }
+}
+
+// static void inc_ref(GraveyardValue value) {
+//     switch (value.type) {
+//         case VAL_STRING:
+//             if (value.as.string) {
+//                 value.as.string->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "String", (void*)value.as.string, value.as.string->ref_count);
+//             }
+//             break;
+//         case VAL_ARRAY:
+//             if (value.as.array) {
+//                 value.as.array->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Array", (void*)value.as.array, value.as.array->ref_count);
+//             }
+//             break;
+//         case VAL_HASHTABLE:
+//             if (value.as.hashtable) {
+//                 value.as.hashtable->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Hashtable", (void*)value.as.hashtable, value.as.hashtable->ref_count);
+//             }
+//             break;
+//         case VAL_FUNCTION:
+//             if (value.as.function) {
+//                 value.as.function->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Function", (void*)value.as.function, value.as.function->ref_count);
+//             }
+//             break;
+//         case VAL_TYPE:
+//             if (value.as.type) {
+//                 value.as.type->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Type", (void*)value.as.type, value.as.type->ref_count);
+//             }
+//             break;
+//         case VAL_INSTANCE:
+//             if (value.as.instance) {
+//                 value.as.instance->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Instance", (void*)value.as.instance, value.as.instance->ref_count);
+//             }
+//             break;
+//         case VAL_BOUND_METHOD:
+//             if (value.as.bound_method) {
+//                 value.as.bound_method->ref_count++;
+//                 printf("INC_REF: %-12s at %p, count is now %d\n", "BoundMethod", (void*)value.as.bound_method, value.as.bound_method->ref_count);
+//             }
+//             break;
+//         default:
+//             break;
+//     }
+// }
+
 static void inc_ref(GraveyardValue value) {
     switch (value.type) {
         case VAL_STRING:     if (value.as.string) value.as.string->ref_count++;         break;
@@ -4095,6 +4158,7 @@ static GraveyardValue create_type_value_from_ptr(GraveyardType* type) {
 }
 
 static void free_value(GraveyardValue value) {
+    // printf("FREEING: %-12s at %p\n", value_type_name(value.type), value.as.object);
     switch (value.type) {
         case VAL_STRING: {
             GraveyardString* string = value.as.string;
@@ -4189,6 +4253,90 @@ static void dec_ref(GraveyardValue value) {
             break;
     }
 }
+
+// static void dec_ref(GraveyardValue value) {
+//     switch (value.type) {
+//         case VAL_STRING:
+//             if (value.as.string) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "String", (void*)value.as.string, value.as.string->ref_count);
+//                 if (--value.as.string->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.string->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_ARRAY:
+//             if (value.as.array) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "Array", (void*)value.as.array, value.as.array->ref_count);
+//                 if (--value.as.array->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.array->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_HASHTABLE:
+//             if (value.as.hashtable) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "Hashtable", (void*)value.as.hashtable, value.as.hashtable->ref_count);
+//                 if (--value.as.hashtable->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.hashtable->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_FUNCTION:
+//             if (value.as.function) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "Function", (void*)value.as.function, value.as.function->ref_count);
+//                 if (--value.as.function->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.function->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_TYPE:
+//             if (value.as.type) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "Type", (void*)value.as.type, value.as.type->ref_count);
+//                 if (--value.as.type->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.type->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_INSTANCE:
+//             if (value.as.instance) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "Instance", (void*)value.as.instance, value.as.instance->ref_count);
+//                 if (--value.as.instance->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.instance->ref_count);
+//                 }
+//             }
+//             break;
+//         case VAL_BOUND_METHOD:
+//             if (value.as.bound_method) {
+//                 printf("DEC_REF: %-12s at %p, count was %d", "BoundMethod", (void*)value.as.bound_method, value.as.bound_method->ref_count);
+//                 if (--value.as.bound_method->ref_count == 0) {
+//                     printf(", is now 0\n");
+//                     free_value(value);
+//                 } else {
+//                     printf(", is now %d\n", value.as.bound_method->ref_count);
+//                 }
+//             }
+//             break;
+//         default:
+//             break;
+//     }
+// }
 
 static void runtime_error(Graveyard* gy, int line, const char* format, ...) {
     va_list args;
@@ -4327,9 +4475,11 @@ static void hashtable_resize(GraveyardHashtable* ht, int new_capacity) {
         exit(1);
     }
     for (int i = 0; i < new_capacity; i++) {
+        new_entries[i].is_in_use = false;
         new_entries[i].key.type = VAL_NULL;
     }
 
+    ht->count = 0;
     for (int i = 0; i < ht->capacity; i++) {
         HashtableEntry* entry = &ht->entries[i];
         if (!entry->is_in_use) continue;
@@ -4337,6 +4487,9 @@ static void hashtable_resize(GraveyardHashtable* ht, int new_capacity) {
         HashtableEntry* dest = hashtable_find_entry(new_entries, new_capacity, entry->key);
         dest->key = entry->key;
         dest->value = entry->value;
+        
+        dest->is_in_use = true;
+        ht->count++;
     }
 
     free(ht->entries);
@@ -4358,11 +4511,14 @@ static void hashtable_set(GraveyardHashtable* ht, GraveyardValue key, GraveyardV
         ht->count++;
         inc_ref(key);
         entry->key = key;
+        // FIX: The value's ref count was not being incremented for new keys.
+        inc_ref(value);
     } else {
-        dec_ref(entry->value);
+        // This is an overwrite.
+        dec_ref(entry->value); // Decrement the OLD value.
+        inc_ref(value);        // Increment the NEW value.
     }
     
-    inc_ref(value);
     entry->value = value;
 }
 
@@ -5113,23 +5269,26 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 AstNodeKeyValuePair pair = node->as.hashtable_literal.pairs[i];
                 GraveyardValue key = execute_node(gy, pair.key);
 
-                if (key.type != VAL_STRING && key.type != VAL_NUMBER &&
-                    key.type != VAL_BOOL && key.type != VAL_NULL) {
+                bool is_valid_key = (key.type == VAL_STRING || key.type == VAL_NUMBER ||
+                                    key.type == VAL_BOOL || key.type == VAL_NULL);
+                bool is_integer = (key.type != VAL_NUMBER || fmod(key.as.number, 1.0) == 0);
+
+                if (!is_valid_key) {
                     runtime_error(gy, node->line, "Invalid type used as a hashtable key");
-                    free(ht->entries);
-                    free(ht);
+                    dec_ref(ht_val);
+                    dec_ref(key);
                     return create_null_value();
                 }
-                
-                if (key.type == VAL_NUMBER && fmod(key.as.number, 1.0) != 0) {
+                if (!is_integer) {
                     runtime_error(gy, node->line, "Cannot use float as hashtable key");
-                    free(ht->entries);
-                    free(ht);
+                    dec_ref(ht_val);
+                    dec_ref(key);
                     return create_null_value();
                 }
 
                 GraveyardValue value = execute_node(gy, pair.value);
                 hashtable_set(ht, key, value);
+                
                 dec_ref(key);
                 dec_ref(value);
             }
@@ -5139,6 +5298,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_IDENTIFIER: {
             GraveyardValue value;
             if (environment_get(gy->environment, node->as.identifier.name.lexeme, &value)) {
+                inc_ref(value);
                 return value;
             }
 
@@ -5262,7 +5422,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 monolith_set(&type_val.as.type->fields, member_name, value_to_assign);
                 return value_to_assign;
             }
-            
+
             dec_ref(value_to_assign);
             return create_null_value();
         }
