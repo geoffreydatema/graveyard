@@ -4561,6 +4561,20 @@ void environment_define(Environment* env, const char* name, GraveyardValue value
     monolith_set(&env->values, name, value);
 }
 
+bool environment_assign(Environment* env, const char* name, GraveyardValue value) {
+    MonolithEntry* entry = find_entry(env->values.entries, env->values.capacity, name);
+    if (entry->key != NULL) {
+        monolith_set(&env->values, name, value);
+        return true;
+    }
+
+    if (env->enclosing != NULL) {
+        return environment_assign(env->enclosing, name, value);
+    }
+
+    return false;
+}
+
 bool environment_get(Environment* env, const char* name, GraveyardValue* out_value) {
     if (monolith_get(&env->values, name, out_value)) {
         return true;
@@ -5048,6 +5062,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             for (size_t i = 0; i < node->as.array_literal.count; i++) {
                 GraveyardValue element_value = execute_node(gy, node->as.array_literal.elements[i]);
                 array_append(array_val.as.array, element_value);
+                
+                dec_ref(element_value);
             }
             
             return array_val;
@@ -5108,6 +5124,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
                 GraveyardValue value = execute_node(gy, pair.value);
                 hashtable_set(ht, key, value);
+                dec_ref(key);
+                dec_ref(value);
             }
             return ht_val;
         }
@@ -5130,13 +5148,17 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_ASSIGNMENT: {
             AstNode* target_node = node->as.assignment.left;
             GraveyardValue value_to_assign = execute_node(gy, node->as.assignment.value);
+            dec_ref(value_to_assign);
 
             if (target_node->type == AST_IDENTIFIER) {
                 const char* name = target_node->as.identifier.name.lexeme;
-                environment_define(gy->environment, name, value_to_assign);
+                
+                if (!environment_assign(gy->environment, name, value_to_assign)) {
+                    environment_define(gy->environment, name, value_to_assign);
+                }
                 return value_to_assign;
 
-            } else if (target_node->type == AST_SUBSCRIPT) {
+            }  else if (target_node->type == AST_SUBSCRIPT) {
                 AstNode* array_node = target_node->as.subscript.array;
                 AstNode* index_node = target_node->as.subscript.index;
 
@@ -5162,11 +5184,20 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardArray* array = array_val.as.array;
 
                 if (index >= array->count) {
-                    runtime_error(gy, target_node->line, "Array index out of bounds. Cannot assign to index %d in an array of size %zu", index, array->count);
+                    runtime_error(gy, target_node->line, "Array index out of bounds...");
+                    dec_ref(array_val);
+                    dec_ref(index_val);
                     return create_null_value();
                 }
 
+                dec_ref(array->values[index]);
+
+                inc_ref(value_to_assign);
                 array->values[index] = value_to_assign;
+
+                dec_ref(array_val);
+                dec_ref(index_val);
+
                 return value_to_assign;
             } else if (target_node->type == AST_BINARY_OP && target_node->as.binary_op.operator.type == REFERENCE) {
                 AstNode* ht_node = target_node->as.binary_op.left;
@@ -5191,6 +5222,10 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
 
                 hashtable_set(ht_val.as.hashtable, key_val, value_to_assign);
+
+                dec_ref(ht_val);
+                dec_ref(key_val);
+
                 return value_to_assign;
             } else if (target_node->type == AST_MEMBER_ACCESS) {
                 GraveyardValue object = execute_node(gy, target_node->as.member_access.object);
