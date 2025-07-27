@@ -5150,6 +5150,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_PROGRAM: {
             GraveyardValue last_value = create_null_value();
             for (size_t i = 0; i < node->as.program.count; i++) {
+                dec_ref(last_value);
+                
                 last_value = execute_node(gy, node->as.program.statements[i]);
                 if (gy->had_runtime_error) {
                     break;
@@ -5339,8 +5341,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_EXPRESSION_STATEMENT: {
-            execute_node(gy, node->as.expression_statement.expression);
-            return create_null_value();
+            return execute_node(gy, node->as.expression_statement.expression);
         }
         
         case AST_ASSIGNMENT: {
