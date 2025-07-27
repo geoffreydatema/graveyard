@@ -2094,7 +2094,12 @@ static AstNode* parse_expression(Parser* parser, int min_precedence) {
         if (op_type == ASSIGNMENT) {
             consume(parser);
             
-            if (left->type != AST_IDENTIFIER && left->type != AST_SUBSCRIPT && left->type != AST_MEMBER_ACCESS &&
+            if (left->type != AST_IDENTIFIER &&
+                left->type != AST_SUBSCRIPT &&
+                left->type != AST_MEMBER_ACCESS &&
+                left->type != AST_GLOBAL_ACCESS &&
+                left->type != AST_STATIC_ACCESS &&
+                left->type != AST_NAMESPACE_ACCESS &&
                 !(left->type == AST_BINARY_OP && left->as.binary_op.operator.type == REFERENCE)) {
                 error_at_token(parser, &parser->tokens[parser->current - 2], "Invalid assignment target.");
                 free_ast(left);
@@ -4063,7 +4068,7 @@ void monolith_free(Monolith* monolith) {
     for (int i = 0; i < monolith->capacity; i++) {
         MonolithEntry* entry = &monolith->entries[i];
         if (entry->key != NULL) {
-            printf("DEBUG: Dec-ref'ing '%s' in monolith.\n", entry->key); // <-- ADD THIS
+            // printf("DEBUG: Dec-ref'ing '%s' in monolith.\n", entry->key); // <-- ADD THIS
             dec_ref(entry->value);
             free(entry->key);
         }
@@ -5420,6 +5425,27 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
 
                 monolith_set(&type_val.as.type->fields, member_name, value_to_assign);
+                return value_to_assign;
+            }
+            else if (target_node->type == AST_NAMESPACE_ACCESS) {
+                const char* ns_name = target_node->as.namespace_access.namespace_name.lexeme;
+                const char* member_name = target_node->as.namespace_access.member_name.lexeme;
+                GraveyardValue ns_val;
+
+                if (!monolith_get(&gy->namespaces, ns_name, &ns_val)) {
+                    runtime_error(gy, target_node->line, "Cannot assign to variable in undefined namespace '%s'", ns_name);
+                    dec_ref(value_to_assign);
+                    return create_null_value();
+                }
+
+                Environment* ns_env = ns_val.as.environment;
+
+                if (!environment_assign(ns_env, member_name, value_to_assign)) {
+                    runtime_error(gy, target_node->line, "Variable '%s' is not defined in namespace '%s'", member_name, ns_name);
+                    dec_ref(value_to_assign);
+                    return create_null_value();
+                }
+                
                 return value_to_assign;
             }
 
