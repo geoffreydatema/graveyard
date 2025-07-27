@@ -685,22 +685,49 @@ static char* extract_graveyard_code(const char* file_content) {
     int brace_depth = 1;
     const char* end_ptr = NULL;
     while (*scanner != '\0') {
-        if (*scanner == '"') { scanner++; while (*scanner != '\0' && (*scanner != '"' || *(scanner - 1) == '\\')) scanner++; }
-        else if (*scanner == '\'') { scanner++; while (*scanner != '\0' && (*scanner != '\'' || *(scanner - 1) == '\\')) scanner++; }
-        else if (*scanner == '{') brace_depth++;
-        else if (*scanner == '}') {
+        if (*scanner == '/' && *(scanner + 1) == '/') {
+            scanner += 2;
+            while (*scanner != '\0' && *scanner != '\n') {
+                scanner++;
+            }
+        } else if (*scanner == '/' && *(scanner + 1) == '*') {
+            scanner += 2;
+            while (*scanner != '\0' && !(*scanner == '*' && *(scanner + 1) == '/')) {
+                scanner++;
+            }
+            if (*scanner != '\0') scanner += 2;
+        }
+        
+        else if (*scanner == '"') {
+            scanner++;
+            while (*scanner != '\0' && (*scanner != '"' || *(scanner - 1) == '\\')) {
+                scanner++;
+            }
+        } else if (*scanner == '\'') {
+            scanner++;
+            while (*scanner != '\0' && (*scanner != '\'' || *(scanner - 1) == '\\')) {
+                scanner++;
+            }
+        } 
+        
+        else if (*scanner == '{') {
+            brace_depth++;
+        } else if (*scanner == '}') {
             brace_depth--;
             if (brace_depth == 0) {
                 end_ptr = scanner;
                 break;
             }
         }
-        if (*scanner != '\0') scanner++;
+
+        if (*scanner == '\0') break;
+        scanner++;
     }
     if (end_ptr == NULL) return NULL;
 
     size_t len = end_ptr - start_ptr;
     char* code = malloc(len + 1);
+    if (!code) return NULL;
     strncpy(code, start_ptr, len);
     code[len] = '\0';
     return code;
