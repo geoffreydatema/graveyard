@@ -169,7 +169,8 @@ typedef enum {
     AST_EVAL_EXPRESSION,
     AST_EXISTS_EXPRESSION,
     AST_LISTDIR_EXPRESSION,
-    AST_TRY_EXCEPT_STATEMENT
+    AST_TRY_EXCEPT_STATEMENT,
+    AST_LOCAL_DECLARATION
 } AstNodeType;
 
 typedef struct {
@@ -437,6 +438,9 @@ typedef struct {
     AstNode* finally_block;
 } AstNodeTryExceptStatement;
 
+typedef struct {
+    Token name;
+} AstNodeLocalDeclaration;
 
 struct AstNode {
     AstNodeType type;
@@ -489,6 +493,7 @@ struct AstNode {
         AstNodeExistsExpression      exists_expression;
         AstNodeListdirExpression     listdir_expression;
         AstNodeTryExceptStatement    try_except_statement;
+        AstNodeLocalDeclaration      local_declaration;
     } as;
 };
 
@@ -1405,6 +1410,7 @@ void free_ast(AstNode* node) {
             }
             free_ast(node->as.try_except_statement.finally_block);
             break;
+        case AST_LOCAL_DECLARATION:
         case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
@@ -2443,6 +2449,19 @@ static AstNode* parse_statement(Parser* parser) {
     if (peek(parser)->type == TYPE && parser->tokens[parser->current + 1].type == LEFTBRACE) {
         return parse_type_declaration(parser);
     }
+    if (peek(parser)->type == PERIOD && 
+        parser->tokens[parser->current + 1].type == IDENTIFIER &&
+        parser->tokens[parser->current + 2].type == SEMICOLON) {
+        
+        consume(parser);
+        Token name = *consume(parser);
+        
+        AstNode* node = create_node(parser, AST_LOCAL_DECLARATION);
+        node->line = name.line;
+        node->as.local_declaration.name = name;
+        
+        return node;
+    }
     if (peek(parser)->type == NAMESPACE &&
         parser->tokens[parser->current + 1].type == IDENTIFIER &&
         parser->tokens[parser->current + 2].type == LEFTBRACE) {
@@ -3153,6 +3172,12 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_LOCAL_DECLARATION: {
+            fprintf(file, "(LOCAL_DECLARATION name=\"");
+            write_escaped_string(file, node->as.local_declaration.name.lexeme);
+            fprintf(file, "\" line=%d)\n", node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -3329,6 +3354,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "EXISTS_EXPRESSION") == 0) return AST_EXISTS_EXPRESSION;
     if (strcmp(type_str, "LISTDIR_EXPRESSION") == 0) return AST_LISTDIR_EXPRESSION;
     if (strcmp(type_str, "TRY_EXCEPT_STATEMENT") == 0) return AST_TRY_EXCEPT_STATEMENT;
+    if (strcmp(type_str, "LOCAL_DECLARATION") == 0) return AST_LOCAL_DECLARATION;
     return AST_UNKNOWN;
 }
 
@@ -3995,6 +4021,12 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
                 
                 (*current_line_idx)++;
             }
+            break;
+        }
+
+        case AST_LOCAL_DECLARATION: {
+            get_attribute_string(line, "name=", node->as.local_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.local_declaration.name.type = IDENTIFIER;
             break;
         }
 
@@ -6815,6 +6847,12 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 execute_node(gy, node->as.try_except_statement.finally_block);
             }
 
+            return create_null_value();
+        }
+
+        case AST_LOCAL_DECLARATION: {
+            const char* name = node->as.local_declaration.name.lexeme;
+            environment_define(gy->environment, name, create_null_value());
             return create_null_value();
         }
     }
