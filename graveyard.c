@@ -170,7 +170,7 @@ typedef enum {
     AST_EXISTS_EXPRESSION,
     AST_LISTDIR_EXPRESSION,
     AST_TRY_EXCEPT_STATEMENT,
-    AST_LOCAL_DECLARATION
+    AST_VAR_DECLARATION
 } AstNodeType;
 
 typedef struct {
@@ -440,7 +440,8 @@ typedef struct {
 
 typedef struct {
     Token name;
-} AstNodeLocalDeclaration;
+    AstNode* initializer;
+} AstNodeVarDeclaration;
 
 struct AstNode {
     AstNodeType type;
@@ -493,7 +494,7 @@ struct AstNode {
         AstNodeExistsExpression      exists_expression;
         AstNodeListdirExpression     listdir_expression;
         AstNodeTryExceptStatement    try_except_statement;
-        AstNodeLocalDeclaration      local_declaration;
+        AstNodeVarDeclaration        var_declaration;
     } as;
 };
 
@@ -1410,7 +1411,9 @@ void free_ast(AstNode* node) {
             }
             free_ast(node->as.try_except_statement.finally_block);
             break;
-        case AST_LOCAL_DECLARATION:
+        case AST_VAR_DECLARATION:
+            free_ast(node->as.var_declaration.initializer);
+            break;
         case AST_ARGV_EXPRESSION:
         case AST_STATIC_ACCESS:
         case AST_GLOBAL_ACCESS:
@@ -2439,6 +2442,30 @@ static AstNode* parse_try_except_statement(Parser* parser) {
 }
 
 static AstNode* parse_statement(Parser* parser) {
+    if (peek(parser)->type == WHILE) {
+        if (parser->tokens[parser->current + 1].type == IDENTIFIER &&
+           (parser->tokens[parser->current + 2].type == SEMICOLON ||
+            parser->tokens[parser->current + 2].type == ASSIGNMENT)) {
+            
+            consume(parser);
+            Token name = *consume(parser);
+            
+            AstNode* initializer = NULL;
+            if (match(parser, ASSIGNMENT)) {
+                initializer = parse_expression(parser, 1);
+            }
+            
+            AstNode* node = create_node(parser, AST_VAR_DECLARATION);
+            node->line = name.line;
+            node->as.var_declaration.name = name;
+            node->as.var_declaration.initializer = initializer;
+            return node;
+        } else {
+            consume(parser);
+            return parse_while_statement(parser);
+        }
+    }
+
     if (match(parser, WAIT))      return parse_wait_statement(parser);
     if (match(parser, RAISE))     return parse_raise_statement(parser);
     if (match(parser, WHILE))     return parse_while_statement(parser);
@@ -2446,22 +2473,11 @@ static AstNode* parse_statement(Parser* parser) {
     if (match(parser, CARET))     return parse_continue_statement(parser);
     if (match(parser, RETURN))    return parse_return_statement(parser);
     if (match(parser, PRINT))     return parse_print_statement(parser);
+
     if (peek(parser)->type == TYPE && parser->tokens[parser->current + 1].type == LEFTBRACE) {
         return parse_type_declaration(parser);
     }
-    if (peek(parser)->type == PERIOD && 
-        parser->tokens[parser->current + 1].type == IDENTIFIER &&
-        parser->tokens[parser->current + 2].type == SEMICOLON) {
-        
-        consume(parser);
-        Token name = *consume(parser);
-        
-        AstNode* node = create_node(parser, AST_LOCAL_DECLARATION);
-        node->line = name.line;
-        node->as.local_declaration.name = name;
-        
-        return node;
-    }
+    
     if (peek(parser)->type == NAMESPACE &&
         parser->tokens[parser->current + 1].type == IDENTIFIER &&
         parser->tokens[parser->current + 2].type == LEFTBRACE) {
@@ -3172,10 +3188,17 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
-        case AST_LOCAL_DECLARATION: {
-            fprintf(file, "(LOCAL_DECLARATION name=\"");
-            write_escaped_string(file, node->as.local_declaration.name.lexeme);
-            fprintf(file, "\" line=%d)\n", node->line);
+        case AST_VAR_DECLARATION: {
+            fprintf(file, "(VAR_DECLARATION name=\"");
+            write_escaped_string(file, node->as.var_declaration.name.lexeme);
+            fprintf(file, "\" line=%d\n", node->line);
+
+            if (node->as.var_declaration.initializer != NULL) {
+                write_ast_node(file, node->as.var_declaration.initializer, indent + 1);
+            }
+            
+            for (int i = 0; i < indent; ++i) { fprintf(file, "  "); }
+            fprintf(file, ")\n");
             break;
         }
         default:
@@ -3354,7 +3377,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "EXISTS_EXPRESSION") == 0) return AST_EXISTS_EXPRESSION;
     if (strcmp(type_str, "LISTDIR_EXPRESSION") == 0) return AST_LISTDIR_EXPRESSION;
     if (strcmp(type_str, "TRY_EXCEPT_STATEMENT") == 0) return AST_TRY_EXCEPT_STATEMENT;
-    if (strcmp(type_str, "LOCAL_DECLARATION") == 0) return AST_LOCAL_DECLARATION;
+    if (strcmp(type_str, "VAR_DECLARATION") == 0) return AST_VAR_DECLARATION;
     return AST_UNKNOWN;
 }
 
@@ -4024,9 +4047,15 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
-        case AST_LOCAL_DECLARATION: {
-            get_attribute_string(line, "name=", node->as.local_declaration.name.lexeme, MAX_LEXEME_LEN);
-            node->as.local_declaration.name.type = IDENTIFIER;
+        case AST_VAR_DECLARATION: {
+            get_attribute_string(line, "name=", node->as.var_declaration.name.lexeme, MAX_LEXEME_LEN);
+            node->as.var_declaration.name.type = IDENTIFIER;
+            
+            if (*current_line_idx < lines->count && get_indent_level(lines->lines[*current_line_idx]) > expected_indent) {
+                node->as.var_declaration.initializer = parse_node_recursive(lines, current_line_idx, expected_indent + 1, parser);
+            } else {
+                node->as.var_declaration.initializer = NULL;
+            }
             break;
         }
 
@@ -4079,6 +4108,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
         case AST_EXISTS_EXPRESSION:
         case AST_LISTDIR_EXPRESSION:
         case AST_TRY_EXCEPT_STATEMENT:
+        case AST_VAR_DECLARATION:
             is_block_node = true;
             break;
         default: break;
@@ -6850,9 +6880,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             return create_null_value();
         }
 
-        case AST_LOCAL_DECLARATION: {
-            const char* name = node->as.local_declaration.name.lexeme;
-            environment_define(gy->environment, name, create_null_value());
+        case AST_VAR_DECLARATION: {
+            const char* name = node->as.var_declaration.name.lexeme;
+            GraveyardValue value = create_null_value();
+
+            if (node->as.var_declaration.initializer != NULL) {
+                dec_ref(value);
+                value = execute_node(gy, node->as.var_declaration.initializer);
+            }
+            
+            environment_define(gy->environment, name, value);
+            dec_ref(value);
+
             return create_null_value();
         }
     }
