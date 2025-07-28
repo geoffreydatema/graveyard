@@ -4543,12 +4543,10 @@ static void hashtable_set(GraveyardHashtable* ht, GraveyardValue key, GraveyardV
         ht->count++;
         inc_ref(key);
         entry->key = key;
-        // FIX: The value's ref count was not being incremented for new keys.
         inc_ref(value);
     } else {
-        // This is an overwrite.
-        dec_ref(entry->value); // Decrement the OLD value.
-        inc_ref(value);        // Increment the NEW value.
+        dec_ref(entry->value);
+        inc_ref(value);
     }
     
     entry->value = value;
@@ -6330,45 +6328,60 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
         case AST_TYPE_DECLARATION: {
             Environment* type_definition_env = gy->environment;
-
             char type_name_buffer[MAX_LEXEME_LEN];
             const char* lexeme = node->as.type_declaration.name.lexeme;
             size_t len = strlen(lexeme);
+
             if (len > 2) {
                 size_t type_name_len = len - 2;
                 strncpy(type_name_buffer, lexeme + 1, type_name_len);
                 type_name_buffer[type_name_len] = '\0';
-            } else { type_name_buffer[0] = '\0'; }
+            } else { 
+                type_name_buffer[0] = '\0'; 
+            }
             
             GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
             environment_define(gy->environment, type_name_buffer, type_val);
 
-            Environment* temp_body_env = environment_new(gy->environment);
-            execute_block(gy, node->as.type_declaration.body, temp_body_env);
-            
             GraveyardType* type = type_val.as.type;
-            for (int i = 0; i < temp_body_env->values.capacity; i++) {
-                MonolithEntry* entry = &temp_body_env->values.entries[i];
-                if (entry->key == NULL) continue;
+            AstNode* body_node = node->as.type_declaration.body;
 
-                if (entry->value.type == VAL_FUNCTION) {
-                    monolith_set(&type->methods, entry->key, entry->value);
-                } else {
-                    monolith_set(&type->fields, entry->key, entry->value);
+            for (size_t i = 0; i < body_node->as.block.count; i++) {
+                AstNode* stmt = body_node->as.block.statements[i];
+                
+                if (stmt->type == AST_EXPRESSION_STATEMENT && stmt->as.expression_statement.expression->type == AST_ASSIGNMENT) {
+                    AstNode* assignment = stmt->as.expression_statement.expression;
+                    AstNode* target = assignment->as.assignment.left;
+
+                    if (target->type == AST_IDENTIFIER) {
+                        const char* field_name = target->as.identifier.name.lexeme;
+                        
+                        Environment* initializer_env = environment_new(gy->environment);
+                        
+                        inc_ref(type_val); 
+                        monolith_set(&initializer_env->values, "this", type_val);
+
+                        Environment* old_env = gy->environment;
+                        gy->environment = initializer_env;
+                        GraveyardValue value = execute_node(gy, assignment->as.assignment.value);
+                        gy->environment = old_env;
+
+                        monolith_free(&initializer_env->values);
+                        free(initializer_env);
+
+                        monolith_set(&type->fields, field_name, value);
+                        dec_ref(value);
+                    }
+                } 
+                else if (stmt->type == AST_FUNCTION_DECLARATION) {
+                    GraveyardValue function = create_function_value(gy, stmt);
+                    function.as.function->closure = type_definition_env;
+                    monolith_set(&type->methods, stmt->as.function_declaration.name.lexeme, function);
+                    dec_ref(function);
                 }
             }
             
-            for (int i = 0; i < type->methods.capacity; i++) {
-                MonolithEntry* entry = &type->methods.entries[i];
-                if (entry->key != NULL) {
-                    GraveyardFunction* func = entry->value.as.function;
-                    func->closure = type_definition_env;
-                }
-            }
-            
-            monolith_free(&temp_body_env->values);
-            free(temp_body_env);
-
+            dec_ref(type_val);
             return type_val;
         }
 
@@ -6384,37 +6397,51 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_MEMBER_ACCESS: {
             GraveyardValue object = execute_node(gy, node->as.member_access.object);
             const char* member_name = node->as.member_access.member.lexeme;
+            GraveyardValue result = create_null_value();
 
-            if (object.type != VAL_INSTANCE) {
-                runtime_error(gy, node->line, "Can only access members on an instance of a type");
-                return create_null_value();
+            if (object.type == VAL_INSTANCE) {
+                GraveyardInstance* instance = object.as.instance;
+                GraveyardValue member_val;
+
+                if (monolith_get(&instance->fields, member_name, &member_val)) {
+                    inc_ref(member_val);
+                    result = member_val;
+                } 
+                else if (monolith_get(&instance->type->methods, member_name, &member_val)) {
+                    GraveyardValue bound_method_val;
+                    bound_method_val.type = VAL_BOUND_METHOD;
+                    GraveyardBoundMethod* bound = malloc(sizeof(GraveyardBoundMethod));
+                    
+                    bound->ref_count = 1;
+                    bound->receiver = object;
+                    bound->function = member_val;
+                    
+                    inc_ref(bound->receiver);
+                    inc_ref(bound->function);
+                    
+                    bound_method_val.as.bound_method = bound;
+                    result = bound_method_val;
+                } else {
+                    runtime_error(gy, node->line, "Member '%s' not found on instance", member_name);
+                }
+            } 
+            else if (object.type == VAL_TYPE) {
+                GraveyardType* type = object.as.type;
+                GraveyardValue field_value;
+                if (monolith_get(&type->fields, member_name, &field_value)) {
+                    inc_ref(field_value);
+                    result = field_value;
+                } else {
+                    runtime_error(gy, node->line, "Field '%s' not found or not yet defined in this type", member_name);
+                }
+            } 
+            else {
+                runtime_error(gy, node->line, "Can only access members on an instance or type");
             }
 
-            GraveyardInstance* instance = object.as.instance;
-            GraveyardValue member_val;
-
-            if (monolith_get(&instance->fields, member_name, &member_val)) {
-                return member_val;
-            }
-
-            if (monolith_get(&instance->type->methods, member_name, &member_val)) {
-                GraveyardValue bound_method_val;
-                bound_method_val.type = VAL_BOUND_METHOD;
-                GraveyardBoundMethod* bound = malloc(sizeof(GraveyardBoundMethod));
-                
-                bound->ref_count = 1;
-                bound->receiver = object;
-                bound->function = member_val;
-                
-                inc_ref(bound->receiver);
-                inc_ref(bound->function);
-                
-                bound_method_val.as.bound_method = bound;
-                return bound_method_val;
-            }
-
-            runtime_error(gy, node->line, "Member '%s' not found on instance", member_name);
-            return create_null_value();
+            dec_ref(object);
+            
+            return result;
         }
 
         case AST_EXECUTE_EXPRESSION: {
