@@ -3201,6 +3201,10 @@ static void write_ast_node(FILE* file, AstNode* node, int indent) {
             fprintf(file, ")\n");
             break;
         }
+        case AST_ARGV_EXPRESSION: {
+            fprintf(file, "(ARGV_EXPRESSION line=%d)\n", node->line);
+            break;
+        }
         default:
              fprintf(file, "(UNKNOWN_NODE type=%d line=%d)\n", node->type, node->line);
              break;
@@ -3378,6 +3382,7 @@ static AstNodeType get_node_type_from_string(const char* type_str) {
     if (strcmp(type_str, "LISTDIR_EXPRESSION") == 0) return AST_LISTDIR_EXPRESSION;
     if (strcmp(type_str, "TRY_EXCEPT_STATEMENT") == 0) return AST_TRY_EXCEPT_STATEMENT;
     if (strcmp(type_str, "VAR_DECLARATION") == 0) return AST_VAR_DECLARATION;
+    if (strcmp(type_str, "ARGV_EXPRESSION") == 0) return AST_ARGV_EXPRESSION;
     return AST_UNKNOWN;
 }
 
@@ -4059,6 +4064,7 @@ static AstNode* parse_node_recursive(Lines* lines, int* current_line_idx, int ex
             break;
         }
 
+        case AST_ARGV_EXPRESSION:
         case AST_RANDOM_EXPRESSION:
         case AST_CAT_CONSTANT_EXPRESSION:
         case AST_THIS_EXPRESSION:
@@ -6732,6 +6738,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_ARGV_EXPRESSION: {
+            inc_ref(gy->arguments);
             return gy->arguments;
         }
 
