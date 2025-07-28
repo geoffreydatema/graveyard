@@ -6329,28 +6329,26 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         }
 
         case AST_TYPE_DECLARATION: {
+            Environment* type_definition_env = gy->environment;
+
             char type_name_buffer[MAX_LEXEME_LEN];
             const char* lexeme = node->as.type_declaration.name.lexeme;
             size_t len = strlen(lexeme);
-            
             if (len > 2) {
                 size_t type_name_len = len - 2;
                 strncpy(type_name_buffer, lexeme + 1, type_name_len);
                 type_name_buffer[type_name_len] = '\0';
-            } else {
-                type_name_buffer[0] = '\0';
-            }
-
-            GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
+            } else { type_name_buffer[0] = '\0'; }
             
+            GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
             environment_define(gy->environment, type_name_buffer, type_val);
 
-            Environment* type_env = environment_new(gy->environment);
-            execute_block(gy, node->as.type_declaration.body, type_env);
+            Environment* temp_body_env = environment_new(gy->environment);
+            execute_block(gy, node->as.type_declaration.body, temp_body_env);
             
             GraveyardType* type = type_val.as.type;
-            for (int i = 0; i < type_env->values.capacity; i++) {
-                MonolithEntry* entry = &type_env->values.entries[i];
+            for (int i = 0; i < temp_body_env->values.capacity; i++) {
+                MonolithEntry* entry = &temp_body_env->values.entries[i];
                 if (entry->key == NULL) continue;
 
                 if (entry->value.type == VAL_FUNCTION) {
@@ -6359,8 +6357,17 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     monolith_set(&type->fields, entry->key, entry->value);
                 }
             }
-            monolith_free(&type_env->values);
-            free(type_env);
+            
+            for (int i = 0; i < type->methods.capacity; i++) {
+                MonolithEntry* entry = &type->methods.entries[i];
+                if (entry->key != NULL) {
+                    GraveyardFunction* func = entry->value.as.function;
+                    func->closure = type_definition_env;
+                }
+            }
+            
+            monolith_free(&temp_body_env->values);
+            free(temp_body_env);
 
             return type_val;
         }
