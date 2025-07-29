@@ -56,7 +56,7 @@ typedef enum {
     DECREMENT,
     EQUALITY,
     INEQUALITY,
-    GREATERTHAN,
+    RIGHTANGLEBRACKET,
     LEFTANGLEBRACKET,
     GREATERTHANEQUAL,
     LESSTHANEQUAL,
@@ -75,18 +75,18 @@ typedef enum {
     QUESTIONMARK,
     COMMA,
     COLON,
-    WHILE,
+    TILDE,
     CARET,
     BACKTICK,
     AT,
-    NULLCOALESCE,
+    DOUBLEQUESTION,
     PERIOD,
     NAMESPACE,
     REFERENCE,
     PRINT,
     SCAN,
-    FILEREAD,
-    FILEWRITE,
+    FILEIN,
+    FILEOUT,
     RAISE,
     CASTBOOLEAN,
     CASTINTEGER,
@@ -883,8 +883,8 @@ GraveyardTokenType identify_three_char_token(char c1, char c2, char c3) {
     if (c1 == '*' && c2 == '*' && c3 == '=') return EXPONENTIATIONASSIGNMENT;
     if (c1 == '!' && c2 == '|' && c3 == '|') return XOR;
     if (c1 == '!' && c2 == '>' && c3 == '>') return RAISE;
-    if (c1 == ':' && c2 == '<' && c3 == '<') return FILEREAD;
-    if (c1 == ':' && c2 == '>' && c3 == '>') return FILEWRITE;
+    if (c1 == ':' && c2 == '<' && c3 == '<') return FILEIN;
+    if (c1 == ':' && c2 == '>' && c3 == '>') return FILEOUT;
     if (c1 == '/' && c2 == '%' && c3 == '=') return MODULOASSIGNMENT;
     if (c1 == '^' && c2 == '_' && c3 == '^') return CATCONSTANT;
     return UNKNOWN;
@@ -917,7 +917,7 @@ GraveyardTokenType identify_two_char_token(char c1, char c2) {
     if (c1 == '@' && c2 == '@') return TYPEOF;
     if (c1 == '/' && c2 == '%') return MODULO;
     if (c1 == ':' && c2 == '@') return TIME;
-    if (c1 == '?' && c2 == '?') return NULLCOALESCE;
+    if (c1 == '?' && c2 == '?') return DOUBLEQUESTION;
     if (c1 == ':' && c2 == '~') return WAIT;
     if (c1 == ':' && c2 == '?') return RANDOM;
     if (c1 == '!' && c2 == '!') return EXECUTE;
@@ -934,7 +934,7 @@ GraveyardTokenType identify_single_char_token(char c) {
         case '/': return FORWARDSLASH;
         case '(': return LEFTPARENTHESES;
         case ')': return RIGHTPARENTHESES;
-        case '>': return GREATERTHAN;
+        case '>': return RIGHTANGLEBRACKET;
         case '<': return LEFTANGLEBRACKET;
         case '!': return NOT;
         case ',': return COMMA;
@@ -946,7 +946,7 @@ GraveyardTokenType identify_single_char_token(char c) {
         case '&': return PARAMETER;
         case '?': return QUESTIONMARK;
         case ':': return COLON;
-        case '~': return WHILE;
+        case '~': return TILDE;
         case '^': return CARET;
         case '`': return BACKTICK;
         case '@': return AT;
@@ -1493,9 +1493,9 @@ static int get_operator_precedence(GraveyardTokenType type) {
             return 1;
         case QUESTIONMARK:
             return 2;
-        case NULLCOALESCE:
+        case DOUBLEQUESTION:
             return 3;
-        case FILEWRITE:
+        case FILEOUT:
             return 4;
         case OR:
             return 5;
@@ -1507,7 +1507,7 @@ static int get_operator_precedence(GraveyardTokenType type) {
         case INEQUALITY:
             return 8;
         case LEFTANGLEBRACKET:
-        case GREATERTHAN:
+        case RIGHTANGLEBRACKET:
         case LESSTHANEQUAL:
         case GREATERTHANEQUAL:
             return 9;
@@ -1821,7 +1821,7 @@ static AstNode* parse_execute_or_eval_expression(Parser* parser) {
 }
 
 static AstNode* parse_primary(Parser* parser) {
-    if (peek(parser)->type == FILEREAD && parser->tokens[parser->current + 1].type == AT) {
+    if (peek(parser)->type == FILEIN && parser->tokens[parser->current + 1].type == AT) {
         consume(parser);
         consume(parser);
         
@@ -1831,7 +1831,7 @@ static AstNode* parse_primary(Parser* parser) {
         return node;
     }
 
-    if (peek(parser)->type == NULLCOALESCE && parser->tokens[parser->current + 1].type == AT) {
+    if (peek(parser)->type == DOUBLEQUESTION && parser->tokens[parser->current + 1].type == AT) {
         consume(parser);
         consume(parser);
         
@@ -2442,7 +2442,7 @@ static AstNode* parse_try_except_statement(Parser* parser) {
 }
 
 static AstNode* parse_statement(Parser* parser) {
-    if (peek(parser)->type == WHILE) {
+    if (peek(parser)->type == TILDE) {
         if (parser->tokens[parser->current + 1].type == IDENTIFIER &&
            (parser->tokens[parser->current + 2].type == SEMICOLON ||
             parser->tokens[parser->current + 2].type == ASSIGNMENT)) {
@@ -2468,7 +2468,7 @@ static AstNode* parse_statement(Parser* parser) {
 
     if (match(parser, WAIT))      return parse_wait_statement(parser);
     if (match(parser, RAISE))     return parse_raise_statement(parser);
-    if (match(parser, WHILE))     return parse_while_statement(parser);
+    if (match(parser, TILDE))     return parse_while_statement(parser);
     if (match(parser, BACKTICK))  return parse_break_statement(parser);
     if (match(parser, CARET))     return parse_continue_statement(parser);
     if (match(parser, RETURN))    return parse_return_statement(parser);
@@ -2512,7 +2512,7 @@ static AstNode* parse_statement(Parser* parser) {
     if (peek(parser)->type == IDENTIFIER) {
         GraveyardTokenType next_token = parser->tokens[parser->current + 1].type;
         
-        if (next_token == FILEREAD) {
+        if (next_token == FILEIN) {
             consume(parser); consume(parser);
             return parse_fileread_statement(parser);
         }
@@ -2550,7 +2550,7 @@ static AstNode* parse_statement(Parser* parser) {
     }
 
     if (expr->type == AST_ASSIGNMENT || expr->type == AST_CALL_EXPRESSION ||
-       (expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == FILEWRITE)) {
+       (expr->type == AST_BINARY_OP && expr->as.binary_op.operator.type == FILEOUT)) {
         AstNode* stmt_node = create_node(parser, AST_EXPRESSION_STATEMENT);
         stmt_node->line = expr->line;
         stmt_node->as.expression_statement.expression = expr;
@@ -5815,7 +5815,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
         case AST_BINARY_OP: {
             GraveyardTokenType op_type = node->as.binary_op.operator.type;
 
-            if (op_type == NULLCOALESCE) {
+            if (op_type == DOUBLEQUESTION) {
                 GraveyardValue left = execute_node(gy, node->as.binary_op.left);
                 if (left.type != VAL_NULL) {
                     return left;
@@ -5838,7 +5838,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         result = entry->value;
                     }
                 }
-            } else if (op_type == FILEWRITE) {
+            } else if (op_type == FILEOUT) {
                 if (left.type != VAL_STRING) {
                     runtime_error(gy, node->line, "Content for file write operation must be a string");
                 } else if (right.type != VAL_STRING) {
@@ -5958,7 +5958,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                             if (right.as.number == 0) { runtime_error(gy, node->line, "Division by zero in modulo operation"); }
                             else { result = create_number_value(fmod(left.as.number, right.as.number)); }
                             break;
-                        case GREATERTHAN:      result = create_bool_value(left.as.number > right.as.number); break;
+                        case RIGHTANGLEBRACKET:      result = create_bool_value(left.as.number > right.as.number); break;
                         case LEFTANGLEBRACKET: result = create_bool_value(left.as.number < right.as.number); break;
                         case GREATERTHANEQUAL: result = create_bool_value(left.as.number >= right.as.number); break;
                         case LESSTHANEQUAL:    result = create_bool_value(left.as.number <= right.as.number); break;
@@ -6980,7 +6980,7 @@ const char* token_type_to_string(GraveyardTokenType type) {
         case DECREMENT: return "DECREMENT";
         case EQUALITY: return "EQUALITY";
         case INEQUALITY: return "INEQUALITY";
-        case GREATERTHAN: return "GREATERTHAN";
+        case RIGHTANGLEBRACKET: return "RIGHTANGLEBRACKET";
         case LEFTANGLEBRACKET: return "LEFTANGLEBRACKET";
         case GREATERTHANEQUAL: return "GREATERTHANEQUAL";
         case LESSTHANEQUAL: return "LESSTHANEQUAL";
@@ -6999,18 +6999,18 @@ const char* token_type_to_string(GraveyardTokenType type) {
         case QUESTIONMARK: return "QUESTIONMARK";
         case COMMA: return "COMMA";
         case COLON: return "COLON";
-        case WHILE: return "WHILE";
+        case TILDE: return "TILDE";
         case CARET: return "CARET";
         case BACKTICK: return "BACKTICK";
         case AT: return "AT";
-        case NULLCOALESCE: return "NULLCOALESCE";
+        case DOUBLEQUESTION: return "DOUBLEQUESTION";
         case PERIOD: return "PERIOD";
         case NAMESPACE: return "NAMESPACE";
         case REFERENCE: return "REFERENCE";
         case PRINT: return "PRINT";
         case SCAN: return "SCAN";
-        case FILEREAD: return "FILEREAD";
-        case FILEWRITE: return "FILEWRITE";
+        case FILEIN: return "FILEIN";
+        case FILEOUT: return "FILEOUT";
         case RAISE: return "RAISE";
         case CASTBOOLEAN: return "CASTBOOLEAN";
         case CASTINTEGER: return "CASTINTEGER";
