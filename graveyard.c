@@ -585,14 +585,14 @@ struct GraveyardFunction {
     int ref_count;
     int arity;
     Environment* closure;
-    GraveyardString* name;
+    GraveyardValue name;
     AstNode* body;
     Token* params;
 };
 
 struct GraveyardType {
     int ref_count;
-    GraveyardString* name;
+    GraveyardValue name;
     Monolith fields;
     Monolith methods;
 };
@@ -4199,55 +4199,6 @@ const char* value_type_name(ValueType type) {
     }
 }
 
-// static void inc_ref(GraveyardValue value) {
-//     switch (value.type) {
-//         case VAL_STRING:
-//             if (value.as.string) {
-//                 value.as.string->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "String", (void*)value.as.string, value.as.string->ref_count);
-//             }
-//             break;
-//         case VAL_ARRAY:
-//             if (value.as.array) {
-//                 value.as.array->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Array", (void*)value.as.array, value.as.array->ref_count);
-//             }
-//             break;
-//         case VAL_HASHTABLE:
-//             if (value.as.hashtable) {
-//                 value.as.hashtable->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Hashtable", (void*)value.as.hashtable, value.as.hashtable->ref_count);
-//             }
-//             break;
-//         case VAL_FUNCTION:
-//             if (value.as.function) {
-//                 value.as.function->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Function", (void*)value.as.function, value.as.function->ref_count);
-//             }
-//             break;
-//         case VAL_TYPE:
-//             if (value.as.type) {
-//                 value.as.type->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Type", (void*)value.as.type, value.as.type->ref_count);
-//             }
-//             break;
-//         case VAL_INSTANCE:
-//             if (value.as.instance) {
-//                 value.as.instance->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "Instance", (void*)value.as.instance, value.as.instance->ref_count);
-//             }
-//             break;
-//         case VAL_BOUND_METHOD:
-//             if (value.as.bound_method) {
-//                 value.as.bound_method->ref_count++;
-//                 printf("INC_REF: %-12s at %p, count is now %d\n", "BoundMethod", (void*)value.as.bound_method, value.as.bound_method->ref_count);
-//             }
-//             break;
-//         default:
-//             break;
-//     }
-// }
-
 static void inc_ref(GraveyardValue value) {
     switch (value.type) {
         case VAL_STRING:     if (value.as.string) value.as.string->ref_count++;         break;
@@ -4305,15 +4256,13 @@ static void free_value(GraveyardValue value) {
         }
         case VAL_FUNCTION: {
             GraveyardFunction* func = value.as.function;
-            free(func->name->chars);
-            free(func->name);
+            dec_ref(func->name);
             free(func);
             break;
         }
         case VAL_TYPE: {
             GraveyardType* type = value.as.type;
-            free(type->name->chars);
-            free(type->name);
+            dec_ref(type->name);
             monolith_free(&type->fields);
             monolith_free(&type->methods);
             free(type);
@@ -4365,90 +4314,6 @@ static void dec_ref(GraveyardValue value) {
             break;
     }
 }
-
-// static void dec_ref(GraveyardValue value) {
-//     switch (value.type) {
-//         case VAL_STRING:
-//             if (value.as.string) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "String", (void*)value.as.string, value.as.string->ref_count);
-//                 if (--value.as.string->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.string->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_ARRAY:
-//             if (value.as.array) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "Array", (void*)value.as.array, value.as.array->ref_count);
-//                 if (--value.as.array->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.array->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_HASHTABLE:
-//             if (value.as.hashtable) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "Hashtable", (void*)value.as.hashtable, value.as.hashtable->ref_count);
-//                 if (--value.as.hashtable->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.hashtable->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_FUNCTION:
-//             if (value.as.function) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "Function", (void*)value.as.function, value.as.function->ref_count);
-//                 if (--value.as.function->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.function->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_TYPE:
-//             if (value.as.type) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "Type", (void*)value.as.type, value.as.type->ref_count);
-//                 if (--value.as.type->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.type->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_INSTANCE:
-//             if (value.as.instance) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "Instance", (void*)value.as.instance, value.as.instance->ref_count);
-//                 if (--value.as.instance->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.instance->ref_count);
-//                 }
-//             }
-//             break;
-//         case VAL_BOUND_METHOD:
-//             if (value.as.bound_method) {
-//                 printf("DEC_REF: %-12s at %p, count was %d", "BoundMethod", (void*)value.as.bound_method, value.as.bound_method->ref_count);
-//                 if (--value.as.bound_method->ref_count == 0) {
-//                     printf(", is now 0\n");
-//                     free_value(value);
-//                 } else {
-//                     printf(", is now %d\n", value.as.bound_method->ref_count);
-//                 }
-//             }
-//             break;
-//         default:
-//             break;
-//     }
-// }
 
 static void runtime_error(Graveyard* gy, int line, const char* format, ...) {
     va_list args;
@@ -4650,6 +4515,22 @@ static GraveyardValue create_null_value() {
     return val;
 }
 
+static GraveyardValue create_string_value(const char* chars) {
+    GraveyardValue val;
+    val.type = VAL_STRING;
+
+    size_t length = strlen(chars);
+    GraveyardString* string_obj = malloc(sizeof(GraveyardString));
+    string_obj->chars = malloc(length + 1);
+    memcpy(string_obj->chars, chars, length);
+    string_obj->chars[length] = '\0';
+    string_obj->length = length;
+    string_obj->ref_count = 1;
+
+    val.as.string = string_obj;
+    return val;
+}
+
 static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
     GraveyardValue val;
     val.type = VAL_FUNCTION;
@@ -4662,13 +4543,7 @@ static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
     
     func->closure = gy->environment;
 
-    size_t len = strlen(node->as.function_declaration.name.lexeme);
-    GraveyardString* name_str = malloc(sizeof(GraveyardString));
-    name_str->chars = malloc(len + 1);
-    memcpy(name_str->chars, node->as.function_declaration.name.lexeme, len + 1);
-    name_str->length = len;
-    name_str->ref_count = 0;
-    func->name = name_str;
+    func->name = create_string_value(node->as.function_declaration.name.lexeme);
 
     val.as.function = func;
     return val;
@@ -4795,7 +4670,7 @@ bool monolith_get(Monolith* monolith, const char* key, GraveyardValue* out_value
     return true;
 }
 
-static GraveyardValue create_type_value(GraveyardString* name) {
+static GraveyardValue create_type_value(GraveyardValue name) {
     GraveyardValue val;
     val.type = VAL_TYPE;
     GraveyardType* type = malloc(sizeof(GraveyardType));
@@ -4872,22 +4747,6 @@ static GraveyardValue create_number_value(double value) {
     return val;
 }
 
-static GraveyardValue create_string_value(const char* chars) {
-    GraveyardValue val;
-    val.type = VAL_STRING;
-
-    size_t length = strlen(chars);
-    GraveyardString* string_obj = malloc(sizeof(GraveyardString));
-    string_obj->chars = malloc(length + 1);
-    memcpy(string_obj->chars, chars, length);
-    string_obj->chars[length] = '\0';
-    string_obj->length = length;
-    string_obj->ref_count = 1;
-
-    val.as.string = string_obj;
-    return val;
-}
-
 static GraveyardValue create_array_value() {
     GraveyardValue val;
     val.type = VAL_ARRAY;
@@ -4919,7 +4778,7 @@ static void value_to_string(GraveyardValue value, char* buffer, size_t buffer_si
             snprintf(buffer, buffer_size, "\"%s\"", value.as.string->chars);
             break;
         case VAL_FUNCTION:
-            snprintf(buffer, buffer_size, "%s", value.as.function->name->chars);
+            snprintf(buffer, buffer_size, "%s", value.as.function->name.as.string->chars);
             break;
 
         case VAL_ARRAY: {
@@ -5080,22 +4939,22 @@ void print_value(GraveyardValue value) {
             printf("}");
             break;
         case VAL_TYPE:
-            printf("<type: %s>", value.as.type->name->chars);
+            printf("<type: %s>", value.as.type->name.as.string->chars);
             break;
         case VAL_INSTANCE:
-            printf("<instance of %s> {\n", value.as.instance->type->name->chars);
+            printf("<instance of %s> {\n", value.as.instance->type->name.as.string->chars);
             monolith_print(&value.as.instance->fields, 2);
             printf("  }");
             break;
         case VAL_FUNCTION:
-            printf("<function: %s>", value.as.function->name->chars);
+            printf("<function: %s>", value.as.function->name.as.string->chars);
             break;
         case VAL_BOUND_METHOD:
-            printf("<method: %s bound to instance>", value.as.bound_method->function.as.function->name->chars);
+            printf("<method: %s bound to instance>", value.as.bound_method->function.as.function->name.as.string->chars);
             break;
         case VAL_ENVIRONMENT:
-             printf("<namespace>");
-             break;
+            printf("<namespace>");
+            break;
     }
 }
 
@@ -5603,7 +5462,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         case VAL_FUNCTION:
                         case VAL_BOUND_METHOD: result = create_string_value("function"); break;
                         case VAL_TYPE:         result = create_string_value("type"); break;
-                        case VAL_INSTANCE:     result = create_string_value(right.as.instance->type->name->chars); break;
+                        case VAL_INSTANCE:     result = create_string_value(right.as.instance->type->name.as.string->chars); break;
                         case VAL_NUMBER:
                             if (fmod(right.as.number, 1.0) == 0) {
                                 result = create_string_value("integer");
@@ -6420,7 +6279,9 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 type_name_buffer[0] = '\0'; 
             }
             
-            GraveyardValue type_val = create_type_value(create_string_value(type_name_buffer).as.string);
+            GraveyardValue name_val = create_string_value(type_name_buffer);
+            GraveyardValue type_val = create_type_value(name_val);
+
             environment_define(gy->environment, type_name_buffer, type_val);
 
             GraveyardType* type = type_val.as.type;
