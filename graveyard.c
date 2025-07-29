@@ -4551,20 +4551,23 @@ static GraveyardValue create_function_value(Graveyard* gy, AstNode* node) {
 
 static GraveyardValue execute_node(Graveyard* gy, AstNode* node);
 
-static bool calculate_slice_bounds(long length, AstNode* start_expr, AstNode* stop_expr, AstNode* step_expr,
-                                   long* out_start, long* out_stop, long* out_step, Graveyard* gy) {
+static bool calculate_slice_bounds(long length, AstNode* start_expr, AstNode* stop_expr, AstNode* step_expr, long* out_start, long* out_stop, long* out_step, Graveyard* gy) {
 
     *out_step = 1;
     if (step_expr) {
         GraveyardValue step_val = execute_node(gy, step_expr);
         if (step_val.type != VAL_NUMBER) {
+            dec_ref(step_val);
             return false; 
         }
         *out_step = (long)step_val.as.number;
+        dec_ref(step_val);
     }
+
     if (*out_step == 0) {
         return false;
     }
+
     *out_start = (*out_step > 0) ? 0 : length - 1;
     if (start_expr) {
         GraveyardValue start_val = execute_node(gy, start_expr);
@@ -4572,6 +4575,7 @@ static bool calculate_slice_bounds(long length, AstNode* start_expr, AstNode* st
             *out_start = (long)start_val.as.number;
             if (*out_start < 0) *out_start += length;
         }
+        dec_ref(start_val);
     }
 
     *out_stop = (*out_step > 0) ? length : -1;
@@ -4581,12 +4585,13 @@ static bool calculate_slice_bounds(long length, AstNode* start_expr, AstNode* st
             *out_stop = (long)stop_val.as.number;
             if (*out_stop < 0) *out_stop += length;
         }
+        dec_ref(stop_val);
     }
 
     if (*out_start < 0) *out_start = 0;
     if (*out_start > length) *out_start = length;
     if (*out_stop > length) *out_stop = length;
-
+    
     return true;
 }
 
@@ -5131,6 +5136,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 const char* var_name = node->as.scan_statement.variable.lexeme;
 
                 environment_define(gy->environment, var_name, input_val);
+                dec_ref(input_val);
             }
             return create_null_value();
         }
@@ -5432,6 +5438,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
             }
 
+            dec_ref(left);
             return execute_node(gy, node->as.logical_op.right);
         }
 
@@ -5962,7 +5969,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 gy->is_returning = false;
                 gy->return_value = create_null_value(); 
             }
-
+            
+            dec_ref(callee);
             return result;
         }
 
