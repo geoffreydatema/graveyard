@@ -2019,6 +2019,13 @@ static AstNode* parse_postfix(Parser* parser) {
 
             if (is_slice) {
                 AstNode* slice_node = create_node(parser, AST_SLICE_EXPRESSION);
+                if (!slice_node) {
+                    free_ast(expr);
+                    free_ast(start_expr);
+                    free_ast(stop_expr);
+                    free_ast(step_expr);
+                    return NULL;
+                }
                 slice_node->line = expr->line;
                 slice_node->as.slice_expression.collection = expr;
                 slice_node->as.slice_expression.start_expr = start_expr;
@@ -2027,6 +2034,11 @@ static AstNode* parse_postfix(Parser* parser) {
                 expr = slice_node;
             } else {
                 AstNode* subscript_node = create_node(parser, AST_SUBSCRIPT);
+                if (!subscript_node) {
+                    free_ast(expr);
+                    free_ast(start_expr);
+                    return NULL;
+                }
                 subscript_node->line = expr->line;
                 subscript_node->as.subscript.array = expr;
                 subscript_node->as.subscript.index = start_expr;
