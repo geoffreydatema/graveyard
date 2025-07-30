@@ -844,6 +844,9 @@ char* run_preprocessor(const char* initial_source) {
     }
 
     Preprocessor pp;
+    pp.included_files.items = NULL;
+    pp.output_buffer = NULL;
+
     pp.included_files.count = 0;
     pp.included_files.capacity = 8;
     pp.included_files.items = malloc(pp.included_files.capacity * sizeof(char*));
@@ -2226,6 +2229,7 @@ static AstNode* parse_print_statement(Parser* parser) {
             if (!new_expressions) {
                 perror("AST print expressions realloc failed");
                 parser->had_error = true;
+                free_ast(node);
                 return NULL;
             }
             node->as.print_stmt.expressions = new_expressions;
@@ -2287,14 +2291,26 @@ static GraveyardTokenType get_base_operator(GraveyardTokenType compound_type) {
 static AstNode* parse_compound_assignment(Parser* parser) {
     Token identifier = *consume(parser);
     Token compound_op = *consume(parser);
+
     AstNode* right_side = parse_expression(parser, 1);
-    if (!right_side) return NULL;
+    if (!right_side) {
+        return NULL;
+    }
 
     AstNode* left_side = create_node(parser, AST_IDENTIFIER);
+    if (!left_side) {
+        free_ast(right_side);
+        return NULL;
+    }
     left_side->line = identifier.line;
     left_side->as.identifier.name = identifier;
     
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
+    if (!binary_op_node) {
+        free_ast(left_side);
+        free_ast(right_side);
+        return NULL;
+    }
     binary_op_node->line = compound_op.line;
 
     GraveyardTokenType base_op_type = get_base_operator(compound_op.type);
@@ -2313,13 +2329,22 @@ static AstNode* parse_compound_assignment(Parser* parser) {
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
-    AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
-    assignment_node->line = identifier.line;
-
     AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
+    if (!assignment_target) {
+        free_ast(binary_op_node);
+        return NULL;
+    }
     assignment_target->line = identifier.line;
     assignment_target->as.identifier.name = identifier;
-    assignment_node->as.assignment.left = assignment_target;    
+    
+    AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
+    if (!assignment_node) {
+        free_ast(binary_op_node);
+        free_ast(assignment_target);
+        return NULL;
+    }
+    assignment_node->line = identifier.line;
+    assignment_node->as.assignment.left = assignment_target;
     assignment_node->as.assignment.value = binary_op_node;
 
     return assignment_node;
@@ -2335,30 +2360,41 @@ static AstNode* parse_inc_dec_statement(Parser* parser) {
     left_side->as.identifier.name = identifier;
 
     AstNode* right_side = create_node(parser, AST_LITERAL);
-    if (!right_side) { free_ast(left_side); return NULL; }
+    if (!right_side) {
+        free_ast(left_side);
+        return NULL;
+    }
     right_side->line = op.line;
     right_side->as.literal.value.type = NUMBER;
-    
     snprintf(right_side->as.literal.value.lexeme, MAX_LEXEME_LEN, "1");
 
     AstNode* binary_op_node = create_node(parser, AST_BINARY_OP);
-    if (!binary_op_node) { free_ast(left_side); free_ast(right_side); return NULL; }
+    if (!binary_op_node) {
+        free_ast(left_side);
+        free_ast(right_side);
+        return NULL;
+    }
     binary_op_node->line = op.line;
     binary_op_node->as.binary_op.operator.type = (op.type == INCREMENT) ? PLUS : MINUS;
-    
     snprintf(binary_op_node->as.binary_op.operator.lexeme, MAX_LEXEME_LEN, (op.type == INCREMENT) ? "+" : "-");
-    
     binary_op_node->as.binary_op.left = left_side;
     binary_op_node->as.binary_op.right = right_side;
 
-    AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
-    if (!assignment_node) { free_ast(binary_op_node); return NULL; }
-    assignment_node->line = identifier.line;
-
     AstNode* assignment_target = create_node(parser, AST_IDENTIFIER);
+    if (!assignment_target) {
+        free_ast(binary_op_node);
+        return NULL;
+    }
     assignment_target->line = identifier.line;
     assignment_target->as.identifier.name = identifier;
 
+    AstNode* assignment_node = create_node(parser, AST_ASSIGNMENT);
+    if (!assignment_node) {
+        free_ast(binary_op_node);
+        free_ast(assignment_target);
+        return NULL;
+    }
+    assignment_node->line = identifier.line;
     assignment_node->as.assignment.left = assignment_target;
     assignment_node->as.assignment.value = binary_op_node;
 
