@@ -5163,6 +5163,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue prompt = execute_node(gy, node->as.scan_statement.prompt);
             print_value(prompt);
             fflush(stdout);
+            dec_ref(prompt);
 
             char input_buffer[1024];
             if (fgets(input_buffer, sizeof(input_buffer), stdin)) {
@@ -5248,18 +5249,23 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue array_val = execute_node(gy, node->as.subscript.array);
             if (array_val.type != VAL_ARRAY) {
                 runtime_error(gy, node->line, "Only arrays are subscriptable");
+                dec_ref(array_val);
                 return create_null_value();
             }
 
             GraveyardValue index_val = execute_node(gy, node->as.subscript.index);
             if (index_val.type != VAL_NUMBER) {
                 runtime_error(gy, node->line, "Array index must be an integer");
+                dec_ref(array_val);
+                dec_ref(index_val);
                 return create_null_value();
             }
             
             double raw_index = index_val.as.number;
             if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
                 runtime_error(gy, node->line, "Array index must be a non-negative integer");
+                dec_ref(array_val);
+                dec_ref(index_val);
                 return create_null_value();
             }
             
@@ -5268,10 +5274,18 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
 
             if (index >= array->count) {
                 runtime_error(gy, node->line, "Array index out of bounds (index %d is beyond array of size %zu)", index, array->count);
+                dec_ref(array_val);
+                dec_ref(index_val);
                 return create_null_value();
             }
 
-            return array->values[index];
+            GraveyardValue result = array->values[index];
+            inc_ref(result);
+
+            dec_ref(array_val);
+            dec_ref(index_val);
+
+            return result;
         }
 
         case AST_HASHTABLE_LITERAL: {
@@ -5335,25 +5349,33 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
                 return value_to_assign;
 
-            }  else if (target_node->type == AST_SUBSCRIPT) {
+            } else if (target_node->type == AST_SUBSCRIPT) {
                 AstNode* array_node = target_node->as.subscript.array;
                 AstNode* index_node = target_node->as.subscript.index;
 
                 GraveyardValue array_val = execute_node(gy, array_node);
                 if (array_val.type != VAL_ARRAY) {
                     runtime_error(gy, target_node->line, "Cannot assign to subscript '[]' of a non-array type");
+                    dec_ref(value_to_assign);
+                    dec_ref(array_val);
                     return create_null_value();
                 }
 
                 GraveyardValue index_val = execute_node(gy, index_node);
                 if (index_val.type != VAL_NUMBER) {
                     runtime_error(gy, index_node->line, "Array index must be a number");
+                    dec_ref(value_to_assign);
+                    dec_ref(array_val);
+                    dec_ref(index_val);
                     return create_null_value();
                 }
 
                 double raw_index = index_val.as.number;
                 if (raw_index < 0 || fmod(raw_index, 1.0) != 0) {
                     runtime_error(gy, index_node->line, "Array index must be a non-negative integer");
+                    dec_ref(value_to_assign);
+                    dec_ref(array_val);
+                    dec_ref(index_val);
                     return create_null_value();
                 }
                 
@@ -5364,6 +5386,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                     runtime_error(gy, target_node->line, "Array index out of bounds...");
                     dec_ref(array_val);
                     dec_ref(index_val);
+                    dec_ref(value_to_assign);
                     return create_null_value();
                 }
 
@@ -5383,6 +5406,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue ht_val = execute_node(gy, ht_node);
                 if (ht_val.type != VAL_HASHTABLE) {
                     runtime_error(gy, ht_node->line, "Cannot assign to key of a non-hashtable type");
+                    dec_ref(value_to_assign);
+                    dec_ref(ht_val);
                     return create_null_value();
                 }
 
@@ -5391,10 +5416,16 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 if (key_val.type != VAL_STRING && key_val.type != VAL_NUMBER &&
                     key_val.type != VAL_BOOL && key_val.type != VAL_NULL) {
                     runtime_error(gy, key_node->line, "Invalid type used as a hashtable key");
+                    dec_ref(value_to_assign);
+                    dec_ref(ht_val);
+                    dec_ref(key_val);
                     return create_null_value();
                 }
                 if (key_val.type == VAL_NUMBER && fmod(key_val.as.number, 1.0) != 0) {
                     runtime_error(gy, key_node->line, "Float cannot be used as a hashtable key");
+                    dec_ref(value_to_assign);
+                    dec_ref(ht_val);
+                    dec_ref(key_val);
                     return create_null_value();
                 }
 
@@ -5408,10 +5439,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue object = execute_node(gy, target_node->as.member_access.object);
                 if (object.type != VAL_INSTANCE) {
                     runtime_error(gy, target_node->line, "Can only assign to members of an instance");
+                    dec_ref(value_to_assign);
+                    dec_ref(object);
                     return create_null_value();
                 }
                 
                 monolith_set(&object.as.instance->fields, target_node->as.member_access.member.lexeme, value_to_assign);
+                dec_ref(object);
                 return value_to_assign;
             } else if (target_node->type == AST_GLOBAL_ACCESS) {
                 const char* member_name = target_node->as.global_access.member_name.lexeme;
@@ -5428,13 +5462,13 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 GraveyardValue type_val;
                 if (!environment_get(gy->environment, type_name, &type_val) || type_val.type != VAL_TYPE) {
                     runtime_error(gy, target_node->line, "Type <%s> is not defined", type_name);
+                    dec_ref(value_to_assign);
                     return create_null_value();
                 }
 
                 monolith_set(&type_val.as.type->fields, member_name, value_to_assign);
                 return value_to_assign;
-            }
-            else if (target_node->type == AST_NAMESPACE_ACCESS) {
+            } else if (target_node->type == AST_NAMESPACE_ACCESS) {
                 const char* ns_name = target_node->as.namespace_access.namespace_name.lexeme;
                 const char* member_name = target_node->as.namespace_access.member_name.lexeme;
                 GraveyardValue ns_val;
@@ -5456,6 +5490,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 return value_to_assign;
             }
 
+            runtime_error(gy, node->line, "Invalid assignment target.");
             dec_ref(value_to_assign);
             return create_null_value();
         }
@@ -5975,6 +6010,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 environment_define(call_environment, "this", bound->receiver);
             } else {
                 runtime_error(gy, node->line, "Can only call functions and methods");
+                dec_ref(callee);
                 return create_null_value();
             }
 
@@ -5984,17 +6020,17 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 runtime_error(gy, node->line, "Expected %d arguments but got %d", function->arity, arg_count);
                 monolith_free(&call_environment->values);
                 free(call_environment);
+                dec_ref(callee);
                 return create_null_value();
             }
             
-            Environment* new_env = call_environment;
-            
             for (int i = 0; i < function->arity; i++) {
                 GraveyardValue arg_value = execute_node(gy, node->as.call_expression.arguments[i]);
-                environment_define(new_env, function->params[i].lexeme, arg_value);
+                environment_define(call_environment, function->params[i].lexeme, arg_value);
+                dec_ref(arg_value);
             }
             
-            execute_block(gy, function->body, new_env);
+            execute_block(gy, function->body, call_environment);
 
             monolith_free(&call_environment->values);
             free(call_environment);
@@ -6226,6 +6262,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             
             runtime_error(gy, node->line, "%s", error_buffer);
             
+            dec_ref(error_val);
             return create_null_value();
         }
 
@@ -6319,7 +6356,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 size_t type_name_len = len - 2;
                 strncpy(type_name_buffer, lexeme + 1, type_name_len);
                 type_name_buffer[type_name_len] = '\0';
-            } else { 
+            } else {    
                 type_name_buffer[0] = '\0'; 
             }
             
@@ -6343,7 +6380,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         
                         Environment* initializer_env = environment_new(gy->environment);
                         
-                        inc_ref(type_val); 
+                        inc_ref(type_val);  
                         monolith_set(&initializer_env->values, "this", type_val);
 
                         Environment* old_env = gy->environment;
@@ -6357,7 +6394,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                         monolith_set(&type->fields, field_name, value);
                         dec_ref(value);
                     }
-                } 
+                }   
                 else if (stmt->type == AST_FUNCTION_DECLARATION) {
                     GraveyardValue function = create_function_value(gy, stmt);
                     function.as.function->closure = type_definition_env;
@@ -6366,7 +6403,6 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 }
             }
             
-            dec_ref(type_val);
             return type_val;
         }
 
@@ -6376,6 +6412,7 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 runtime_error(gy, node->line, "Cannot use '.' outside of a type's method");
                 return create_null_value();
             }
+            inc_ref(this_val);
             return this_val;
         }
 
@@ -6523,6 +6560,8 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
                 runtime_error(gy, node->line, "Global variable '%s' not found", member_name);
                 return create_null_value();
             }
+            
+            inc_ref(member_val);
             return member_val;
         }
 
@@ -6550,10 +6589,12 @@ static GraveyardValue execute_node(Graveyard* gy, AstNode* node) {
             GraveyardValue member_val;
 
             if (monolith_get(&type->methods, member_name, &member_val)) {
+                inc_ref(member_val);
                 return member_val;
             }
 
             if (monolith_get(&type->fields, member_name, &member_val)) {
+                inc_ref(member_val);
                 return member_val;
             }
             
