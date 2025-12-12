@@ -1,0 +1,50 @@
+###THIS SHOULD BE IGNORED###
+::{
+    =;+ -*/()>identifier<!,$%|{1.23}&?:~^`@[]#.
+    //=;+ -*/()>identifier<!,$%|{1.23}&?:~^`@[]#.
+    a ** b;
+    x == y;
+    a != b;
+    x >= y;
+    x <= y;
+    $ && %;
+    $ || %;
+    $ !|| %;
+    /*
+    =;+ -*/()>identifier<!,$%|{1.23}&?:~^`@[]#.
+    =;+ -*/()>identifier<!,$%|{1.23}&?:~^`@[]#.
+    */
+    -> 42;
+    x += 1;
+    y -= 2;
+    z *= 3;
+    w /= 4;
+    i++;
+    j--;
+    system::print();
+    >>console
+    input << name;
+    @@variable;
+    x /% 2;
+    clock :@;
+    command := path;
+    cat = :3 123;
+    >> >b variable;
+    >> >i variable;
+    >> >f variable;
+    >> >s variable;
+    >> >a variable;
+    >> >h variable;
+    x **= 2;
+    !>>
+    :<<
+    :>>
+    x = "hello there";
+    str = "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh";
+    abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh = 1;
+    <cooltype> {}
+    y = 'this is a formatted string with an {expression + 1 - (variable * 69)} in it';
+    variable ?? "default";
+    >> @? "string";
+}
+###THIS SHOULD BE IGNORED###

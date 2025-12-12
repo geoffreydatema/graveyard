@@ -1,0 +1,85 @@
+::{
+    // --- Cast Operator Test Suite ---
+
+    // =================================================
+    // >>b (to boolean) Tests
+    // =================================================
+    >> "--- Testing >b (to boolean) ---";
+    >> ">b 42 (truthy number):", >b 42;
+    >> ">b 0 (falsy number):", >b 0;
+    >> ">b \"hello\" (truthy string):", >b "hello";
+    >> ">b \"\" (falsy string):", >b "";
+    >> ">b [1] (truthy array):", >b [1];
+    >> ">b [] (falsy array):", >b [];
+    >> ">b | (falsy null):", >b |;
+    >> ""; // Newline for spacing
+
+    // =================================================
+    // >>i (to integer) Tests
+    // =================================================
+    >> "--- Testing >i (to integer) ---";
+    >> ">i $ (true):", >i $;
+    >> ">i % (false):", >i %;
+    >> ">i | (null):", >i |;
+    >> ">i 3.14 (float):", >i 3.14;
+    >> ">i \"123\" (numeric string):", >i "123";
+    // The following should produce runtime errors as per our design
+    // >> ">i \"hello\" (invalid string):", >i "hello";
+    // >> ">i [1,2] (array):", >i [1,2];
+
+    >> ""; // Newline for spacing
+
+    // =================================================
+    // >>f (to float) Tests
+    // =================================================
+    >> "--- Testing >f (to float) ---";
+    >> ">f $ (true):", >f $;
+    >> ">f % (false):", >f %;
+    >> ">f | (null):", >f |;
+    >> ">f 42 (integer):", >f 42;
+    >> ">f \"123.45\" (numeric string):", >f "123.45";
+    // The following should produce runtime errors
+    // >> ">f \"hello\" (invalid string):", >f "hello";
+
+    >> ""; // Newline for spacing
+
+    // =================================================
+    // >>s (to string) Tests
+    // =================================================
+    >> "--- Testing >s (to string) ---";
+    test_func &a {}
+    >> ">s $ (true):", >s $;
+    >> ">s % (false):", >s %;
+    >> ">s | (null):", >s |;
+    >> ">s 123 (integer):", >s 123;
+    >> ">s 3.14 (float):", >s 3.14;
+    >> ">s [1, $, \"hi\"] (array):", >s [1, $, "hi"];
+    >> ">s {\"key\": \"val\", 42: $} (hashtable):", >s {"key": "val", 42: $};
+    >> ">s test_func (function):", >s test_func;
+    >> ""; // Newline for spacing
+
+    // =================================================
+    // >>a (to array) Tests
+    // =================================================
+    >> "--- Testing >a (to array) ---";
+    >> ">a 42 (single number):", >a 42;
+    >> ">a | (null):", >a |;
+    >> ">a \"hi\" (string):", >a "hi";
+    >> ">a {\"key1\": \"val1\", \"key2\": \"val2\"} (hashtable):", >a {"key1": "val1", "key2": "val2"};
+    >> ">a [1,2] (array to array):", >a [1,2];
+    >> ""; // Newline for spacing
+
+    // =================================================
+    // >>h (to hashtable) Tests
+    // =================================================
+    >> "--- Testing >h (to hashtable) ---";
+    >> ">h \"key\" (single string):", >h "key";
+    >> ">h | (null):", >h |;
+    >> ">h [\"a\", 1, $] (array of valid keys):", >h ["a", 1, $];
+    // The following should produce runtime errors
+    // >> ">h [1, 2, 1] (array with duplicate keys):", >h [1, 2, 1];
+    // >> ">h [1.23] (array with invalid key type):", >h [1.23];
+    
+    >> ""; // Newline for spacing
+    >> "--- All Cast Tests Complete ---";
+}

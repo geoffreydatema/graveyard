@@ -1,0 +1,42 @@
+::{
+    // --- Test Precedence 5: Exponentiation (**) ---
+    // Should execute as 10 + (2 ** 3) = 18
+    exp_prec_test = 10 + 2 ** 3;
+
+    // --- Test Precedence 4: Multiplication (*) and Division (/) ---
+    // Division and multiplication have the same precedence and are left-associative.
+    // Should execute as (100 / 5) * 2 = 40
+    div_mul_test = 100 / 5 * 2;
+
+    // --- Test Precedence 3: Addition (+) and Subtraction (-) ---
+    // Addition and subtraction have the same precedence and are left-associative.
+    // Should execute as ((20 - 10) + 5) = 15
+    add_sub_test = 20 - 10 + 5;
+
+    // --- Test Precedence 2: Relational Operators (>, <, >=, <=) ---
+    // These should have lower precedence than arithmetic operators.
+    // Should execute as (5 + 2) > (10 / 2), which is 7 > 5 -> true ($)
+    gt_test = 5 + 2 > 10 / 2;
+    // Should execute as 3 < 3 -> false (%)
+    lt_test = 3 < 3;
+    // Should execute as (4 * 2) >= 8, which is 8 >= 8 -> true ($)
+    gte_test = 4 * 2 >= 8;
+    // Should execute as 9 <= (3 ** 2), which is 9 <= 9 -> true ($)
+    lte_test = 9 <= 3 ** 2;
+
+    // --- Test Precedence 1: Equality Operators (==, !=) ---
+    // These have the lowest precedence.
+    // Should execute as (2 + 2) == (8 / 2), which is 4 == 4 -> true ($)
+    eq_test = 2 + 2 == 8 / 2;
+    // Should execute as (5 - 1) != 4, which is 4 != 4 -> false (%)
+    neq_test = 5 - 1 != 4;
+
+    // --- Final Combination Test ---
+    // A complex expression to verify that all precedence rules work together.
+    // Expected evaluation: 10 * 10 - 2 ** 3 + 7 > 90 + 5 == $
+    // (100 - 8) + 7 > 95 == $
+    // 92 + 7 > 95 == $
+    // 99 > 95 == $
+    // $ == $ -> $ (true)
+    final_sanity_check = 10 * 10 - 2 ** 3 + 7 > 90 + 5 /% 2 != 42;
+}

@@ -1,0 +1,220 @@
+::{
+    // Graveyard Language - Full Sanity Check
+    // This script tests every feature of the Graveyard language.
+    // If it runs to completion without any assertion failures, all tests have passed.
+
+    >> "--- Starting Graveyard Sanity Check ---";
+
+    // ========================================================================
+    >> "1. Literals, Variables, and Basic Assignment...";
+    // ========================================================================
+    
+    test_int = 42;
+    test_float = 1.23;
+    test_string = "hello world";
+    test_true = $;
+    test_false = %;
+    test_null = |;
+
+    ? test_int == 42;
+    ? test_float == 1.23;
+    ? test_string == "hello world";
+    ? test_true == $;
+    ? test_false == %;
+    ? test_null == |;
+
+    // ========================================================================
+    >> "2. Arithmetic and Contextual Operators...";
+    // ========================================================================
+
+    // Basic Math
+    ? 2 + 3 == 5;
+    ? 10 - 2 == 8;
+    ? 4 * 5 == 20;
+    ? 10 / 2 == 5;
+    ? 2 ** 3 == 8;
+    ? 10 /% 3 == 1;
+
+    // Negation (Unary MINUS)
+    neg_test = -test_int;
+    ? neg_test == -42;
+
+    // String Concatenation (Contextual PLUS)
+    ? "hello" + " " + "world" == "hello world";
+    
+    // Path Joining (Contextual FORWARDSLASH)
+    path = "home" / "user" / "docs";
+    ? path == "home/user/docs";
+    
+    // Length (Contextual ASTERISK)
+    ? *("hello") == 5;
+
+    // ========================================================================
+    >> "3. Compound Assignment and Inc/Dec...";
+    // ========================================================================
+    
+    c = 10;
+    c += 5; ? c == 15;
+    c -= 2; ? c == 13;
+    c *= 2; ? c == 26;
+    c /= 2; ? c == 13;
+    c /%= 5; ? c == 3;
+    c **= 2; ? c == 9;
+    c++; ? c == 10;
+    c--; ? c == 9;
+
+    // ========================================================================
+    >> "4. Comparison and Logical Operators...";
+    // ========================================================================
+    
+    ? 5 > 3;
+    ? 3 < 5;
+    ? 5 >= 5;
+    ? 3 <= 3;
+    ? 5 != 3;
+    ? !($ == %); // NOT
+    
+    ? $ && $;
+    ? $ || %;
+    ? $ !|| %; // XOR
+
+    // ========================================================================
+    >> "5. Control Flow (If, Ternary, While, For)...";
+    // ========================================================================
+    
+    // If/Else If/Else
+    if_result = |;
+    ? 1 == 1 {
+        if_result = "if";
+    }, 2 == 1 {
+        if_result = "else if";
+    }: {
+        if_result = "else";
+    }
+    ? if_result == "if";
+
+    // Ternary
+    ternary_result = 10 > 5 ? "yes" : "no";
+    ? ternary_result == "yes";
+
+    // While Loop with Break/Continue
+    w_counter = 0;
+    w_sum = 0;
+    ~ w_counter < 10 {
+        w_counter++;
+        w_sum += 1;
+    }
+    ? w_sum == 10;
+    ? w_counter == 10;
+
+    // For Loops (Numeric and For-Each)
+    for_sum = 0;
+    i @ 5 { for_sum += i; } // 0+1+2+3+4
+    ? for_sum == 10;
+
+    for_each_array = [10, 20, 30];
+    for_each_sum = 0;
+    element @ for_each_array { for_each_sum += element; }
+    ? for_each_sum == 60;
+    
+    // ========================================================================
+    >> "6. Data Structures (Arrays, Hashtables, Slicing)...";
+    // ========================================================================
+    
+    // Array and Subscript
+    my_arr = [10, "twenty", 30];
+    my_arr[1] = 20;
+    ? my_arr[0] + my_arr[1] + my_arr[2] == 60;
+
+    // Hashtable and Lookup
+    my_ht = {"a": 1, 2: "b"};
+    my_ht#"c" = 3;
+    ? my_ht#"a" == 1;
+    ? my_ht#2 == "b";
+    
+    // Slicing
+    slice_arr = [0, 1, 2, 3, 4, 5];
+    ? *slice_arr[1:4] == 3;
+    ? slice_arr[::-1][0] == 5;
+
+    // KeysOf / ValuesOf
+    key_val_ht = {"k1": "v1", "k2": "v2"};
+    keys = ^key_val_ht;
+    vals = `key_val_ht;
+    ? *keys == 2;
+    ? *vals == 2;
+
+    // ========================================================================
+    >> "7. Functions and Scopes...";
+    // ========================================================================
+
+    global_var = 100;
+    add &a &b {
+        global_var = 1; // This is a local shadow, should not affect the outer var
+        -> a + b;
+    }
+    ? add(5, 7) == 12;
+    ? global_var == 1; // Verify it was not changed
+    ::#global_var = 999; // Modify it explicitly
+    ? global_var == 999;
+
+    // ========================================================================
+    >> "8. Namespaces, Types, and Instances...";
+    // ========================================================================
+    
+    ::my_ns {
+        ns_var = "hello from namespace";
+    }
+    ? ::my_ns#ns_var == "hello from namespace";
+    
+    <Vector> {
+        x = 0; y = 0;
+        magnitude {
+            -> (.x ** 2 + .y ** 2) ** 0.5;
+        }
+    }
+    
+    vec_inst = <Vector>;
+    vec_inst.x = 3;
+    vec_inst.y = 4;
+    ? vec_inst.magnitude() == 5;
+    ? @@vec_inst == "Vector";
+    ? ::<Vector>#x == 0; // Static access
+
+    // ========================================================================
+    >> "9. I/O, System, and Meta Operators...";
+    // ========================================================================
+
+    // EVAL
+    eval_result = !! "a=10; b=20; _=a+b;";
+    ? eval_result == 30;
+
+    // UID
+    ? *#16 == 16;
+    
+    // Command-line args (will be empty when run like this)
+    args = :#"args";
+    kwargs = :#"kwargs";
+
+    // TIME and WAIT
+    t1 = :@;
+    :~ 10; // Wait 10ms
+    t2 = :@;
+    ? t2 > t1;
+
+    // ========================================================================
+    >> "10. Error Handling (Try/Except)...";
+    // ========================================================================
+    
+    did_catch = %;
+    ? {
+        x = this_variable_doesnt_exist;
+    }, &err {
+        y = err;
+    }:{
+        z = "default";
+    }
+
+    >> ""; // Blank line for formatting
+    >> "--- All tests passed! ---";
+}
